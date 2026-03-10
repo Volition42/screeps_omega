@@ -1,6 +1,12 @@
 module.exports = {
   plan(roomManager) {
     const counts = roomManager.state.roleCounts;
+    const totalCreeps = roomManager.state.creeps.length;
+
+    if (totalCreeps === 0) {
+      roomManager.requestSpawn({ priority: 1000, role: "harvester" });
+      return;
+    }
 
     if ((counts.harvester || 0) < 2) {
       roomManager.requestSpawn({ priority: 100, role: "harvester" });

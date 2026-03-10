@@ -1,9 +1,9 @@
 module.exports = {
   plan(roomManager) {
-    // future: hostile detection, safe mode policy, defender requests
+    // later: hostile detection and defender requests
   },
 
   run(roomManager) {
-    // future: tower attack / heal / repair logic
+    // later: tower logic
   },
 };

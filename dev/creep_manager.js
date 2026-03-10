@@ -17,6 +17,9 @@ module.exports = {
         case "builder":
           builder.run(creep);
           break;
+        default:
+          creep.say("?");
+          break;
       }
     }
   },

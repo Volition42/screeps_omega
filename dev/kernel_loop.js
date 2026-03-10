@@ -11,9 +11,7 @@ module.exports = {
     empire.observe();
     empire.plan();
     empire.runStructures();
-
-    creepManager.runAll(empire);
-
+    creepManager.runAll();
     empire.finalize();
   },
 };

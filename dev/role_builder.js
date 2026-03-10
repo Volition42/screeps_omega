@@ -11,27 +11,28 @@ module.exports = {
     if (!creep.memory.working) {
       const source = creep.pos.findClosestByPath(FIND_SOURCES);
       if (source) {
-        creep.memory.sourceId = source.id;
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(source);
+          creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
         }
       }
       return;
     }
 
     const site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+
     if (site) {
       if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site);
+        creep.moveTo(site, { visualizePathStyle: { stroke: "#ffffff" } });
       }
       return;
     }
 
-    if (
-      creep.room.controller &&
-      creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE
-    ) {
-      creep.moveTo(creep.room.controller);
+    if (creep.room.controller) {
+      if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(creep.room.controller, {
+          visualizePathStyle: { stroke: "#00ff00" },
+        });
+      }
     }
   },
 };

@@ -9,18 +9,25 @@ module.exports = {
     }
 
     if (!creep.memory.working) {
-      if (!creep.memory.sourceId) {
+      let source = null;
+
+      if (creep.memory.sourceId) {
+        source = Game.getObjectById(creep.memory.sourceId);
+      }
+
+      if (!source) {
         const sources = creep.room.find(FIND_SOURCES);
         if (sources.length > 0) {
-          const index = creep.name.length % sources.length;
-          creep.memory.sourceId = sources[index].id;
+          const index = Game.time % sources.length;
+          source = sources[index];
+          creep.memory.sourceId = source.id;
         }
       }
 
-      const source = Game.getObjectById(creep.memory.sourceId);
       if (source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(source);
+        creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
       }
+
       return;
     }
 
@@ -33,16 +40,17 @@ module.exports = {
 
     if (target) {
       if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target);
+        creep.moveTo(target, { visualizePathStyle: { stroke: "#ffffff" } });
       }
       return;
     }
 
-    if (
-      creep.room.controller &&
-      creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE
-    ) {
-      creep.moveTo(creep.room.controller);
+    if (creep.room.controller) {
+      if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(creep.room.controller, {
+          visualizePathStyle: { stroke: "#00ff00" },
+        });
+      }
     }
   },
 };
