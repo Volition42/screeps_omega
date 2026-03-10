@@ -1,7 +1,29 @@
 module.exports = {
   plan(roomManager) {
-    this.planSourceContainers(roomManager);
-    this.planBasicRoads(roomManager);
+    const room = roomManager.room;
+
+    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+    if (!Memory.rooms[room.name].buildPlan) {
+      Memory.rooms[room.name].buildPlan = {};
+    }
+
+    const mem = Memory.rooms[room.name].buildPlan;
+
+    if (!mem.lastContainerPlan) mem.lastContainerPlan = 0;
+    if (!mem.lastRoadPlan) mem.lastRoadPlan = 0;
+
+    const existingSites = room.find(FIND_CONSTRUCTION_SITES);
+    if (existingSites.length >= 6) return;
+
+    if (Game.time - mem.lastContainerPlan >= 200) {
+      this.planSourceContainers(roomManager);
+      mem.lastContainerPlan = Game.time;
+    }
+
+    if (Game.time - mem.lastRoadPlan >= 500) {
+      this.planBasicRoads(roomManager);
+      mem.lastRoadPlan = Game.time;
+    }
   },
 
   getPrioritySite(room, creep) {
