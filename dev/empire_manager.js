@@ -1,4 +1,4 @@
-const RoomManager = require("room_manager");
+const roomManager = require("room_manager");
 
 class EmpireManager {
   constructor() {
@@ -14,21 +14,21 @@ class EmpireManager {
       const room = Game.rooms[roomName];
       if (!room.controller || !room.controller.my) continue;
 
-      const roomManager = new RoomManager(room, this);
-      roomManager.observe();
-      this.rooms.push(roomManager);
+      const manager = roomManager.create(room, this);
+      manager.observe();
+      this.rooms.push(manager);
     }
   }
 
   plan() {
-    for (const roomManager of this.rooms) {
-      roomManager.plan();
+    for (const manager of this.rooms) {
+      manager.plan();
     }
   }
 
   runStructures() {
-    for (const roomManager of this.rooms) {
-      roomManager.runStructures();
+    for (const manager of this.rooms) {
+      manager.runStructures();
     }
   }
 
