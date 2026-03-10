@@ -1,5 +1,6 @@
 module.exports = {
   plan(roomManager) {
+    this.planSourceContainers(roomManager);
     this.planBasicRoads(roomManager);
   },
 
@@ -15,17 +16,39 @@ module.exports = {
     ];
 
     for (const structureType of priorityOrder) {
-      const matches = _.filter(
-        sites,
-        (site) => site.structureType === structureType,
-      );
-
+      const matches = _.filter(sites, (s) => s.structureType === structureType);
       if (matches.length) {
         return creep.pos.findClosestByPath(matches);
       }
     }
 
     return creep.pos.findClosestByPath(sites);
+  },
+
+  planSourceContainers(roomManager) {
+    const room = roomManager.room;
+    const sources = room.find(FIND_SOURCES);
+
+    for (const source of sources) {
+      const existing = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+      });
+
+      const sites = source.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
+        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+      });
+
+      if (existing.length || sites.length) continue;
+
+      const path = room.findPath(room.controller.pos, source.pos, {
+        ignoreCreeps: true,
+      });
+      if (!path.length) continue;
+
+      const step = path[path.length - 1];
+      const pos = new RoomPosition(step.x, step.y, room.name);
+      pos.createConstructionSite(STRUCTURE_CONTAINER);
+    }
   },
 
   planBasicRoads(roomManager) {
@@ -35,19 +58,15 @@ module.exports = {
     const sources = room.find(FIND_SOURCES);
 
     if (!spawns.length) return;
-
     const spawn = spawns[0];
 
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
-    if (!Memory.rooms[room.name].roadsPlannedAt) {
+    if (!Memory.rooms[room.name].roadsPlannedAt)
       Memory.rooms[room.name].roadsPlannedAt = 0;
-    }
-
-    // Re-plan only occasionally
     if (Game.time - Memory.rooms[room.name].roadsPlannedAt < 200) return;
 
     let placed = 0;
-    const maxSitesToPlace = 6;
+    const maxSitesToPlace = 8;
 
     if (controller) {
       placed += this.placeRoadPath(
@@ -66,47 +85,32 @@ module.exports = {
       );
     }
 
-    if (placed > 0) {
-      Memory.rooms[room.name].roadsPlannedAt = Game.time;
-    }
+    if (placed > 0) Memory.rooms[room.name].roadsPlannedAt = Game.time;
   },
 
   placeRoadPath(fromPos, toPos, limit) {
     if (limit <= 0) return 0;
 
-    const path = fromPos.findPathTo(toPos, {
-      ignoreCreeps: true,
-      range: 1,
-    });
-
+    const path = fromPos.findPathTo(toPos, { ignoreCreeps: true, range: 1 });
     let placed = 0;
 
     for (const step of path) {
       if (placed >= limit) break;
 
       const room = Game.rooms[fromPos.roomName];
-      if (!room) break;
-
       const pos = new RoomPosition(step.x, step.y, fromPos.roomName);
 
       const structures = pos.lookFor(LOOK_STRUCTURES);
       const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
 
-      const hasRoad = _.some(
-        structures,
-        (s) => s.structureType === STRUCTURE_ROAD,
-      );
-      const hasSite = sites.length > 0;
+      if (
+        _.some(structures, (s) => s.structureType === STRUCTURE_ROAD) ||
+        sites.length
+      )
+        continue;
+      if (room.getTerrain().get(step.x, step.y) === TERRAIN_MASK_WALL) continue;
 
-      if (hasRoad || hasSite) continue;
-
-      const terrain = room.getTerrain().get(step.x, step.y);
-      if (terrain === TERRAIN_MASK_WALL) continue;
-
-      const result = pos.createConstructionSite(STRUCTURE_ROAD);
-      if (result === OK) {
-        placed++;
-      }
+      if (pos.createConstructionSite(STRUCTURE_ROAD) === OK) placed++;
     }
 
     return placed;
