@@ -5,29 +5,42 @@ const upgrader = require("role_upgrader");
 const builder = require("role_builder");
 
 module.exports = {
-  runAll() {
+  runAll(profiler) {
     for (const name in Game.creeps) {
       const creep = Game.creeps[name];
 
-      switch (creep.memory.role) {
-        case "harvester":
-          harvester.run(creep);
-          break;
-        case "miner":
-          miner.run(creep);
-          break;
-        case "hauler":
-          hauler.run(creep);
-          break;
-        case "upgrader":
-          upgrader.run(creep);
-          break;
-        case "builder":
-          builder.run(creep);
-          break;
-        default:
-          creep.say("?");
-          break;
+      const role = creep.memory.role;
+
+      if (!role) continue;
+
+      const label = `role.${role}`;
+
+      profiler.start(label);
+
+      try {
+        switch (role) {
+          case "harvester":
+            require("role_harvester").run(creep);
+            break;
+
+          case "miner":
+            require("role_miner").run(creep);
+            break;
+
+          case "hauler":
+            require("role_hauler").run(creep);
+            break;
+
+          case "upgrader":
+            require("role_upgrader").run(creep);
+            break;
+
+          case "builder":
+            require("role_builder").run(creep);
+            break;
+        }
+      } finally {
+        profiler.end(label);
       }
     }
   },

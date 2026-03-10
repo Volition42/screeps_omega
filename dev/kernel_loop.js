@@ -17,9 +17,13 @@ module.exports = {
     );
 
     profiler.wrap("empire.observe", empire.observe, empire);
-    profiler.wrap("empire.plan", empire.plan, empire);
+    profiler.start("empire.plan");
+    empire.plan(profiler);
+    profiler.end("empire.plan");
     profiler.wrap("empire.runStructures", empire.runStructures, empire);
-    profiler.wrap("creeps.runAll", creepManager.runAll, creepManager);
+    profiler.start("creeps.runAll");
+    creepManager.runAll(profiler);
+    profiler.end("creeps.runAll");
     profiler.wrap("empire.finalize", empire.finalize, empire);
 
     const snapshot = profiler.finalize();

@@ -1,3 +1,4 @@
+const profilerFactory = require("kernel_profiler");
 const roomState = require("room_state");
 const spawnManager = require("spawn_manager");
 const economyManager = require("economy_manager");
@@ -20,13 +21,33 @@ module.exports = {
         this.state = roomState.collect(this.room);
       },
 
-      plan() {
-        layoutManager.plan(this);
-        defenseManager.plan(this);
-        economyManager.plan(this);
-        buildManager.plan(this);
-        upgradeManager.plan(this);
-        spawnManager.plan(this);
+      plan(profiler) {
+        profiler.wrap("plan.layout", layoutManager.plan, layoutManager, this);
+
+        profiler.wrap(
+          "plan.defense",
+          defenseManager.plan,
+          defenseManager,
+          this,
+        );
+
+        profiler.wrap(
+          "plan.economy",
+          economyManager.plan,
+          economyManager,
+          this,
+        );
+
+        profiler.wrap("plan.build", buildManager.plan, buildManager, this);
+
+        profiler.wrap(
+          "plan.upgrade",
+          upgradeManager.plan,
+          upgradeManager,
+          this,
+        );
+
+        profiler.wrap("plan.spawn", spawnManager.plan, spawnManager, this);
       },
 
       runStructures() {

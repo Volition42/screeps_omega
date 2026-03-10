@@ -23,9 +23,13 @@ module.exports = {
         }
       },
 
-      plan() {
+      plan(profiler) {
         for (const manager of this.rooms) {
-          manager.plan();
+          profiler.start("room.plan");
+
+          manager.plan(profiler);
+
+          profiler.end("room.plan");
         }
       },
 
