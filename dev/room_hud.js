@@ -145,6 +145,13 @@ module.exports = {
     if (state.hostiles && state.hostiles.length > 0) return "DEFEND";
 
     if (
+      !state.containers ||
+      state.containers.length < Math.min(2, state.sources.length)
+    ) {
+      return "SOURCE CONTAINERS";
+    }
+
+    if (
       state.extensions &&
       state.extensions.length < 5 &&
       state.controllerLevel >= 2
@@ -152,24 +159,10 @@ module.exports = {
       return "BUILD EXTENSIONS";
     }
 
-    if (
-      !state.containers ||
-      state.containers.length < Math.min(2, state.sources.length)
-    ) {
-      return "SOURCE CONTAINERS";
-    }
-
     if (state.sites && state.sites.length > 0) return "FINISH CONSTRUCTION";
     if (state.controllerLevel < 3) return "RUSH RCL3";
 
     return "STABILIZE ECONOMY";
-  },
-
-  getNextMilestone(state) {
-    if (state.controllerLevel < 2) return "RCL2 + extensions";
-    if (state.controllerLevel < 3) return "RCL3 + tower";
-    if (state.controllerLevel < 4) return "RCL4 + more extensions";
-    return "remote mining prep";
   },
 
   printConsoleSummary(room, state) {

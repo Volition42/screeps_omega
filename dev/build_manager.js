@@ -30,12 +30,43 @@ module.exports = {
     const sites = room.find(FIND_CONSTRUCTION_SITES);
     if (!sites.length) return null;
 
-    const priorityOrder = [
-      STRUCTURE_EXTENSION,
-      STRUCTURE_CONTAINER,
-      STRUCTURE_ROAD,
-      STRUCTURE_TOWER,
-    ];
+    const controllerLevel = room.controller ? room.controller.level : 0;
+    const containerSites = _.filter(
+      sites,
+      (s) => s.structureType === STRUCTURE_CONTAINER,
+    );
+    const extensionSites = _.filter(
+      sites,
+      (s) => s.structureType === STRUCTURE_EXTENSION,
+    );
+    const roadSites = _.filter(
+      sites,
+      (s) => s.structureType === STRUCTURE_ROAD,
+    );
+    const towerSites = _.filter(
+      sites,
+      (s) => s.structureType === STRUCTURE_TOWER,
+    );
+
+    let priorityOrder;
+
+    // In bootstrap, force source containers first so we can transition
+    // into miners + haulers sooner.
+    if (controllerLevel < 3 && containerSites.length > 0) {
+      priorityOrder = [
+        STRUCTURE_CONTAINER,
+        STRUCTURE_EXTENSION,
+        STRUCTURE_ROAD,
+        STRUCTURE_TOWER,
+      ];
+    } else {
+      priorityOrder = [
+        STRUCTURE_EXTENSION,
+        STRUCTURE_CONTAINER,
+        STRUCTURE_ROAD,
+        STRUCTURE_TOWER,
+      ];
+    }
 
     for (const structureType of priorityOrder) {
       const matches = _.filter(sites, (s) => s.structureType === structureType);
@@ -50,6 +81,9 @@ module.exports = {
   planSourceContainers(roomManager) {
     const room = roomManager.room;
     const sources = room.find(FIND_SOURCES);
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+
+    if (!spawn) return;
 
     for (const source of sources) {
       const existing = source.pos.findInRange(FIND_STRUCTURES, 1, {
@@ -62,15 +96,41 @@ module.exports = {
 
       if (existing.length || sites.length) continue;
 
-      const path = room.findPath(room.controller.pos, source.pos, {
-        ignoreCreeps: true,
-      });
-      if (!path.length) continue;
+      const pos = this.getBestContainerPosition(room, source, spawn);
+      if (!pos) continue;
 
-      const step = path[path.length - 1];
-      const pos = new RoomPosition(step.x, step.y, room.name);
       pos.createConstructionSite(STRUCTURE_CONTAINER);
     }
+  },
+
+  getBestContainerPosition(room, source, spawn) {
+    const terrain = room.getTerrain();
+    const candidates = [];
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+
+        const x = source.pos.x + dx;
+        const y = source.pos.y + dy;
+
+        if (x < 1 || x > 48 || y < 1 || y > 48) continue;
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+        const pos = new RoomPosition(x, y, room.name);
+
+        const structures = pos.lookFor(LOOK_STRUCTURES);
+        const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+        if (structures.length || sites.length) continue;
+
+        candidates.push(pos);
+      }
+    }
+
+    if (!candidates.length) return null;
+
+    return spawn.pos.findClosestByRange(candidates);
   },
 
   planBasicRoads(roomManager) {

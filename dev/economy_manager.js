@@ -10,15 +10,30 @@ module.exports = {
     }
 
     if (state.phase === "bootstrap") {
+      const containerCount = state.containers ? state.containers.length : 0;
+      const containerSites = _.filter(
+        state.sites || [],
+        (s) => s.structureType === STRUCTURE_CONTAINER,
+      ).length;
+
       if ((counts.harvester || 0) < 2) {
         roomManager.requestSpawn({ priority: 100, role: "harvester" });
       }
+
+      // If we are trying to get source containers online, keep a builder alive.
+      if (containerCount + containerSites > 0 && (counts.builder || 0) < 1) {
+        roomManager.requestSpawn({ priority: 90, role: "builder" });
+      }
+
       if ((counts.upgrader || 0) < 1) {
         roomManager.requestSpawn({ priority: 80, role: "upgrader" });
       }
+
+      // Normal builder fallback if there is any construction at all.
       if (state.sites.length > 0 && (counts.builder || 0) < 1) {
         roomManager.requestSpawn({ priority: 70, role: "builder" });
       }
+
       return;
     }
 
