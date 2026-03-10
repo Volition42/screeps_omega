@@ -39,51 +39,44 @@ module.exports = {
     }
   },
 
-  drawCreepLabels(room, visual) {
-    const creeps = room.find(FIND_MY_CREEPS);
+drawSpawnBanner(room, visual) {
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return;
 
-    for (const creep of creeps) {
-      const label = this.getCreepLabel(creep);
+  let spawnManagerMemory = null;
 
-      visual.text(label, creep.pos.x, creep.pos.y - 0.55, {
-        align: "center",
-        color: "#ffffcc",
-        font: 0.6,
-        opacity: 0.7,
-        backgroundColor: "#000000",
-      });
-    }
-  },
+  if (Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].spawnQueue) {
 
-  drawSpawnBanner(room, visual) {
-    const spawn = room.find(FIND_MY_SPAWNS)[0];
-    if (!spawn) return;
+    spawnManagerMemory = Memory.rooms[room.name].spawnQueue;
+  }
 
-    const spawnManagerMemory = Memory.rooms?.[room.name]?.spawnQueue;
+  let spawning = "idle";
 
-    let spawning = "idle";
-    if (spawn.spawning) {
-      const creep = Game.creeps[spawn.spawning.name];
-      spawning = creep?.memory?.role || spawn.spawning.name;
-    }
+  if (spawn.spawning) {
+    const creep = Game.creeps[spawn.spawning.name];
+    spawning = creep && creep.memory ? creep.memory.role : spawn.spawning.name;
+  }
 
-    let next = "none";
-    if (spawnManagerMemory && spawnManagerMemory.length > 0) {
-      next = spawnManagerMemory[0].role || "unknown";
-    }
+  let next = "none";
 
-    const energy = `${room.energyAvailable}/${room.energyCapacityAvailable}`;
+  if (spawnManagerMemory && spawnManagerMemory.length > 0) {
+    next = spawnManagerMemory[0].role || "unknown";
+  }
 
-    const text = `Spawn: ${spawning} | Next: ${next} | E:${energy}`;
+  const energy = `${room.energyAvailable}/${room.energyCapacityAvailable}`;
 
-    visual.text(text, spawn.pos.x, spawn.pos.y - 1.2, {
-      align: "center",
-      color: "#aaffff",
-      font: 0.7,
-      opacity: 0.8,
-      backgroundColor: "#000000",
-    });
-  },
+  const text = `Spawn: ${spawning} | Next: ${next} | E:${energy}`;
+
+  visual.text(text, spawn.pos.x, spawn.pos.y - 1.2, {
+    align: "center",
+    color: "#aaffff",
+    font: 0.7,
+    opacity: 0.8,
+    backgroundColor: "#000000"
+  });
+}
 
   getCreepTarget(creep) {
     switch (creep.memory.role) {
