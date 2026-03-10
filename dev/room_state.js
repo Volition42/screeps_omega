@@ -9,6 +9,7 @@ module.exports = {
     const roleCounts = _.countBy(creeps, (c) => c.memory.role);
 
     return {
+      roomName: room.name,
       energyAvailable: room.energyAvailable,
       energyCapacityAvailable: room.energyCapacityAvailable,
       controllerLevel: room.controller ? room.controller.level : 0,

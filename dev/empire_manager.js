@@ -1,4 +1,4 @@
-const RoomManager = require("rooms/room.manager");
+const RoomManager = require("room_manager");
 
 class EmpireManager {
   constructor() {

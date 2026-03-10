@@ -1,6 +1,6 @@
-const memory = require("kernel/memory");
-const empireManager = require("empire/empire.manager");
-const creepManager = require("creeps/creep.manager");
+const memory = require("kernel_memory");
+const empireManager = require("empire_manager");
+const creepManager = require("creep_manager");
 
 module.exports = {
   run() {

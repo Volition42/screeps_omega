@@ -3,22 +3,18 @@ module.exports = {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;
     }
+
     if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
       creep.memory.working = true;
     }
 
     if (!creep.memory.working) {
       const source = creep.pos.findClosestByPath(FIND_SOURCES);
-      if (source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(source);
-      }
-      return;
-    }
-
-    const site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
-    if (site) {
-      if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site);
+      if (source) {
+        creep.memory.sourceId = source.id;
+        if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
+          creep.moveTo(source);
+        }
       }
       return;
     }

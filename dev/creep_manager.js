@@ -1,6 +1,6 @@
-const harvester = require("creeps/roles/role.harvester");
-const upgrader = require("creeps/roles/role.upgrader");
-const builder = require("creeps/roles/role.builder");
+const harvester = require("role_harvester");
+const upgrader = require("role_upgrader");
+const builder = require("role_builder");
 
 module.exports = {
   runAll() {

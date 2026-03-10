@@ -3,6 +3,7 @@ module.exports = {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;
     }
+
     if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
       creep.memory.working = true;
     }
@@ -10,8 +11,9 @@ module.exports = {
     if (!creep.memory.working) {
       if (!creep.memory.sourceId) {
         const sources = creep.room.find(FIND_SOURCES);
-        if (sources.length) {
-          creep.memory.sourceId = sources[0].id;
+        if (sources.length > 0) {
+          const index = creep.name.length % sources.length;
+          creep.memory.sourceId = sources[index].id;
         }
       }
 

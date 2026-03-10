@@ -1,8 +1,8 @@
-const bodies = require("config/bodies");
+const bodies = require("bodies");
 
 module.exports = {
   plan(roomManager) {
-    // spawn requests are added by other managers
+    // other managers create requests; this module fulfills them
   },
 
   run(roomManager) {
@@ -21,7 +21,10 @@ module.exports = {
     const result = spawn.spawnCreep(body, name, {
       memory: {
         role: request.role,
+        room: roomManager.room.name,
         working: false,
+        sourceId: null,
+        task: null,
       },
     });
 
