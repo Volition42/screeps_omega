@@ -61,9 +61,7 @@ module.exports = {
     let spawning = "idle";
 
     if (spawn.spawning) {
-      const creep = Game.creeps[spawn.spawning.name];
-      spawning =
-        creep && creep.memory ? creep.memory.role : spawn.spawning.name;
+      spawning = spawn.spawning.name;
     }
 
     let next = "none";
@@ -163,6 +161,13 @@ module.exports = {
     if (state.controllerLevel < 3) return "RUSH RCL3";
 
     return "STABILIZE ECONOMY";
+  },
+
+  getNextMilestone(state) {
+    if (state.controllerLevel < 2) return "RCL2 + extensions";
+    if (state.controllerLevel < 3) return "RCL3 + tower";
+    if (state.controllerLevel < 4) return "RCL4 + more extensions";
+    return "remote mining prep";
   },
 
   printConsoleSummary(room, state) {
