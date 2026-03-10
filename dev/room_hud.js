@@ -4,10 +4,11 @@ module.exports = {
     const state = roomManager.state;
     const visual = room.visual;
 
-    this.drawCreepLabels(room, visual);
+    this.drawRoomSummary(room, state, visual);
 
-    if (Game.time % 5 === 0) {
-      this.drawRoomSummary(room, state, visual);
+    if (Game.time % 3 === 0) {
+      this.drawCreepLabels(room, visual);
+      this.drawCreepJobLines(room, visual);
     }
 
     if (Game.time % 25 === 0) {
@@ -21,31 +22,19 @@ module.exports = {
     const milestone = this.getNextMilestone(state);
 
     const lines = [
-      `Room: ${room.name}`,
-      `Phase: ${state.phase || "unknown"}`,
-      `Goal: ${priority}`,
-      `Next: ${milestone}`,
-      `E: ${room.energyAvailable}/${room.energyCapacityAvailable}`,
-      `Creeps H:${counts.harvester || 0} M:${counts.miner || 0} Ha:${counts.hauler || 0} U:${counts.upgrader || 0} B:${counts.builder || 0}`,
-      `CPU: ${Memory.stats && Memory.stats.last ? Memory.stats.last.cpu.used.toFixed(1) : "?"}`,
+      `Room: ${room.name}  -  CPU: ${Memory.stats && Memory.stats.last ? Memory.stats.last.cpu.used.toFixed(1) : "?"}  -  E: ${room.energyAvailable}/${room.energyCapacityAvailable}  -  Creeps H:${counts.harvester || 0} M:${counts.miner || 0} Ha:${counts.hauler || 0} U:${counts.upgrader || 0} B:${counts.builder || 0}`,
+      `Phase: ${state.phase || "unknown"}  -  Goal: ${priority}  -  Next: ${milestone}`,
     ];
 
     const x = 1;
     const y = 1;
-
-    visual.rect(x - 0.3, y - 0.8, 13.8, lines.length * 0.9 + 0.4, {
-      fill: "#111111",
-      opacity: 0.35,
-      stroke: "#555555",
-      strokeWidth: 0.05,
-    });
 
     for (let i = 0; i < lines.length; i++) {
       visual.text(lines[i], x, y + i * 0.9, {
         align: "left",
         color: "#ffffff",
         font: 0.7,
-        opacity: 0.9,
+        opacity: 0.7,
       });
     }
   },
@@ -59,10 +48,121 @@ module.exports = {
       visual.text(label, creep.pos.x, creep.pos.y - 0.55, {
         align: "center",
         color: "#ffffcc",
-        font: 0.45,
-        opacity: 0.9,
+        font: 0.6,
+        opacity: 0.7,
         backgroundColor: "#000000",
       });
+    }
+  },
+
+  drawCreepJobLines(room, visual) {
+    const creeps = room.find(FIND_MY_CREEPS);
+
+    for (const creep of creeps) {
+      const target = this.getCreepTarget(creep);
+      if (!target || !target.pos) continue;
+
+      const color = this.getCreepLineColor(creep);
+
+      visual.line(creep.pos, target.pos, {
+        color,
+        width: 0.06,
+        opacity: 0.45,
+        lineStyle: "solid",
+      });
+    }
+  },
+
+  getCreepTarget(creep) {
+    switch (creep.memory.role) {
+      case "harvester": {
+        if (!creep.memory.working) {
+          if (creep.memory.sourceId) {
+            return Game.getObjectById(creep.memory.sourceId);
+          }
+          return creep.pos.findClosestByRange(FIND_SOURCES);
+        }
+
+        const energyTarget = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+          filter: (s) =>
+            (s.structureType === STRUCTURE_SPAWN ||
+              s.structureType === STRUCTURE_EXTENSION) &&
+            s.store &&
+            s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+        });
+
+        return energyTarget || creep.room.controller;
+      }
+
+      case "miner": {
+        if (creep.memory.sourceId) {
+          return Game.getObjectById(creep.memory.sourceId);
+        }
+        return creep.pos.findClosestByRange(FIND_SOURCES);
+      }
+
+      case "hauler": {
+        if (!creep.memory.delivering) {
+          const container = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+            filter: (s) =>
+              s.structureType === STRUCTURE_CONTAINER &&
+              s.store &&
+              s.store[RESOURCE_ENERGY] > 0,
+          });
+
+          if (container) return container;
+
+          return creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+            filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount > 25,
+          });
+        }
+
+        const deliveryTarget = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+          filter: (s) =>
+            (s.structureType === STRUCTURE_SPAWN ||
+              s.structureType === STRUCTURE_EXTENSION) &&
+            s.store &&
+            s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+        });
+
+        return deliveryTarget || creep.room.controller;
+      }
+
+      case "builder": {
+        if (!creep.memory.working) {
+          return creep.pos.findClosestByRange(FIND_SOURCES);
+        }
+
+        const site = creep.pos.findClosestByRange(FIND_CONSTRUCTION_SITES);
+        return site || creep.room.controller;
+      }
+
+      case "upgrader": {
+        if (!creep.memory.working) {
+          return creep.pos.findClosestByRange(FIND_SOURCES);
+        }
+
+        return creep.room.controller;
+      }
+
+      default:
+        return null;
+    }
+  },
+
+  getCreepLineColor(creep) {
+    switch (creep.memory.role) {
+      case "harvester":
+      case "miner":
+        return "#ffd166"; // yellow-ish
+      case "hauler":
+        return "#ffffff"; // white
+      case "builder":
+        return "#06d6a0"; // green-ish
+      case "upgrader":
+        return "#4dabf7"; // blue-ish
+      default:
+        return "#cccccc";
     }
   },
 
@@ -107,13 +207,15 @@ module.exports = {
       state.extensions &&
       state.extensions.length < 5 &&
       state.controllerLevel >= 2
-    )
+    ) {
       return "BUILD EXTENSIONS";
+    }
     if (
       !state.containers ||
       state.containers.length < Math.min(2, state.sources.length)
-    )
+    ) {
       return "SOURCE CONTAINERS";
+    }
     if (state.sites && state.sites.length > 0) return "FINISH CONSTRUCTION";
     if (state.controllerLevel < 3) return "RUSH RCL3";
     return "STABILIZE ECONOMY";
