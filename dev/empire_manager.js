@@ -7,6 +7,7 @@ module.exports = {
       stats: {
         tick: Game.time,
         creepCount: Object.keys(Game.creeps).length,
+        cpuAtStart: Game.cpu.getUsed(),
       },
 
       observe() {
@@ -35,10 +36,23 @@ module.exports = {
       },
 
       finalize() {
+        let totalEnergyAvailable = 0;
+        let totalEnergyCapacity = 0;
+
+        for (const manager of this.rooms) {
+          totalEnergyAvailable += manager.room.energyAvailable;
+          totalEnergyCapacity += manager.room.energyCapacityAvailable;
+        }
+
         Memory.empire.stats = {
           tick: Game.time,
           rooms: this.rooms.length,
           creeps: Object.keys(Game.creeps).length,
+          totalEnergyAvailable,
+          totalEnergyCapacity,
+          cpuUsed: Number(Game.cpu.getUsed().toFixed(3)),
+          cpuLimit: Game.cpu.limit,
+          cpuBucket: Game.cpu.bucket,
         };
       },
     };

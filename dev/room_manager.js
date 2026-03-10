@@ -1,10 +1,10 @@
-const layoutManager = require("layout_manager");
 const roomState = require("room_state");
 const spawnManager = require("spawn_manager");
 const economyManager = require("economy_manager");
 const buildManager = require("build_manager");
 const upgradeManager = require("upgrade_manager");
 const defenseManager = require("defense_manager");
+const layoutManager = require("layout_manager");
 
 module.exports = {
   create(room, empire) {
