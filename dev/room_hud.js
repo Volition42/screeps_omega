@@ -39,44 +39,46 @@ module.exports = {
     }
   },
 
-drawSpawnBanner(room, visual) {
-  const spawn = room.find(FIND_MY_SPAWNS)[0];
-  if (!spawn) return;
+  drawSpawnBanner(room, visual) {
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
 
-  let spawnManagerMemory = null;
+    let spawnManagerMemory = null;
 
-  if (Memory.rooms &&
+    if (
+      Memory.rooms &&
       Memory.rooms[room.name] &&
-      Memory.rooms[room.name].spawnQueue) {
+      Memory.rooms[room.name].spawnQueue
+    ) {
+      spawnManagerMemory = Memory.rooms[room.name].spawnQueue;
+    }
 
-    spawnManagerMemory = Memory.rooms[room.name].spawnQueue;
-  }
+    let spawning = "idle";
 
-  let spawning = "idle";
+    if (spawn.spawning) {
+      const creep = Game.creeps[spawn.spawning.name];
+      spawning =
+        creep && creep.memory ? creep.memory.role : spawn.spawning.name;
+    }
 
-  if (spawn.spawning) {
-    const creep = Game.creeps[spawn.spawning.name];
-    spawning = creep && creep.memory ? creep.memory.role : spawn.spawning.name;
-  }
+    let next = "none";
 
-  let next = "none";
+    if (spawnManagerMemory && spawnManagerMemory.length > 0) {
+      next = spawnManagerMemory[0].role || "unknown";
+    }
 
-  if (spawnManagerMemory && spawnManagerMemory.length > 0) {
-    next = spawnManagerMemory[0].role || "unknown";
-  }
+    const energy = `${room.energyAvailable}/${room.energyCapacityAvailable}`;
 
-  const energy = `${room.energyAvailable}/${room.energyCapacityAvailable}`;
+    const text = `Spawn: ${spawning} | Next: ${next} | E:${energy}`;
 
-  const text = `Spawn: ${spawning} | Next: ${next} | E:${energy}`;
-
-  visual.text(text, spawn.pos.x, spawn.pos.y - 1.2, {
-    align: "center",
-    color: "#aaffff",
-    font: 0.7,
-    opacity: 0.8,
-    backgroundColor: "#000000"
-  });
-}
+    visual.text(text, spawn.pos.x, spawn.pos.y - 1.2, {
+      align: "center",
+      color: "#aaffff",
+      font: 0.7,
+      opacity: 0.8,
+      backgroundColor: "#000000",
+    });
+  },
 
   getCreepTarget(creep) {
     switch (creep.memory.role) {
