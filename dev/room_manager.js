@@ -1,4 +1,3 @@
-const profilerFactory = require("kernel_profiler");
 const roomState = require("room_state");
 const spawnManager = require("spawn_manager");
 const economyManager = require("economy_manager");
@@ -6,6 +5,8 @@ const buildManager = require("build_manager");
 const upgradeManager = require("upgrade_manager");
 const defenseManager = require("defense_manager");
 const layoutManager = require("layout_manager");
+const roomHud = require("room_hud");
+const profilerFactory = require("kernel_profiler");
 
 module.exports = {
   create(room, empire) {
@@ -53,6 +54,7 @@ module.exports = {
       runStructures() {
         spawnManager.run(this);
         defenseManager.run(this);
+        roomHud.run(this);
       },
 
       requestSpawn(request) {
