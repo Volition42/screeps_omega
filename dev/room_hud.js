@@ -43,13 +43,13 @@ module.exports = {
     const y = 1.0;
 
     for (let i = 0; i < lines.length; i++) {
-      visual.text(lines[i], x, y + i * 0.8, {
+      visual.text(lines[i], x, y + i * 0.9, {
         align: "left",
-        color: i === 0 ? "#c7f9ff" : "#9ed8e0",
-        font: 0.62,
-        opacity: 0.8,
+        color: i === 0 ? "#bff6ff" : "#d6fbff",
+        font: 0.8,
+        opacity: 0.9,
         stroke: "#000000",
-        strokeWidth: 0.08,
+        strokeWidth: 0.15,
       });
     }
 
@@ -83,7 +83,8 @@ module.exports = {
     visual.text(text, spawn.pos.x, spawn.pos.y - 1.25, {
       align: "center",
       color: "#7ef7ff",
-      font: 0.58,
+      font: 0.75,
+      strokeWidth: 0.15,
       opacity: 0.82,
       stroke: "#000000",
       strokeWidth: 0.08,
