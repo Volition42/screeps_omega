@@ -5,10 +5,10 @@ module.exports = {
     const visual = room.visual;
 
     this.drawRoomSummary(room, state, visual);
+    this.drawSpawnBanner(room, visual);
 
     if (Game.time % 3 === 0) {
       this.drawCreepLabels(room, visual);
-      this.drawCreepJobLines(room, visual);
     }
 
     if (Game.time % 25 === 0) {
@@ -55,22 +55,34 @@ module.exports = {
     }
   },
 
-  drawCreepJobLines(room, visual) {
-    const creeps = room.find(FIND_MY_CREEPS);
+  drawSpawnBanner(room, visual) {
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
 
-    for (const creep of creeps) {
-      const target = this.getCreepTarget(creep);
-      if (!target || !target.pos) continue;
+    const spawnManagerMemory = Memory.rooms?.[room.name]?.spawnQueue;
 
-      const color = this.getCreepLineColor(creep);
-
-      visual.line(creep.pos, target.pos, {
-        color,
-        width: 0.06,
-        opacity: 0.45,
-        lineStyle: "solid",
-      });
+    let spawning = "idle";
+    if (spawn.spawning) {
+      const creep = Game.creeps[spawn.spawning.name];
+      spawning = creep?.memory?.role || spawn.spawning.name;
     }
+
+    let next = "none";
+    if (spawnManagerMemory && spawnManagerMemory.length > 0) {
+      next = spawnManagerMemory[0].role || "unknown";
+    }
+
+    const energy = `${room.energyAvailable}/${room.energyCapacityAvailable}`;
+
+    const text = `Spawn: ${spawning} | Next: ${next} | E:${energy}`;
+
+    visual.text(text, spawn.pos.x, spawn.pos.y - 1.2, {
+      align: "center",
+      color: "#aaffff",
+      font: 0.7,
+      opacity: 0.8,
+      backgroundColor: "#000000",
+    });
   },
 
   getCreepTarget(creep) {
