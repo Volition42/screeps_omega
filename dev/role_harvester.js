@@ -1,3 +1,5 @@
+const economyManager = require("economy_manager");
+
 module.exports = {
   run(creep) {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
@@ -16,16 +18,19 @@ module.exports = {
       }
 
       if (!source) {
-        const sources = creep.room.find(FIND_SOURCES);
-        if (sources.length > 0) {
-          const index = Game.time % sources.length;
-          source = sources[index];
+        source = economyManager.getLeastAssignedSource(creep.room);
+        if (source) {
           creep.memory.sourceId = source.id;
         }
       }
 
-      if (source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
+      if (source) {
+        const result = creep.harvest(source);
+        if (result === ERR_NOT_IN_RANGE) {
+          creep.moveTo(source, {
+            visualizePathStyle: { stroke: "#ffaa00" },
+          });
+        }
       }
 
       return;
@@ -35,12 +40,15 @@ module.exports = {
       filter: (s) =>
         (s.structureType === STRUCTURE_SPAWN ||
           s.structureType === STRUCTURE_EXTENSION) &&
+        s.store &&
         s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
     });
 
     if (target) {
       if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, { visualizePathStyle: { stroke: "#ffffff" } });
+        creep.moveTo(target, {
+          visualizePathStyle: { stroke: "#ffffff" },
+        });
       }
       return;
     }

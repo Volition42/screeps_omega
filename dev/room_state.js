@@ -5,7 +5,6 @@ module.exports = {
     const sources = room.find(FIND_SOURCES);
     const sites = room.find(FIND_CONSTRUCTION_SITES);
     const hostiles = room.find(FIND_HOSTILE_CREEPS);
-
     const roleCounts = _.countBy(creeps, (c) => c.memory.role);
 
     return {

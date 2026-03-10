@@ -1,3 +1,5 @@
+const buildManager = require("build_manager");
+
 module.exports = {
   run(creep) {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
@@ -12,17 +14,21 @@ module.exports = {
       const source = creep.pos.findClosestByPath(FIND_SOURCES);
       if (source) {
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
+          creep.moveTo(source, {
+            visualizePathStyle: { stroke: "#ffaa00" },
+          });
         }
       }
       return;
     }
 
-    const site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+    const site = buildManager.getPrioritySite(creep.room, creep);
 
     if (site) {
       if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site, { visualizePathStyle: { stroke: "#ffffff" } });
+        creep.moveTo(site, {
+          visualizePathStyle: { stroke: "#ffffff" },
+        });
       }
       return;
     }
