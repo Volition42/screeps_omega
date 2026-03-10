@@ -26,58 +26,69 @@ module.exports = {
         ? Memory.stats.last.cpu.used.toFixed(1)
         : "?";
 
+    const spawnQueue = this.getSpawnQueue(room);
+    const nextQueued =
+      spawnQueue && spawnQueue.length > 0
+        ? (spawnQueue[0].role || "NONE").toUpperCase()
+        : "NONE";
+
     const lines = [
-      `Room: ${room.name}  -  CPU: ${cpuText}  -  E: ${room.energyAvailable}/${room.energyCapacityAvailable}  -  Creeps H:${counts.harvester || 0} M:${counts.miner || 0} Ha:${counts.hauler || 0} U:${counts.upgrader || 0} B:${counts.builder || 0}`,
-      `Phase: ${state.phase || "unknown"}  -  Goal: ${priority}  -  Next: ${milestone}`,
+      `[SECTOR:${room.name}]  CPU ${cpuText}  EN ${room.energyAvailable}/${room.energyCapacityAvailable}  UNIT ${room.find(FIND_MY_CREEPS).length}`,
+      `[PHASE:${(state.phase || "UNKNOWN").toUpperCase()}]  [GOAL:${priority}]`,
+      `[NEXT:${milestone}]  [QUEUE:${nextQueued}]`,
+      `[ROLES H:${counts.harvester || 0} M:${counts.miner || 0} Ha:${counts.hauler || 0} U:${counts.upgrader || 0} B:${counts.builder || 0}]`,
     ];
 
-    const x = 1;
-    const y = 1;
+    const x = 1.0;
+    const y = 1.0;
 
     for (let i = 0; i < lines.length; i++) {
-      visual.text(lines[i], x, y + i * 0.9, {
+      visual.text(lines[i], x, y + i * 0.8, {
         align: "left",
-        color: "#ffffff",
-        font: 0.7,
-        opacity: 0.7,
+        color: i === 0 ? "#c7f9ff" : "#9ed8e0",
+        font: 0.62,
+        opacity: 0.8,
+        stroke: "#000000",
+        strokeWidth: 0.08,
       });
     }
+
+    // subtle top scanline accent
+    visual.line(x, y - 0.35, x + 12.5, y - 0.35, {
+      color: "#6ee7f2",
+      width: 0.03,
+      opacity: 0.45,
+      lineStyle: "solid",
+    });
   },
 
   drawSpawnBanner(room, visual) {
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     if (!spawn) return;
 
-    let spawnQueue = null;
+    const spawnQueue = this.getSpawnQueue(room);
 
-    if (
-      Memory.rooms &&
-      Memory.rooms[room.name] &&
-      Memory.rooms[room.name].spawnQueue
-    ) {
-      spawnQueue = Memory.rooms[room.name].spawnQueue;
-    }
-
-    let spawning = "idle";
-
+    let spawning = "IDLE";
     if (spawn.spawning) {
-      spawning = spawn.spawning.name;
+      spawning = spawn.spawning.name.toUpperCase();
     }
 
-    let next = "none";
-
+    let next = "NONE";
     if (spawnQueue && spawnQueue.length > 0) {
-      next = spawnQueue[0].role || "unknown";
+      next = (spawnQueue[0].role || "UNKNOWN").toUpperCase();
     }
 
-    const text = `Spawn: ${spawning} | Next: ${next} | E:${room.energyAvailable}/${room.energyCapacityAvailable}`;
+    const text = `[SPAWN:${spawning}] [NEXT:${next}] [EN:${room.energyAvailable}/${room.energyCapacityAvailable}]`;
 
-    visual.text(text, spawn.pos.x, spawn.pos.y - 1.2, {
+    visual.text(text, spawn.pos.x, spawn.pos.y - 1.25, {
       align: "center",
-      color: "#aaffff",
-      font: 0.7,
-      opacity: 0.8,
+      color: "#7ef7ff",
+      font: 0.58,
+      opacity: 0.82,
+      stroke: "#000000",
+      strokeWidth: 0.08,
       backgroundColor: "#000000",
+      backgroundPadding: 0.12,
     });
   },
 
@@ -89,26 +100,41 @@ module.exports = {
 
       const style = {
         align: "center",
-        font: 0.6,
-        opacity: 0.7,
+        font: 0.48,
+        opacity: 0.8,
+        stroke: "#000000",
+        strokeWidth: 0.1,
         backgroundColor: "#000000",
+        backgroundPadding: 0.08,
       };
 
       if (creep.ticksToLive && creep.ticksToLive < 100) {
-        style.color = "#ff8888";
+        style.color = "#ff7a7a";
       } else {
-        style.color = "#ffffcc";
+        style.color = "#d8fbff";
       }
 
       visual.text(label, creep.pos.x, creep.pos.y - 0.55, style);
     }
   },
 
+  getSpawnQueue(room) {
+    if (
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].spawnQueue
+    ) {
+      return Memory.rooms[room.name].spawnQueue;
+    }
+
+    return null;
+  },
+
   getCreepLabel(creep) {
     const roleMap = {
       harvester: "H",
       miner: "M",
-      hauler: "Ha",
+      hauler: "HA",
       upgrader: "U",
       builder: "B",
     };
@@ -116,7 +142,7 @@ module.exports = {
     const role = roleMap[creep.memory.role] || "?";
     const state = this.getCreepStateIcon(creep);
 
-    return `${role}${state}`;
+    return `${role}-${state}`;
   },
 
   getCreepStateIcon(creep) {
@@ -126,16 +152,16 @@ module.exports = {
         return creep.store.getFreeCapacity() > 0 ? "⛏" : "⚡";
 
       case "hauler":
-        return creep.memory.delivering ? "📦" : "↩";
+        return creep.memory.delivering ? "PK" : "IN";
 
       case "builder":
-        return creep.memory.working ? "🔧" : "⛏";
+        return creep.memory.working ? "FX" : "IN";
 
       case "upgrader":
-        return creep.memory.working ? "⬆" : "⛏";
+        return creep.memory.working ? "UP" : "IN";
 
       default:
-        return "";
+        return "--";
     }
   },
 
@@ -146,7 +172,7 @@ module.exports = {
       !state.containers ||
       state.containers.length < Math.min(2, state.sources.length)
     ) {
-      return "SOURCE CONTAINERS";
+      return "SOURCE_CONTAINERS";
     }
 
     if (
@@ -154,20 +180,20 @@ module.exports = {
       state.extensions.length < 5 &&
       state.controllerLevel >= 2
     ) {
-      return "BUILD EXTENSIONS";
+      return "BUILD_EXTENSIONS";
     }
 
-    if (state.sites && state.sites.length > 0) return "FINISH CONSTRUCTION";
-    if (state.controllerLevel < 3) return "RUSH RCL3";
+    if (state.sites && state.sites.length > 0) return "FINISH_CONSTRUCTION";
+    if (state.controllerLevel < 3) return "RUSH_RCL3";
 
-    return "STABILIZE ECONOMY";
+    return "STABILIZE_ECONOMY";
   },
 
   getNextMilestone(state) {
-    if (state.controllerLevel < 2) return "RCL2 + extensions";
-    if (state.controllerLevel < 3) return "RCL3 + tower";
-    if (state.controllerLevel < 4) return "RCL4 + more extensions";
-    return "remote mining prep";
+    if (state.controllerLevel < 2) return "RCL2>EXT";
+    if (state.controllerLevel < 3) return "RCL3>TOWER";
+    if (state.controllerLevel < 4) return "RCL4>EXT+";
+    return "REMOTE_MINING";
   },
 
   printConsoleSummary(room, state) {
