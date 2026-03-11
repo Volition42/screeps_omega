@@ -12,15 +12,32 @@ module.exports = {
     if (!mem.lastContainerPlan) mem.lastContainerPlan = 0;
     if (!mem.lastRoadPlan) mem.lastRoadPlan = 0;
 
-    const existingSites = room.find(FIND_CONSTRUCTION_SITES);
-    if (existingSites.length >= 6) return;
-
-    if (Game.time - mem.lastContainerPlan >= 200) {
+    // Always give container planning a chance first.
+    if (Game.time - mem.lastContainerPlan >= 100) {
       this.planSourceContainers(roomManager);
       mem.lastContainerPlan = Game.time;
     }
 
-    if (Game.time - mem.lastRoadPlan >= 500) {
+    const existingSites = room.find(FIND_CONSTRUCTION_SITES);
+
+    // Don't spam more sites once enough are queued.
+    if (existingSites.length >= 6) return;
+
+    // Only plan roads once source container infrastructure is started.
+    const hasContainers =
+      room.find(FIND_STRUCTURES, {
+        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+      }).length > 0;
+
+    const hasContainerSites =
+      room.find(FIND_CONSTRUCTION_SITES, {
+        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+      }).length > 0;
+
+    if (
+      (hasContainers || hasContainerSites) &&
+      Game.time - mem.lastRoadPlan >= 500
+    ) {
       this.planBasicRoads(roomManager);
       mem.lastRoadPlan = Game.time;
     }
