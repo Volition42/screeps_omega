@@ -195,12 +195,10 @@ module.exports = {
 
       const style = {
         align: "center",
-        font: 0.65,
-        opacity: 0.9,
+        font: 0.9,
+        opacity: 0.95,
         stroke: "#000000",
         strokeWidth: 0.18,
-        backgroundColor: "#000000",
-        backgroundPadding: 0.08,
         color: this.getCreepLabelColor(creep),
       };
 
@@ -208,23 +206,23 @@ module.exports = {
         style.color = "#ff7a7a";
       }
 
-      visual.text(label, creep.pos.x, creep.pos.y - 0.55, style);
+      visual.text(label, creep.pos.x, creep.pos.y - 0.9, style);
     }
   },
 
   getCreepLabel(creep) {
     const roleMap = {
       harvester: "H",
-      miner: "M",
-      hauler: "HA",
-      upgrader: "U",
       builder: "B",
+      upgrader: "U",
+      hauler: "H",
+      miner: "M",
     };
 
     const role = roleMap[creep.memory.role] || "?";
-    const state = this.getCreepStateIcon(creep);
+    const task = this.getCreepTaskIcon(creep);
 
-    return `${role}-${state}`;
+    return `${role} ${task}`;
   },
 
   getCreepLabelColor(creep) {
@@ -241,6 +239,28 @@ module.exports = {
         return "#66c7ff";
       default:
         return "#d8fbff";
+    }
+  },
+
+  getCreepTaskIcon(creep) {
+    switch (creep.memory.role) {
+      case "harvester":
+        return creep.store.getFreeCapacity() > 0 ? "⛏" : "⚡";
+
+      case "miner":
+        return creep.store.getFreeCapacity() > 0 ? "⚡" : "⛏";
+
+      case "hauler":
+        return creep.memory.delivering ? "📦" : "↩";
+
+      case "builder":
+        return creep.memory.working ? "🔧" : "⛏";
+
+      case "upgrader":
+        return creep.memory.working ? "⬆" : "⛏";
+
+      default:
+        return "•";
     }
   },
 
