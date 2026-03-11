@@ -1,17 +1,41 @@
+const HUD = {
+  ENABLED: true,
+
+  ROOM_SUMMARY: true,
+  CREEP_LABELS: true,
+  CONSOLE_SUMMARY: true,
+
+  SHOW_CPU: true,
+  SHOW_ROLES: true,
+  SHOW_SPAWN_STATUS: true,
+  SHOW_SOURCE_STATUS: true,
+  SHOW_ETA: true,
+
+  CREEP_LABEL_INTERVAL: 3,
+  CONSOLE_SUMMARY_INTERVAL: 25,
+};
+
 module.exports = {
   run(roomManager) {
+    if (!HUD.ENABLED) return;
+
     const room = roomManager.room;
     const state = roomManager.state;
     const visual = room.visual;
 
-    this.trackUpgradeRate(room);
-    this.drawRoomSummary(room, state, visual);
+    if (HUD.SHOW_ETA) {
+      this.trackUpgradeRate(room);
+    }
 
-    if (Game.time % 3 === 0) {
+    if (HUD.ROOM_SUMMARY) {
+      this.drawRoomSummary(room, state, visual);
+    }
+
+    if (HUD.CREEP_LABELS && Game.time % HUD.CREEP_LABEL_INTERVAL === 0) {
       this.drawCreepLabels(room, visual);
     }
 
-    if (Game.time % 25 === 0) {
+    if (HUD.CONSOLE_SUMMARY && Game.time % HUD.CONSOLE_SUMMARY_INTERVAL === 0) {
       this.printConsoleSummary(room, state);
     }
   },
@@ -72,7 +96,7 @@ module.exports = {
     const counts = state.roleCounts || {};
     const priority = this.getPriority(state);
     const milestone = this.getNextMilestone(state);
-    const eta = this.getUpgradeETA(room);
+    const eta = HUD.SHOW_ETA ? this.getUpgradeETA(room) : null;
 
     const cpuText =
       Memory.stats && Memory.stats.last && Memory.stats.last.cpu
@@ -82,15 +106,40 @@ module.exports = {
     const spawnInfo = this.getSpawnStatus(room);
     const sourceInfo = this.getSourceStatus(room);
 
-    const lines = [
-      `[SECTOR:${room.name}] CPU ${cpuText} EN ${room.energyAvailable}/${room.energyCapacityAvailable} UNIT ${room.find(FIND_MY_CREEPS).length}`,
-      `[PHASE:${(state.phase || "UNKNOWN").toUpperCase()}] [GOAL:${priority}]`,
-      `[NEXT:${milestone} ETA:${eta}] [SPAWN:${spawnInfo.current}] [QUEUE:${spawnInfo.next}]`,
-      `[ROLES H:${counts.harvester || 0} M:${counts.miner || 0} HA:${counts.hauler || 0} U:${counts.upgrader || 0} B:${counts.builder || 0}]`,
-    ];
+    const lines = [];
 
-    for (let i = 0; i < sourceInfo.length; i++) {
-      lines.push(sourceInfo[i]);
+    let topLine = `[SECTOR:${room.name}] EN ${room.energyAvailable}/${room.energyCapacityAvailable} UNIT ${room.find(FIND_MY_CREEPS).length}`;
+    if (HUD.SHOW_CPU) {
+      topLine = `[SECTOR:${room.name}] CPU ${cpuText} EN ${room.energyAvailable}/${room.energyCapacityAvailable} UNIT ${room.find(FIND_MY_CREEPS).length}`;
+    }
+    lines.push(topLine);
+
+    lines.push(
+      `[PHASE:${(state.phase || "UNKNOWN").toUpperCase()}] [GOAL:${priority}]`,
+    );
+
+    let nextLine = `[NEXT:${milestone}`;
+    if (HUD.SHOW_ETA && eta) {
+      nextLine += ` ETA:${eta}`;
+    }
+    nextLine += `]`;
+
+    if (HUD.SHOW_SPAWN_STATUS) {
+      nextLine += ` [SPAWN:${spawnInfo.current}] [QUEUE:${spawnInfo.next}]`;
+    }
+
+    lines.push(nextLine);
+
+    if (HUD.SHOW_ROLES) {
+      lines.push(
+        `[ROLES H:${counts.harvester || 0} M:${counts.miner || 0} HA:${counts.hauler || 0} U:${counts.upgrader || 0} B:${counts.builder || 0}]`,
+      );
+    }
+
+    if (HUD.SHOW_SOURCE_STATUS) {
+      for (let i = 0; i < sourceInfo.length; i++) {
+        lines.push(sourceInfo[i]);
+      }
     }
 
     const x = 1.0;
