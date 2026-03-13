@@ -1,56 +1,58 @@
+/*
+Developer Summary:
+Construction Status
+
+Purpose:
+- Shared source of truth for roadmap completion
+- Keeps room_state, construction_manager, HUD, and directives in sync
+- Calculates current construction targets based on phase + roadmap + stamp plans
+
+Important Notes:
+- Road goals include backbone roads plus stamp-road goals.
+- Extension goals are controller-limit based.
+- Tower goals are controller-limit based.
+- Defense goals are terrain-aware and use the same logic as construction planning.
+*/
+
 const config = require("config");
+const roadmap = require("construction_roadmap");
+const stamps = require("stamp_library");
 
 module.exports = {
-  /*
-  Developer Note:
-  Shared construction roadmap / checklist calculator.
-
-  Purpose:
-  - Keep phase handling, HUD, directives, and construction planning in sync
-  - Provide one source of truth for "what should exist right now"
-
-  Current roadmap intent:
-  - bootstrap_jr:
-      no formal construction requirements
-  - bootstrap:
-      source containers, controller container, backbone roads
-  - developing:
-      current-RCL extensions, defense baseline, tower at RCL3
-  - stable:
-      same roadmap, but room should be mostly caught up
-  */
-
   getStatus(room, state) {
     if (!room.controller) {
       return this.getEmptyStatus();
     }
 
-    const sourceContainersBuilt = state.sourceContainers
+    var plan = roadmap.getPlan(state.phase, room.controller.level);
+    var anchor = stamps.getAnchorOrigin(room, state);
+
+    var sourceContainersBuilt = state.sourceContainers
       ? state.sourceContainers.length
       : 0;
-    const sourceContainersNeeded = state.sources ? state.sources.length : 0;
+    var sourceContainersNeeded = state.sources ? state.sources.length : 0;
 
-    const controllerContainersBuilt = this.countControllerContainers(room);
-    const controllerContainersNeeded = 1;
+    var controllerContainersBuilt = this.countControllerContainers(room);
+    var controllerContainersNeeded = 1;
 
-    const extensionsAllowed =
-      CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION][room.controller.level] || 0;
-    const extensionsBuilt = this.countBuiltAndSites(room, STRUCTURE_EXTENSION);
+    var extensionsNeeded = roadmap.getDesiredExtensionCount(
+      room.controller.level,
+    );
+    var extensionsBuilt = this.countBuiltAndSites(room, STRUCTURE_EXTENSION);
 
-    const towersAllowed =
-      CONTROLLER_STRUCTURES[STRUCTURE_TOWER][room.controller.level] || 0;
-    const towersBuilt = this.countBuiltAndSites(room, STRUCTURE_TOWER);
+    var towersNeeded = roadmap.getDesiredTowerCount(room.controller.level);
+    var towersBuilt = this.countBuiltAndSites(room, STRUCTURE_TOWER);
 
-    const roadsBuilt = this.countBuiltAndSites(room, STRUCTURE_ROAD);
-    const roadGoal = this.getRoadGoal(room, state);
+    var roadsBuilt = this.countBuiltAndSites(room, STRUCTURE_ROAD);
+    var roadsNeeded = this.getRoadGoal(room, state, plan, anchor);
 
-    const defenseGoal = this.getDefenseGoal(room, state);
-    const wallsBuilt = this.countBuiltAndSites(room, STRUCTURE_WALL);
-    const rampartsBuilt = this.countBuiltAndSites(room, STRUCTURE_RAMPART);
+    var defenseGoal = this.getDefenseGoal(room, state);
+    var wallsBuilt = this.countBuiltAndSites(room, STRUCTURE_WALL);
+    var rampartsBuilt = this.countBuiltAndSites(room, STRUCTURE_RAMPART);
 
-    const sites = room.find(FIND_CONSTRUCTION_SITES).length;
+    var sites = room.find(FIND_CONSTRUCTION_SITES).length;
 
-    const status = {
+    var status = {
       phase: state.phase,
       sites: sites,
 
@@ -61,13 +63,13 @@ module.exports = {
       controllerContainersNeeded: controllerContainersNeeded,
 
       extensionsBuilt: extensionsBuilt,
-      extensionsNeeded: extensionsAllowed,
+      extensionsNeeded: extensionsNeeded,
 
       towersBuilt: towersBuilt,
-      towersNeeded: towersAllowed,
+      towersNeeded: towersNeeded,
 
       roadsBuilt: roadsBuilt,
-      roadsNeeded: roadGoal,
+      roadsNeeded: roadsNeeded,
 
       wallsBuilt: wallsBuilt,
       wallsNeeded: defenseGoal.walls,
@@ -124,37 +126,14 @@ module.exports = {
     };
   },
 
-  countControllerContainers(room) {
-    return (
-      room.find(FIND_STRUCTURES, {
-        filter: function (s) {
-          return (
-            s.structureType === STRUCTURE_CONTAINER &&
-            room.controller &&
-            s.pos.getRangeTo(room.controller) <= 4
-          );
-        },
-      }).length +
-      room.find(FIND_CONSTRUCTION_SITES, {
-        filter: function (s) {
-          return (
-            s.structureType === STRUCTURE_CONTAINER &&
-            room.controller &&
-            s.pos.getRangeTo(room.controller) <= 4
-          );
-        },
-      }).length
-    );
-  },
-
   countBuiltAndSites(room, structureType) {
-    const built = room.find(FIND_STRUCTURES, {
+    var built = room.find(FIND_STRUCTURES, {
       filter: function (s) {
         return s.structureType === structureType;
       },
     }).length;
 
-    const sites = room.find(FIND_CONSTRUCTION_SITES, {
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
       filter: function (s) {
         return s.structureType === structureType;
       },
@@ -163,21 +142,94 @@ module.exports = {
     return built + sites;
   },
 
-  getRoadGoal(room, state) {
-    const spawn = state.spawns && state.spawns[0];
+  countControllerContainers(room) {
+    var built = room.find(FIND_STRUCTURES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_CONTAINER &&
+          room.controller &&
+          s.pos.getRangeTo(room.controller) <= 4
+        );
+      },
+    }).length;
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_CONTAINER &&
+          room.controller &&
+          s.pos.getRangeTo(room.controller) <= 4
+        );
+      },
+    }).length;
+
+    return built + sites;
+  },
+
+  getRoadGoal(room, state, plan, anchor) {
+    var total = 0;
+
+    // Backbone roads
+    total += this.getBackboneRoadGoal(room, state);
+
+    // Anchor roads
+    if (anchor && this.hasAction(plan, "anchorRoads")) {
+      total += this.countStampRoadCells(room, anchor, "anchor_v1");
+    }
+
+    // Extension stamp roads
+    if (anchor && this.hasAction(plan, "extensionStamps")) {
+      var extensionStampsNeeded = Math.ceil(
+        roadmap.getDesiredExtensionCount(room.controller.level) /
+          Math.max(1, stamps.getExtensionCapacity("extension_plus_v1")),
+      );
+
+      var extensionOrigins = stamps.getExtensionStampOrigins(anchor);
+      for (
+        var i = 0;
+        i < extensionOrigins.length && i < extensionStampsNeeded;
+        i++
+      ) {
+        total += this.countStampRoadCells(
+          room,
+          extensionOrigins[i],
+          "extension_plus_v1",
+        );
+      }
+    }
+
+    // Tower stamp roads
+    if (anchor && this.hasAction(plan, "towerStamp")) {
+      var towerStampsNeeded =
+        roadmap.getDesiredTowerCount(room.controller.level) > 0 ? 1 : 0;
+
+      var towerOrigins = stamps.getTowerStampOrigins(anchor);
+      for (var j = 0; j < towerOrigins.length && j < towerStampsNeeded; j++) {
+        total += this.countStampRoadCells(
+          room,
+          towerOrigins[j],
+          "tower_cluster_v1",
+        );
+      }
+    }
+
+    return total;
+  },
+
+  getBackboneRoadGoal(room, state) {
+    var spawn = state.spawns && state.spawns[0];
     if (!spawn) return 0;
 
-    let estimate = 0;
+    var estimate = 0;
+    var sourceContainers = state.sourceContainers || [];
+    var controllerContainers = state.controllerContainers || [];
 
-    const sourceContainers = state.sourceContainers || [];
-    const controllerContainers = state.controllerContainers || [];
-
-    for (let i = 0; i < sourceContainers.length; i++) {
-      const sourceContainer = sourceContainers[i];
+    for (var i = 0; i < sourceContainers.length; i++) {
+      var sourceContainer = sourceContainers[i];
       estimate += Math.max(1, sourceContainer.pos.getRangeTo(spawn.pos));
 
-      for (let j = 0; j < controllerContainers.length; j++) {
-        const controllerContainer = controllerContainers[j];
+      for (var j = 0; j < controllerContainers.length; j++) {
+        var controllerContainer = controllerContainers[j];
         estimate += Math.max(
           1,
           sourceContainer.pos.getRangeTo(controllerContainer.pos),
@@ -185,22 +237,30 @@ module.exports = {
       }
     }
 
-    const extensions = room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return s.structureType === STRUCTURE_EXTENSION;
-      },
-    });
-
-    for (let i = 0; i < extensions.length; i++) {
-      estimate += Math.max(1, extensions[i].pos.getRangeTo(spawn.pos));
-    }
-
     return estimate;
   },
 
+  countStampRoadCells(room, origin, stampName) {
+    var terrain = room.getTerrain();
+    var count = 0;
+
+    stamps.forEachRoadPosition(
+      origin,
+      stampName,
+      function (pos) {
+        if (pos.x < 2 || pos.x > 47 || pos.y < 2 || pos.y > 47) return;
+        if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) return;
+        count++;
+      },
+      this,
+    );
+
+    return count;
+  },
+
   getDefenseGoal(room, state) {
-    const spawn = state.spawns && state.spawns[0];
-    const controller = room.controller;
+    var spawn = state.spawns && state.spawns[0];
+    var controller = room.controller;
 
     if (!spawn || !controller || !config.DEFENSE.ENABLED) {
       return { walls: 0, ramparts: 0 };
@@ -210,37 +270,24 @@ module.exports = {
       return { walls: 0, ramparts: 0 };
     }
 
-    const paddingX = config.DEFENSE.PADDING_X || 5;
-    const paddingY = config.DEFENSE.PADDING_Y || 5;
+    var paddingX = config.DEFENSE.PADDING_X || 5;
+    var paddingY = config.DEFENSE.PADDING_Y || 5;
 
-    const minX = Math.max(
-      2,
-      Math.min(spawn.pos.x, controller.pos.x) - paddingX,
-    );
-    const maxX = Math.min(
-      47,
-      Math.max(spawn.pos.x, controller.pos.x) + paddingX,
-    );
-    const minY = Math.max(
-      2,
-      Math.min(spawn.pos.y, controller.pos.y) - paddingY,
-    );
-    const maxY = Math.min(
-      47,
-      Math.max(spawn.pos.y, controller.pos.y) + paddingY,
-    );
+    var minX = Math.max(2, Math.min(spawn.pos.x, controller.pos.x) - paddingX);
+    var maxX = Math.min(47, Math.max(spawn.pos.x, controller.pos.x) + paddingX);
+    var minY = Math.max(2, Math.min(spawn.pos.y, controller.pos.y) - paddingY);
+    var maxY = Math.min(47, Math.max(spawn.pos.y, controller.pos.y) + paddingY);
 
-    const terrain = room.getTerrain();
+    var terrain = room.getTerrain();
+    var walls = 0;
+    var ramparts = 0;
 
-    let walls = 0;
-    let ramparts = 0;
+    var northGateX = Math.floor((minX + maxX) / 2);
+    var southGateX = northGateX;
+    var westGateY = Math.floor((minY + maxY) / 2);
+    var eastGateY = westGateY;
 
-    const northGateX = Math.floor((minX + maxX) / 2);
-    const southGateX = northGateX;
-    const westGateY = Math.floor((minY + maxY) / 2);
-    const eastGateY = westGateY;
-
-    for (let x = minX; x <= maxX; x++) {
+    for (var x = minX; x <= maxX; x++) {
       if (terrain.get(x, minY) !== TERRAIN_MASK_WALL) {
         if (x === northGateX) ramparts++;
         else walls++;
@@ -252,7 +299,7 @@ module.exports = {
       }
     }
 
-    for (let y = minY + 1; y <= maxY - 1; y++) {
+    for (var y = minY + 1; y <= maxY - 1; y++) {
       if (terrain.get(minX, y) !== TERRAIN_MASK_WALL) {
         if (y === westGateY) ramparts++;
         else walls++;
@@ -265,5 +312,10 @@ module.exports = {
     }
 
     return { walls: walls, ramparts: ramparts };
+  },
+
+  hasAction(plan, action) {
+    if (!plan || !plan.actions) return false;
+    return plan.actions.indexOf(action) !== -1;
   },
 };
