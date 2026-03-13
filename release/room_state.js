@@ -1,5 +1,6 @@
 const utils = require("utils");
 const config = require("config");
+const constructionStatus = require("construction_status");
 
 module.exports = {
   collect(room) {
@@ -26,50 +27,76 @@ module.exports = {
       phase = "bootstrap";
     }
 
-    if (
-      phase !== "bootstrap_jr" &&
-      sourceContainers.length >= sources.length &&
-      controllerContainers.length >= 1
-    ) {
+    const provisionalState = {
+      roomName: room.name,
+      room: room,
+      creeps: creeps,
+      spawns: spawns,
+      sources: sources,
+      sites: sites,
+      structures: structures,
+      hostileCreeps: hostileCreeps,
+      sourceContainers: sourceContainers,
+      controllerContainers: controllerContainers,
+      extensions: extensions,
+      roleCounts: roleCounts,
+      energyAvailable: room.energyAvailable,
+      energyCapacityAvailable: room.energyCapacityAvailable,
+      controllerLevel: room.controller ? room.controller.level : 0,
+      phase: phase,
+    };
+
+    const buildStatus = constructionStatus.getStatus(room, provisionalState);
+
+    if (phase !== "bootstrap_jr" && buildStatus.bootstrapComplete) {
       phase = "developing";
     }
 
+    const desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
+
     if (
       phase === "developing" &&
+      buildStatus.developingComplete &&
       (roleCounts.worker || 0) >= config.CREEPS.workers &&
       (roleCounts.upgrader || 0) >= config.CREEPS.upgraders &&
       (roleCounts.miner || 0) >=
         sources.length * config.CREEPS.minersPerSource &&
-      (roleCounts.hauler || 0) >= this.getDesiredTotalHaulers(sources)
+      (roleCounts.hauler || 0) >= desiredTotalHaulers
     ) {
       phase = "stable";
     }
 
-    return {
+    const finalState = {
       roomName: room.name,
-      room,
-      creeps,
-      spawns,
-      sources,
-      sites,
-      structures,
-      hostileCreeps,
-      sourceContainers,
-      controllerContainers,
-      extensions,
-      roleCounts,
+      room: room,
+      creeps: creeps,
+      spawns: spawns,
+      sources: sources,
+      sites: sites,
+      structures: structures,
+      hostileCreeps: hostileCreeps,
+      sourceContainers: sourceContainers,
+      controllerContainers: controllerContainers,
+      extensions: extensions,
+      roleCounts: roleCounts,
       energyAvailable: room.energyAvailable,
       energyCapacityAvailable: room.energyCapacityAvailable,
       controllerLevel: room.controller ? room.controller.level : 0,
-      phase,
+      phase: phase,
     };
+
+    finalState.buildStatus = constructionStatus.getStatus(room, finalState);
+
+    return finalState;
   },
 
   getDesiredTotalHaulers(sources) {
     let total = 0;
     const overrides = config.CREEPS.haulersPerSourceBySourceId || {};
 
-    for (const source of sources) {
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i];
+
       if (Object.prototype.hasOwnProperty.call(overrides, source.id)) {
         total += overrides[source.id];
       } else {

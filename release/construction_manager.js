@@ -1,8 +1,18 @@
 const config = require("config");
 const utils = require("utils");
+const constructionStatus = require("construction_status");
 
 module.exports = {
+  /*
+  Developer Note:
+  Construction is phase-driven and synced to construction_status.js.
+
+  This file decides what to place.
+  construction_status decides what "done enough" means.
+  */
+
   plan(room, state) {
+    if (!Memory.rooms) Memory.rooms = {};
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
     if (!Memory.rooms[room.name].construction) {
       Memory.rooms[room.name].construction = {};
@@ -14,55 +24,121 @@ module.exports = {
     if (Game.time - mem.lastPlan < config.CONSTRUCTION.PLAN_INTERVAL) return;
     mem.lastPlan = Game.time;
 
-    if (
-      room.find(FIND_CONSTRUCTION_SITES).length >= config.CONSTRUCTION.MAX_SITES
-    ) {
-      return;
+    switch (state.phase) {
+      case "bootstrap_jr":
+        this.planBootstrapJr(room, state);
+        break;
+
+      case "bootstrap":
+        this.planBootstrap(room, state);
+        break;
+
+      case "developing":
+        this.planDeveloping(room, state);
+        break;
+
+      case "stable":
+        this.planStable(room, state);
+        break;
+
+      default:
+        this.planBootstrap(room, state);
+        break;
     }
+  },
 
+  planBootstrapJr(room, state) {},
+
+  planBootstrap(room, state) {
+    if (this.isSiteCapReached(room)) return;
     this.placeSourceContainers(room, state);
-    this.placeControllerContainers(room, state);
 
-    if (this.isReadyForRoads(room, state)) {
+    if (this.isSiteCapReached(room)) return;
+    this.placeControllerContainers(room);
+
+    const status = constructionStatus.getStatus(room, state);
+
+    if (
+      status.sourceContainersBuilt >= status.sourceContainersNeeded &&
+      status.controllerContainersBuilt >= status.controllerContainersNeeded
+    ) {
+      if (this.isSiteCapReached(room)) return;
+      this.placeRoads(room, state);
+    }
+  },
+
+  planDeveloping(room, state) {
+    if (this.isSiteCapReached(room)) return;
+    this.placeSourceContainers(room, state);
+
+    if (this.isSiteCapReached(room)) return;
+    this.placeControllerContainers(room);
+
+    const status = constructionStatus.getStatus(room, state);
+
+    if (
+      status.sourceContainersBuilt >= status.sourceContainersNeeded &&
+      status.controllerContainersBuilt >= status.controllerContainersNeeded
+    ) {
+      if (this.isSiteCapReached(room)) return;
       this.placeRoads(room, state);
     }
 
-    if (this.isReadyForDefense(room, state)) {
+    if (this.isSiteCapReached(room)) return;
+    this.placeExtensions(room, state);
+
+    if (this.isSiteCapReached(room)) return;
+    this.placeInternalRoads(room, state);
+
+    if (
+      config.DEFENSE.ENABLED &&
+      room.controller &&
+      room.controller.level >= config.DEFENSE.MIN_CONTROLLER_LEVEL
+    ) {
+      if (this.isSiteCapReached(room)) return;
       this.placeDefense(room, state);
     }
 
-    if (this.isReadyForTower(room, state)) {
+    if (room.controller && room.controller.level >= 3) {
+      if (this.isSiteCapReached(room)) return;
       this.placeTower(room, state);
     }
   },
 
-  isReadyForRoads(room, state) {
-    const allSourceContainersBuilt =
-      state.sourceContainers.length >= state.sources.length;
+  planStable(room, state) {
+    if (this.isSiteCapReached(room)) return;
+    this.placeExtensions(room, state);
 
-    const controllerContainerBuilt = state.controllerContainers.length >= 1;
+    if (this.isSiteCapReached(room)) return;
+    this.placeInternalRoads(room, state);
 
-    return allSourceContainersBuilt && controllerContainerBuilt;
+    if (
+      config.DEFENSE.ENABLED &&
+      room.controller &&
+      room.controller.level >= config.DEFENSE.MIN_CONTROLLER_LEVEL
+    ) {
+      if (this.isSiteCapReached(room)) return;
+      this.placeDefense(room, state);
+    }
+
+    if (room.controller && room.controller.level >= 3) {
+      if (this.isSiteCapReached(room)) return;
+      this.placeTower(room, state);
+    }
   },
 
-  isReadyForDefense(room, state) {
-    if (!config.DEFENSE.ENABLED) return false;
-    if (!room.controller) return false;
-    if (room.controller.level < config.DEFENSE.MIN_CONTROLLER_LEVEL)
-      return false;
-
-    return this.isReadyForRoads(room, state);
-  },
-
-  isReadyForTower(room, state) {
-    if (!room.controller) return false;
-    if (room.controller.level < 3) return false;
-
-    return this.isReadyForDefense(room, state);
+  isSiteCapReached(room) {
+    return (
+      room.find(FIND_CONSTRUCTION_SITES).length >= config.CONSTRUCTION.MAX_SITES
+    );
   },
 
   placeSourceContainers(room, state) {
-    for (const source of state.sources) {
+    for (let i = 0; i < state.sources.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+
+      const source = state.sources[i];
+
       const existing = source.pos.findInRange(FIND_STRUCTURES, 1, {
         filter: function (s) {
           return s.structureType === STRUCTURE_CONTAINER;
@@ -84,10 +160,8 @@ module.exports = {
     }
   },
 
-  placeControllerContainers(room, state) {
+  placeControllerContainers(room) {
     if (!room.controller) return;
-
-    const desiredControllerContainers = 1;
 
     const existing = room.find(FIND_STRUCTURES, {
       filter: function (s) {
@@ -107,43 +181,15 @@ module.exports = {
       },
     }).length;
 
-    const needed = desiredControllerContainers - existing - existingSites;
-    if (needed <= 0) return;
+    if (existing + existingSites >= 1) return;
 
-    const nearbyControllerContainer = room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          s.pos.getRangeTo(room.controller) <= 4
-        );
-      },
-    })[0];
+    const positions = utils.getControllerContainerPositions(room, 1);
 
-    const nearbyControllerContainerSite = room.find(FIND_CONSTRUCTION_SITES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          s.pos.getRangeTo(room.controller) <= 4
-        );
-      },
-    })[0];
+    for (let i = 0; i < positions.length; i++) {
+      if (this.isSiteCapReached(room)) return;
 
-    if (nearbyControllerContainer || nearbyControllerContainerSite) return;
-
-    const positions = utils.getControllerContainerPositions(
-      room,
-      desiredControllerContainers,
-    );
-
-    let placed = 0;
-
-    for (const pos of positions) {
-      const result = pos.createConstructionSite(STRUCTURE_CONTAINER);
-      if (result === OK) {
-        placed++;
-      }
-
-      if (placed >= needed) break;
+      const result = positions[i].createConstructionSite(STRUCTURE_CONTAINER);
+      if (result === OK) return;
     }
   },
 
@@ -154,12 +200,39 @@ module.exports = {
     const sourceContainers = state.sourceContainers;
     const controllerContainers = state.controllerContainers;
 
-    for (const container of sourceContainers) {
+    for (let i = 0; i < sourceContainers.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+
+      const container = sourceContainers[i];
       this.placeRoadPath(room, container.pos, spawn.pos, 1);
 
-      for (const controllerContainer of controllerContainers) {
-        this.placeRoadPath(room, container.pos, controllerContainer.pos, 0);
+      for (let j = 0; j < controllerContainers.length; j++) {
+        if (this.isSiteCapReached(room)) return;
+        this.placeRoadPath(room, container.pos, controllerContainers[j].pos, 0);
       }
+    }
+  },
+
+  placeInternalRoads(room, state) {
+    const spawn = state.spawns[0];
+    const controller = room.controller;
+    if (!spawn || !controller) return;
+
+    const controllerContainers = state.controllerContainers || [];
+    for (let i = 0; i < controllerContainers.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+      this.placeRoadPath(room, spawn.pos, controllerContainers[i].pos, 1);
+    }
+
+    const extensions = room.find(FIND_MY_STRUCTURES, {
+      filter: function (s) {
+        return s.structureType === STRUCTURE_EXTENSION;
+      },
+    });
+
+    for (let i = 0; i < extensions.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+      this.placeRoadPath(room, spawn.pos, extensions[i].pos, 1);
     }
   },
 
@@ -169,7 +242,10 @@ module.exports = {
       range: range,
     });
 
-    for (const step of path) {
+    for (let i = 0; i < path.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+
+      const step = path[i];
       const pos = new RoomPosition(step.x, step.y, room.name);
 
       const structureHere = pos.lookFor(LOOK_STRUCTURES);
@@ -196,16 +272,82 @@ module.exports = {
     }
   },
 
+  placeExtensions(room, state) {
+    if (!room.controller) return;
+
+    const status = constructionStatus.getStatus(room, state);
+    const needed = status.extensionsNeeded - status.extensionsBuilt;
+    if (needed <= 0) return;
+
+    const candidates = this.getExtensionPositions(room, state);
+
+    let placed = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+      if (placed >= needed) return;
+
+      const result = candidates[i].createConstructionSite(STRUCTURE_EXTENSION);
+      if (result === OK) {
+        placed++;
+      }
+    }
+  },
+
+  getExtensionPositions(room, state) {
+    const spawn = state.spawns[0];
+    const controller = room.controller;
+    if (!spawn || !controller) return [];
+
+    const terrain = room.getTerrain();
+    const candidates = [];
+
+    for (let x = spawn.pos.x - 6; x <= spawn.pos.x + 6; x++) {
+      for (let y = spawn.pos.y - 6; y <= spawn.pos.y + 6; y++) {
+        if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+
+        const pos = new RoomPosition(x, y, room.name);
+        const spawnRange = pos.getRangeTo(spawn.pos);
+        const controllerRange = pos.getRangeTo(controller.pos);
+
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+        if (spawnRange < 2) continue;
+        if (spawnRange > 5) continue;
+        if (controllerRange > 8) continue;
+
+        const structures = pos.lookFor(LOOK_STRUCTURES);
+        const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+        const blocked = _.some(structures, function (s) {
+          return s.structureType !== STRUCTURE_ROAD;
+        });
+
+        if (blocked || sites.length > 0) continue;
+
+        candidates.push(pos);
+      }
+    }
+
+    candidates.sort(function (a, b) {
+      const aScore = a.getRangeTo(spawn.pos) + a.getRangeTo(controller.pos);
+      const bScore = b.getRangeTo(spawn.pos) + b.getRangeTo(controller.pos);
+      return aScore - bScore;
+    });
+
+    return candidates;
+  },
+
   placeDefense(room, state) {
     const plan = this.getDefenseRing(room, state);
     if (!plan) return;
 
-    for (const gate of plan.gates) {
-      this.tryPlaceDefensiveSite(gate, STRUCTURE_RAMPART);
+    for (let i = 0; i < plan.gates.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+      this.tryPlaceDefensiveSite(plan.gates[i], STRUCTURE_RAMPART);
     }
 
-    for (const wall of plan.walls) {
-      this.tryPlaceDefensiveSite(wall, STRUCTURE_WALL);
+    for (let i = 0; i < plan.walls.length; i++) {
+      if (this.isSiteCapReached(room)) return;
+      this.tryPlaceDefensiveSite(plan.walls[i], STRUCTURE_WALL);
     }
   },
 
@@ -273,25 +415,37 @@ module.exports = {
       }
     }
 
-    return { walls, gates };
+    return { walls: walls, gates: gates };
+  },
+
+  tryPlaceDefensiveSite(pos, structureType) {
+    const structures = pos.lookFor(LOOK_STRUCTURES);
+    const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+    const hasSameStructure = _.some(structures, function (s) {
+      return s.structureType === structureType;
+    });
+
+    const hasSameSite = _.some(sites, function (s) {
+      return s.structureType === structureType;
+    });
+
+    const blocked = _.some(structures, function (s) {
+      return (
+        s.structureType !== STRUCTURE_ROAD &&
+        s.structureType !== STRUCTURE_CONTAINER &&
+        s.structureType !== structureType
+      );
+    });
+
+    if (hasSameStructure || hasSameSite || blocked) return;
+
+    pos.createConstructionSite(structureType);
   },
 
   placeTower(room, state) {
-    const existingTowers = room.find(FIND_MY_STRUCTURES, {
-      filter: function (s) {
-        return s.structureType === STRUCTURE_TOWER;
-      },
-    }).length;
-
-    const existingTowerSites = room.find(FIND_CONSTRUCTION_SITES, {
-      filter: function (s) {
-        return s.structureType === STRUCTURE_TOWER;
-      },
-    }).length;
-
-    const desiredTowers = config.DEFENSE.towerCountAtRCL3;
-
-    if (existingTowers + existingTowerSites >= desiredTowers) return;
+    const status = constructionStatus.getStatus(room, state);
+    if (status.towersBuilt >= status.towersNeeded) return;
 
     const spawn = state.spawns[0];
     const controller = room.controller;
@@ -327,30 +481,5 @@ module.exports = {
     if (candidates.length > 0) {
       candidates[0].createConstructionSite(STRUCTURE_TOWER);
     }
-  },
-
-  tryPlaceDefensiveSite(pos, structureType) {
-    const structures = pos.lookFor(LOOK_STRUCTURES);
-    const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
-
-    const hasSameStructure = _.some(structures, function (s) {
-      return s.structureType === structureType;
-    });
-
-    const hasSameSite = _.some(sites, function (s) {
-      return s.structureType === structureType;
-    });
-
-    const blocked = _.some(structures, function (s) {
-      return (
-        s.structureType !== STRUCTURE_ROAD &&
-        s.structureType !== STRUCTURE_CONTAINER &&
-        s.structureType !== structureType
-      );
-    });
-
-    if (hasSameStructure || hasSameSite || blocked) return;
-
-    pos.createConstructionSite(structureType);
   },
 };
