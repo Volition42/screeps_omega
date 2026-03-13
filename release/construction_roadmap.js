@@ -52,6 +52,7 @@ module.exports = {
             "backboneRoads",
             "extensionStamps",
             "towerStamp",
+            "storage",
             "internalRoads",
             "defense",
           ],

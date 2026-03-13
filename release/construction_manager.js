@@ -77,6 +77,9 @@ module.exports = {
         case "internalRoads":
           this.placeInternalRoads(room, state);
           break;
+        case "storage":
+          this.placeStorage(room, state);
+          break;
 
         case "defense":
           this.placeDefense(room, state);
@@ -89,6 +92,45 @@ module.exports = {
     return (
       room.find(FIND_CONSTRUCTION_SITES).length >= config.CONSTRUCTION.MAX_SITES
     );
+  },
+
+  placeStorage(room, state) {
+    if (!room.controller || room.controller.level < 4) return;
+
+    const existing = room.find(FIND_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_STORAGE,
+    }).length;
+
+    const sites = room.find(FIND_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType === STRUCTURE_STORAGE,
+    }).length;
+
+    if (existing + sites > 0) return;
+
+    const spawn = state.spawns[0];
+    if (!spawn) return;
+
+    const candidates = [
+      { x: spawn.pos.x + 2, y: spawn.pos.y },
+      { x: spawn.pos.x - 2, y: spawn.pos.y },
+      { x: spawn.pos.x, y: spawn.pos.y + 2 },
+      { x: spawn.pos.x, y: spawn.pos.y - 2 },
+    ];
+
+    for (const c of candidates) {
+      const pos = new RoomPosition(c.x, c.y, room.name);
+
+      if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
+
+      const blocked =
+        pos.lookFor(LOOK_STRUCTURES).length ||
+        pos.lookFor(LOOK_CONSTRUCTION_SITES).length;
+
+      if (!blocked) {
+        pos.createConstructionSite(STRUCTURE_STORAGE);
+        return;
+      }
+    }
   },
 
   placeSourceContainers(room, state) {
