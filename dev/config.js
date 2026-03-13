@@ -1,3 +1,28 @@
+/*
+Developer Summary:
+Global configuration for CODENAME: INFRASTRUCTURE.
+
+Purpose:
+- Central place for colony behavior tuning
+- Keep future changes understandable
+- Preserve useful examples for future reference
+
+Major sections:
+- HUD
+- CREEPS
+- CONSTRUCTION
+- REPAIR
+- LOGISTICS
+- DEFENSE
+- BODIES
+- DIRECTIVES
+
+Important Notes:
+- Keep the hauler override example in place for future tuning.
+- HUD options should stay easy to toggle during testing.
+- Directive settings control both recurring reports and one-time milestone announcements.
+*/
+
 module.exports = {
   CODENAME: "INFRASTRUCTURE",
 
@@ -6,6 +31,22 @@ module.exports = {
     CREEP_LABELS: true,
     LABEL_INTERVAL: 1,
     CONSOLE_INTERVAL: 25,
+
+    // Developer note:
+    // Show a tiny performance line using Memory.stats from stats_manager.
+    SHOW_PERFORMANCE: true,
+
+    // Developer note:
+    // Construction checklist block shown in the room HUD.
+    // ENABLED:
+    //   true  = show construction progress lines
+    //   false = hide them
+    //
+    // MODE:
+    //   "compact"  = one summary line
+    //   "detailed" = two lines, easier to read
+    SHOW_CONSTRUCTION_CHECKLIST: true,
+    CONSTRUCTION_CHECKLIST_MODE: "detailed",
   },
 
   CREEPS: {
@@ -50,8 +91,8 @@ module.exports = {
     spawnExtensionThreshold: 0.9,
     roadThreshold: 0.35,
 
-    rampartMinHits: 5000,
-    wallMinHits: 5000,
+    rampartMinHits: 1000,
+    wallMinHits: 1000,
   },
 
   LOGISTICS: {
@@ -78,8 +119,6 @@ module.exports = {
     // 300  = early room
     // 550  = RCL2 with extensions
     // 800  = early RCL3 strength
-    //
-    // If you want to tune future body growth, this is the place to think first.
     maxTierEnergy: 800,
   },
 
@@ -88,5 +127,29 @@ module.exports = {
     // Controls how often the vCORP Corporate Directive System logs updates.
     ENABLED: true,
     INTERVAL: 25,
+
+    // Developer note:
+    // Performance-aware directive settings.
+    SHOW_PERFORMANCE_DIRECTIVES: true,
+    CPU_SPIKE_MULTIPLIER: 1.5,
+    BUCKET_WARNING_THRESHOLD: 8000,
+    HEALTHY_REPORT_INTERVAL: 100,
+
+    // Developer note:
+    // Progress / ETA directives for controller advancement.
+    SHOW_PROGRESS_DIRECTIVES: true,
+    PROGRESS_SAMPLE_INTERVAL: 25,
+    PROGRESS_REPORT_INTERVAL: 100,
+
+    // Developer note:
+    // Construction checklist directives.
+    SHOW_CONSTRUCTION_DIRECTIVES: true,
+    CONSTRUCTION_REPORT_INTERVAL: 75,
+
+    // Developer note:
+    // One-time announcement system.
+    // These fire once when the tracked event first occurs.
+    SHOW_PHASE_TRANSITION_DIRECTIVES: true,
+    SHOW_MILESTONE_DIRECTIVES: true,
   },
 };
