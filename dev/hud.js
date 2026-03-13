@@ -23,6 +23,8 @@ Important Notes:
 - Avoid adding expensive visual effects here.
 - HUD construction checklist reads from state.buildStatus so it stays synced with
   room_state, construction_manager, and directive_manager.
+
+- ... 
 */
 
 const config = require("config");
