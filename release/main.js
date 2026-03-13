@@ -1,29 +1,24 @@
-// main.js
-const colony = require("colony");
-const spawnManager = require("spawn.manager");
-const roleHarvester = require("role.harvester");
-const roleUpgrader = require("role.upgrader");
-const roleBuilder = require("role.builder");
+const loop = require("kernel_loop");
 
-module.exports.loop = function () {
-  colony.cleanupMemory();
+global.runUpgradeNOW = function () {
+  const creep = Game.creeps["UpgradeNOW"];
+  if (!creep) return;
 
-  for (const spawnName in Game.spawns) {
-    spawnManager.run(Game.spawns[spawnName]);
-  }
+  const source = creep.room.find(FIND_SOURCES)[0];
+  const controller = creep.room.controller;
 
-  for (const name in Game.creeps) {
-    const creep = Game.creeps[name];
-    switch (creep.memory.role) {
-      case "harvester":
-        roleHarvester.run(creep);
-        break;
-      case "upgrader":
-        roleUpgrader.run(creep);
-        break;
-      case "builder":
-        roleBuilder.run(creep);
-        break;
+  if (creep.store[RESOURCE_ENERGY] === 0) {
+    if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(source);
+    }
+  } else {
+    if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(controller);
     }
   }
+};
+
+module.exports.loop = function () {
+  loop.run();
+  runUpgradeNOW();
 };
