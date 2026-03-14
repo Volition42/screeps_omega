@@ -85,7 +85,7 @@ module.exports = {
 
     // Developer note:
     // Default hauler count per source when no source-specific override exists.
-    haulersPerSourceDefault: 1,
+    haulersPerSourceDefault: 2,
 
     // Developer note:
     // Optional per-source overrides.
@@ -143,8 +143,8 @@ module.exports = {
     spawnExtensionThreshold: 0.9,
     roadThreshold: 0.35,
 
-    rampartMinHits: 1000,
-    wallMinHits: 1000,
+    rampartMinHits: 5000,
+    wallMinHits: 5000,
   },
 
   /*
@@ -155,7 +155,7 @@ module.exports = {
   Preferred minimum energy to keep in the controller container.
   */
   LOGISTICS: {
-    controllerContainerReserve: 1000,
+    controllerContainerReserve: 1500,
   },
 
   /*
