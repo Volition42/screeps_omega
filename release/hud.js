@@ -8,15 +8,25 @@ Purpose:
 - Clean sci-fi aesthetic with a polished corporate dashboard feel
 
 Displayed data:
-- Room / phase header
-- Grid energy, spawn state, queue preview
-- Creep role counts
-- Controller container status
-- Safe mode status / ETA
-- Optional performance line
-- Optional construction checklist
-- Optional remote site status
-- Source utilization lines
+- Home room:
+  - Room / phase header
+  - Grid energy, spawn state, queue preview
+  - Creep role counts
+  - Controller container status
+  - Safe mode status / ETA
+  - Optional performance line
+  - Optional construction checklist
+  - Optional remote site status
+  - Source utilization lines
+
+- Remote room:
+  - Remote room header
+  - Configured remote phase
+  - Remote JrWorker count
+  - Source energy summary
+  - Dropped energy summary
+  - Hostile presence
+  - Same creep label overlay style
 
 Important Notes:
 - Keep the current watermark position and lower text baseline unless explicitly changed
@@ -34,12 +44,14 @@ module.exports = {
     if (!config.HUD.ENABLED) return;
 
     this.drawSummary(room, state);
+    this.drawRemoteRoomHuds(room);
 
     if (
       config.HUD.CREEP_LABELS &&
       Game.time % config.HUD.LABEL_INTERVAL === 0
     ) {
       this.drawCreepLabels(room);
+      this.drawRemoteCreepLabels(room);
     }
 
     if (Game.time % config.HUD.CONSOLE_INTERVAL === 0) {
@@ -179,6 +191,85 @@ module.exports = {
     });
   },
 
+  drawRemoteRoomHuds(homeRoom) {
+    if (!config.HUD.SHOW_REMOTE_SITES) return;
+    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
+
+    const sites = config.REMOTE_MINING.SITES || {};
+
+    for (const targetRoom in sites) {
+      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
+
+      const site = sites[targetRoom];
+      if (!site || !site.enabled) continue;
+      if (site.homeRoom !== homeRoom.name) continue;
+
+      const remoteRoom = Game.rooms[targetRoom];
+      if (!remoteRoom) continue;
+
+      this.drawRemoteRoomPanel(homeRoom, remoteRoom, site);
+    }
+  },
+
+  drawRemoteRoomPanel(homeRoom, remoteRoom, site) {
+    const remoteCreeps = _.filter(Game.creeps, function (creep) {
+      return (
+        creep.memory.room === homeRoom.name &&
+        creep.memory.targetRoom === remoteRoom.name
+      );
+    });
+
+    const remoteJrWorkers = _.filter(remoteCreeps, function (creep) {
+      return creep.memory.role === "remotejrworker";
+    }).length;
+
+    const sources = remoteRoom.find(FIND_SOURCES);
+    const dropped = remoteRoom.find(FIND_DROPPED_RESOURCES, {
+      filter: function (r) {
+        return r.resourceType === RESOURCE_ENERGY;
+      },
+    });
+    const hostiles = remoteRoom.find(FIND_HOSTILE_CREEPS);
+
+    let sourceEnergy = 0;
+    let sourceCapacity = 0;
+    for (let i = 0; i < sources.length; i++) {
+      sourceEnergy += sources[i].energy;
+      sourceCapacity += sources[i].energyCapacity;
+    }
+
+    let droppedEnergy = 0;
+    for (let j = 0; j < dropped.length; j++) {
+      droppedEnergy += dropped[j].amount;
+    }
+
+    const sourcePct =
+      sourceCapacity > 0
+        ? Math.round((sourceEnergy / sourceCapacity) * 100)
+        : 0;
+
+    const status = remoteJrWorkers > 0 ? "ACTIVE" : "IDLE";
+    const threat = hostiles.length > 0 ? "HOSTILES" : "CLEAR";
+
+    const lines = [
+      "vCORP // REMOTE // " + remoteRoom.name,
+      "PHASE " + site.phase + "   STATUS " + status + "   " + threat,
+      "RJ " +
+        remoteJrWorkers +
+        "/" +
+        (site.jrWorkers || 0) +
+        "   SRC " +
+        sources.length +
+        "   DROP " +
+        droppedEnergy,
+      "ENERGY " + sourcePct + "%   HOME " + homeRoom.name,
+    ];
+
+    this.drawRemotePanel(remoteRoom, lines, {
+      hostile: hostiles.length > 0,
+    });
+  },
+
   drawPanel(room, lines, state, meta) {
     const hostiles = room.find(FIND_HOSTILE_CREEPS).length > 0;
     const phase = state.phase || "bootstrap";
@@ -276,6 +367,56 @@ module.exports = {
             : isPerfLine
               ? 0.12
               : 0.14,
+      });
+    }
+  },
+
+  drawRemotePanel(room, lines, meta) {
+    const x = 0.6;
+    const y = 0.45;
+    const width = 15.5;
+    const height = lines.length * 0.88 + 1.0;
+
+    const accent = meta.hostile ? "#ff3b3b" : "#ffd166";
+
+    room.visual.rect(x, y, width, height, {
+      fill: "#06131f",
+      opacity: 0.18,
+      stroke: accent,
+      strokeWidth: 0.05,
+    });
+
+    room.visual.rect(x - 0.18, y, 0.14, height, {
+      fill: accent,
+      opacity: 0.85,
+      stroke: accent,
+      strokeWidth: 0.02,
+    });
+
+    room.visual.rect(x, y, width, 0.22, {
+      fill: accent,
+      opacity: 0.35,
+      stroke: accent,
+      strokeWidth: 0.02,
+    });
+
+    room.visual.text("vCORP", x + width + 0.6, y + 1.0, {
+      align: "right",
+      color: "#ffd166",
+      font: 0.8,
+      opacity: 0.22,
+      stroke: "#000000",
+      strokeWidth: 0.08,
+    });
+
+    for (let i = 0; i < lines.length; i++) {
+      room.visual.text(lines[i], x + 0.4, y + 1.15 + i * 0.82, {
+        align: "left",
+        color: i === 0 ? "#ffe29a" : "#ffd166",
+        font: i === 0 ? 0.78 : 0.62,
+        opacity: i === 0 ? 0.96 : 0.88,
+        stroke: "#021018",
+        strokeWidth: 0.12,
       });
     }
   },
@@ -394,8 +535,6 @@ module.exports = {
         );
       }).length;
 
-      const desiredRemoteJr = site.jrWorkers || 0;
-
       let status = "IDLE";
       if (remoteJrCount > 0) {
         status = "ACTIVE";
@@ -410,7 +549,7 @@ module.exports = {
             " RJ " +
             remoteJrCount +
             "/" +
-            desiredRemoteJr +
+            (site.jrWorkers || 0) +
             " " +
             status,
         );
@@ -423,7 +562,7 @@ module.exports = {
             "   RJ " +
             remoteJrCount +
             "/" +
-            desiredRemoteJr +
+            (site.jrWorkers || 0) +
             "   " +
             status,
         );
@@ -512,6 +651,44 @@ module.exports = {
         strokeWidth: 0.18,
         color: this.getLabelColor(creep),
       });
+    }
+  },
+
+  drawRemoteCreepLabels(homeRoom) {
+    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
+
+    const sites = config.REMOTE_MINING.SITES || {};
+
+    for (const targetRoom in sites) {
+      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
+
+      const site = sites[targetRoom];
+      if (!site || !site.enabled) continue;
+      if (site.homeRoom !== homeRoom.name) continue;
+
+      const remoteRoom = Game.rooms[targetRoom];
+      if (!remoteRoom) continue;
+
+      const creeps = _.filter(Game.creeps, function (creep) {
+        return (
+          creep.pos.roomName === targetRoom &&
+          creep.memory.room === homeRoom.name
+        );
+      });
+
+      for (let i = 0; i < creeps.length; i++) {
+        const creep = creeps[i];
+        const label = this.getLabel(creep);
+
+        remoteRoom.visual.text(label, creep.pos.x, creep.pos.y - 0.75, {
+          align: "center",
+          font: 0.9,
+          opacity: 0.95,
+          stroke: "#001018",
+          strokeWidth: 0.18,
+          color: this.getLabelColor(creep),
+        });
+      }
     }
   },
 
