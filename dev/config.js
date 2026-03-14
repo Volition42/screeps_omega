@@ -1,6 +1,6 @@
 /*
 Developer Summary:
-Global configuration for CODENAME: INFRASTRUCTURE.
+Global configuration for current dev.
 
 Purpose:
 - Central place for colony behavior tuning
@@ -16,11 +16,13 @@ Major sections:
 - DEFENSE
 - BODIES
 - DIRECTIVES
+- REMOTE_MINING
 
 Important Notes:
 - Keep the hauler override example in place for future tuning.
 - HUD options should stay easy to toggle during testing.
 - Directive settings control both recurring reports and one-time milestone announcements.
+- Remote mining starts with a simple manual phase 1 setup and can expand later.
 */
 
 module.exports = {
@@ -56,7 +58,7 @@ module.exports = {
 
     // Developer note:
     // These are the target counts once the room transitions into the
-    // normal INFRASTRUCTURE phases.
+    // normal colony phases.
     workers: 4,
     upgraders: 1,
     repairs: 2,
@@ -80,11 +82,31 @@ module.exports = {
     haulersPerSourceBySourceId: {},
   },
 
+  /*
+  Developer Notes:
+  Construction System Controls
+
+  MAX_SITES
+  Limits the total number of construction sites the AI will create at once.
+  Screeps allows up to 100 sites globally, but large numbers slow worker focus
+  and can create chaotic build queues. A lower limit keeps construction orderly.
+
+  PLAN_INTERVAL
+  How often the construction planner runs in ticks.
+  Lower value = more responsive planning, slightly higher CPU.
+  Higher value = slower reaction, lower CPU.
+  */
   CONSTRUCTION: {
     MAX_SITES: 8,
     PLAN_INTERVAL: 50,
   },
 
+  /*
+  Developer Notes:
+  Repair Behavior Thresholds
+
+  Values represent percentage of max hits unless otherwise noted.
+  */
   REPAIR: {
     criticalContainerThreshold: 0.5,
     importantThreshold: 0.8,
@@ -95,10 +117,21 @@ module.exports = {
     wallMinHits: 1000,
   },
 
+  /*
+  Developer Notes:
+  Logistics Controls
+
+  controllerContainerReserve
+  Preferred minimum energy to keep in the controller container.
+  */
   LOGISTICS: {
-    controllerContainerReserve: 100,
+    controllerContainerReserve: 1000,
   },
 
+  /*
+  Developer Notes:
+  Defense Planning Configuration
+  */
   DEFENSE: {
     ENABLED: true,
     MIN_CONTROLLER_LEVEL: 2,
@@ -113,18 +146,18 @@ module.exports = {
   BODIES: {
     // Developer note:
     // These tiers are keyed off room.energyCapacityAvailable, not current energy.
-    // That means the room "plans" for what it can support consistently.
+    // That means the room plans for what it can support consistently.
     //
     // Current intended progression:
-    // 300  = early room
-    // 550  = RCL2 with extensions
-    // 800  = early RCL3 strength
+    // 300 = early room
+    // 550 = RCL2 with extensions
+    // 800 = early RCL3 strength
     maxTierEnergy: 800,
   },
 
   DIRECTIVES: {
     // Developer note:
-    // Controls how often the vCORP Corporate Directive System logs updates.
+    // Controls how often the corporate directive system logs updates.
     ENABLED: true,
     INTERVAL: 25,
 
@@ -148,8 +181,40 @@ module.exports = {
 
     // Developer note:
     // One-time announcement system.
-    // These fire once when the tracked event first occurs.
     SHOW_PHASE_TRANSITION_DIRECTIVES: true,
     SHOW_MILESTONE_DIRECTIVES: true,
+  },
+
+  /*
+  Developer Notes:
+  Remote Mining Configuration
+
+  Phase 1:
+  - Manual remote room config
+  - Remote JrWorkers only
+  - Harvest in remote room and bring energy home
+  - No containers, roads, reservation, or defense yet
+
+  homeRoom
+  The owned room responsible for spawning and receiving energy.
+
+  phase
+  Current remote rollout stage.
+  Use 1 for Remote JrWorker bootstrap only.
+
+  jrWorkers
+  Number of remote bootstrap workers to maintain for this site.
+  */
+  REMOTE_MINING: {
+    ENABLED: true,
+
+    SITES: {
+      E11N33: {
+        enabled: true,
+        homeRoom: "E12N33",
+        phase: 1,
+        jrWorkers: 2,
+      },
+    },
   },
 };

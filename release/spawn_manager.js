@@ -6,16 +6,18 @@ Purpose:
 - Maintain the room workforce by phase
 - Support normal role-based spawning
 - Recover automatically from colony collapse
+- Maintain configured phase 1 remote mining workers
 
 Recovery behavior:
-- If the room has no useful worker economy, spawn JrWorkers first
+- If the room loses its working economy, spawn JrWorkers first
 - JrWorkers are the emergency bootstrap role
 - Once energy flow returns, normal spawning resumes
 
-Important Notes:
-- Recovery mode is intentionally simple and aggressive
-- It is better to recover with small creeps than stall waiting for ideal bodies
-- This keeps the colony self-healing after attacks or wipes
+Remote mining phase 1:
+- Manual remote room config
+- Remote JrWorkers only
+- Harvest remote energy and bring it home
+- No remote containers, roads, reservation, or defense yet
 */
 
 const bodies = require("bodies");
@@ -38,6 +40,7 @@ module.exports = {
         priority: request.priority,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
+        targetRoom: request.targetRoom || null,
       };
     });
 
@@ -55,6 +58,7 @@ module.exports = {
         delivering: false,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
+        targetRoom: request.targetRoom || null,
       },
     });
 
@@ -81,9 +85,6 @@ module.exports = {
     // =========================================================
     // HARD RECOVERY MODE
     // =========================================================
-    // Developer note:
-    // If the colony loses its working economy, force JrWorkers until
-    // energy flow comes back. This prevents deadlock after wipes.
     if (this.needsRecovery(state)) {
       var recoveryTarget = this.getRecoveryJrWorkerTarget(room, state);
       var currentJrWorkers = roleCounts.jrworker || 0;
@@ -170,11 +171,10 @@ module.exports = {
       }).length;
 
       var queuedMiners = this.countQueuedForSource(room, "miner", source.id);
-      var desiredMinersForSource = minersPerSource;
 
       for (
         var minerIndex = existingMiners + queuedMiners;
-        minerIndex < desiredMinersForSource;
+        minerIndex < minersPerSource;
         minerIndex++
       ) {
         requests.push({
@@ -277,11 +277,56 @@ module.exports = {
       requests.push({ role: "repair", priority: 60 });
     }
 
+    // =========================================================
+    // REMOTE MINING PHASE 1
+    // =========================================================
+    this.addRemotePhaseOneRequests(room, state, requests);
+
     requests.sort(function (a, b) {
       return b.priority - a.priority;
     });
 
     return requests;
+  },
+
+  addRemotePhaseOneRequests(room, state, requests) {
+    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
+    if (state.phase !== "stable" && state.phase !== "developing") return;
+
+    var sites = config.REMOTE_MINING.SITES || {};
+
+    for (var targetRoom in sites) {
+      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
+
+      var site = sites[targetRoom];
+      if (!site || !site.enabled) continue;
+      if (site.homeRoom !== room.name) continue;
+      if (site.phase !== 1) continue;
+
+      var desired = site.jrWorkers || 0;
+
+      var existing = _.filter(Game.creeps, function (creep) {
+        return (
+          creep.memory.role === "remotejrworker" &&
+          creep.memory.room === room.name &&
+          creep.memory.targetRoom === targetRoom
+        );
+      }).length;
+
+      var queued = this.countQueuedForTargetRoom(
+        room,
+        "remotejrworker",
+        targetRoom,
+      );
+
+      for (var i = existing + queued; i < desired; i++) {
+        requests.push({
+          role: "remotejrworker",
+          priority: 50,
+          targetRoom: targetRoom,
+        });
+      }
+    }
   },
 
   needsRecovery(state) {
@@ -291,15 +336,10 @@ module.exports = {
     var workers = roleCounts.worker || 0;
     var miners = roleCounts.miner || 0;
     var haulers = roleCounts.hauler || 0;
-
     var totalEconomyCreeps = jrWorkers + workers + miners + haulers;
 
-    // Developer note:
-    // Trigger recovery if we have effectively lost the room economy.
     if (totalEconomyCreeps === 0) return true;
 
-    // If the room has almost no available energy and no bootstrap-capable workers,
-    // allow JrWorkers to kickstart things again.
     if (
       state.energyAvailable < 300 &&
       jrWorkers === 0 &&
@@ -313,9 +353,6 @@ module.exports = {
   },
 
   getRecoveryJrWorkerTarget(room, state) {
-    // Developer note:
-    // Keep recovery target small and cheap.
-    // Two JrWorkers is usually enough to restart harvesting and refilling.
     if (state.energyCapacityAvailable >= 550) {
       return 2;
     }
@@ -369,6 +406,19 @@ module.exports = {
 
     return _.filter(queue, function (item) {
       return item.role === role && item.targetId === targetId;
+    }).length;
+  },
+
+  countQueuedForTargetRoom(room, role, targetRoom) {
+    var queue =
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].spawnQueue
+        ? Memory.rooms[room.name].spawnQueue
+        : [];
+
+    return _.filter(queue, function (item) {
+      return item.role === role && item.targetRoom === targetRoom;
     }).length;
   },
 };
