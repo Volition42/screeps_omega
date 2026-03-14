@@ -18,6 +18,10 @@ Remote mining phase 1:
 - Remote JrWorkers only
 - Harvest remote energy and bring it home
 - No remote containers, roads, reservation, or defense yet
+
+Remote spawning policy:
+- Allowed only when the home room is in developing or stable
+- Pauses automatically if the home room falls back into bootstrap
 */
 
 const bodies = require("bodies");
@@ -41,6 +45,7 @@ module.exports = {
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
+        homeRoom: request.homeRoom || null,
       };
     });
 
@@ -54,6 +59,7 @@ module.exports = {
       memory: {
         role: request.role,
         room: room.name,
+        homeRoom: request.homeRoom || room.name,
         working: false,
         delivering: false,
         sourceId: request.sourceId || null,
@@ -291,7 +297,11 @@ module.exports = {
 
   addRemotePhaseOneRequests(room, state, requests) {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
-    if (state.phase !== "stable" && state.phase !== "developing") return;
+
+    // Developer note:
+    // Remote spawning is only allowed after bootstrap.
+    // If the home room dips back into bootstrap, remote spawning pauses.
+    if (state.phase !== "developing" && state.phase !== "stable") return;
 
     var sites = config.REMOTE_MINING.SITES || {};
 
@@ -324,6 +334,7 @@ module.exports = {
           role: "remotejrworker",
           priority: 50,
           targetRoom: targetRoom,
+          homeRoom: room.name,
         });
       }
     }

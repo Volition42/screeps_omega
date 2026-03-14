@@ -8,8 +8,9 @@ Purpose:
 - Support both local and remote workforce roles
 
 Important Notes:
-- Remote JrWorkers intentionally stay cheap in phase 1.
-- More advanced remote roles can be added later without rewriting this file.
+- Remote JrWorkers scale with home room energy capacity
+- Remote phase 1 bodies favor extra carry and move for travel efficiency
+- More advanced remote roles can be added later without rewriting this file
 */
 
 const config = require("config");
@@ -24,7 +25,7 @@ module.exports = {
         return [WORK, CARRY, MOVE];
 
       case "remotejrworker":
-        return [WORK, CARRY, MOVE];
+        return this.getRemoteJrWorkerBody(tier);
 
       case "worker":
         return this.getWorkerBody(tier);
@@ -50,6 +51,20 @@ module.exports = {
     if (energyCapacity >= 800) return 3;
     if (energyCapacity >= 550) return 2;
     return 1;
+  },
+
+  getRemoteJrWorkerBody(tier) {
+    // Developer note:
+    // Remote JrWorkers need to walk farther than local creeps.
+    // Scale carry and move together so they remain useful over distance.
+    switch (tier) {
+      case 3:
+        return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
+      case 2:
+        return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
+      default:
+        return [WORK, CARRY, MOVE];
+    }
   },
 
   getWorkerBody(tier) {

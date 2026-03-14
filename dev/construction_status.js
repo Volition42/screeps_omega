@@ -8,10 +8,9 @@ Purpose:
 - Calculates current construction targets based on phase + roadmap + stamp plans
 
 Important Notes:
-- Road goals include backbone roads plus stamp-road goals.
-- Extension goals are controller-limit based.
-- Tower goals are controller-limit based.
-- Defense goals are terrain-aware and use the same logic as construction planning.
+- Road goals include backbone roads plus stamp-road goals
+- Legacy / migrated rooms may not match the stamp layout perfectly
+- Phase completion should reflect real room readiness, not demand perfect symmetry
 */
 
 const config = require("config");
@@ -78,10 +77,13 @@ module.exports = {
       rampartsNeeded: defenseGoal.ramparts,
     };
 
+    status.roadCompletionRatio =
+      status.roadsNeeded > 0 ? status.roadsBuilt / status.roadsNeeded : 1;
+
     status.bootstrapComplete =
       status.sourceContainersBuilt >= status.sourceContainersNeeded &&
       status.controllerContainersBuilt >= status.controllerContainersNeeded &&
-      status.roadsBuilt >= status.roadsNeeded;
+      this.hasEnoughRoadsForBootstrap(status, room);
 
     status.developingComplete =
       status.extensionsBuilt >= status.extensionsNeeded &&
@@ -120,10 +122,33 @@ module.exports = {
       rampartsBuilt: 0,
       rampartsNeeded: 0,
 
+      roadCompletionRatio: 0,
+
       bootstrapComplete: false,
       developingComplete: false,
       stableReady: false,
     };
+  },
+
+  hasEnoughRoadsForBootstrap(status, room) {
+    // Developer note:
+    // Migrated rooms may have useful but non-perfect road layouts.
+    // Treat bootstrap as complete once roads are "good enough" for operation.
+    if (status.roadsNeeded <= 0) return true;
+
+    if (status.roadsBuilt >= status.roadsNeeded) return true;
+
+    if (status.roadCompletionRatio >= 0.6) return true;
+
+    if (
+      room.controller &&
+      room.controller.level >= 3 &&
+      status.roadsBuilt >= 8
+    ) {
+      return true;
+    }
+
+    return false;
   },
 
   countBuiltAndSites(room, structureType) {
@@ -169,15 +194,12 @@ module.exports = {
   getRoadGoal(room, state, plan, anchor) {
     var total = 0;
 
-    // Backbone roads
     total += this.getBackboneRoadGoal(room, state);
 
-    // Anchor roads
     if (anchor && this.hasAction(plan, "anchorRoads")) {
       total += this.countStampRoadCells(room, anchor, "anchor_v1");
     }
 
-    // Extension stamp roads
     if (anchor && this.hasAction(plan, "extensionStamps")) {
       var extensionStampsNeeded = Math.ceil(
         roadmap.getDesiredExtensionCount(room.controller.level) /
@@ -198,7 +220,6 @@ module.exports = {
       }
     }
 
-    // Tower stamp roads
     if (anchor && this.hasAction(plan, "towerStamp")) {
       var towerStampsNeeded =
         roadmap.getDesiredTowerCount(room.controller.level) > 0 ? 1 : 0;

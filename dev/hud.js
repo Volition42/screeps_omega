@@ -1,7 +1,6 @@
 /*
 Developer Summary:
 vCORP Command HUD
-Codename: INFRASTRUCTURE
 
 Purpose:
 - Fast visual state awareness
@@ -16,15 +15,15 @@ Displayed data:
 - Safe mode status / ETA
 - Optional performance line
 - Optional construction checklist
+- Optional remote site status
 - Source utilization lines
 
 Important Notes:
-- Keep the current watermark position and lower text baseline unless explicitly changed.
-- Avoid adding expensive visual effects here.
+- Keep the current watermark position and lower text baseline unless explicitly changed
+- Avoid adding expensive visual effects here
 - HUD construction checklist reads from state.buildStatus so it stays synced with
-  room_state, construction_manager, and directive_manager.
-
-- ... 
+  room_state, construction_manager, and directive_manager
+- Remote phase 1 creeps are shown as RJ in the role header and creep labels
 */
 
 const config = require("config");
@@ -66,6 +65,7 @@ module.exports = {
     const safeModeLine = this.getSafeModeLine(room);
     const performanceLine = this.getPerformanceLine();
     const checklistLines = this.getConstructionChecklistLines(state);
+    const remoteLines = this.getRemoteSiteLines(room);
 
     const sourceLines = _.map(
       state.sources,
@@ -96,7 +96,7 @@ module.exports = {
 
         const shortId = source.id.slice(-4).toUpperCase();
         const node = sourceContainer
-          ? `BOX:${sourceContainer.store[RESOURCE_ENERGY] || 0}`
+          ? "BOX:" + (sourceContainer.store[RESOURCE_ENERGY] || 0)
           : "RAW";
 
         const energyPct =
@@ -105,22 +105,55 @@ module.exports = {
             : 0;
 
         return (
-          `SRC ${shortId}   ` +
-          `EN ${energyPct}%   ` +
-          `M ${minerCount}/${desiredMiners}   ` +
-          `H ${haulerCount}/${desiredHaulers}   ` +
-          `${node}`
+          "SRC " +
+          shortId +
+          "   " +
+          "EN " +
+          energyPct +
+          "%   " +
+          "M " +
+          minerCount +
+          "/" +
+          desiredMiners +
+          "   " +
+          "H " +
+          haulerCount +
+          "/" +
+          desiredHaulers +
+          "   " +
+          node
         );
       },
       this,
     );
 
-    const controllerContainerLine = `CTRL BOX ${state.controllerContainers.length}/1`;
+    const controllerContainerLine =
+      "CTRL BOX " + state.controllerContainers.length + "/1";
 
     const lines = [
-      `vCORP // ${room.name} // ${state.phase.toUpperCase()}`,
-      `GRID ${room.energyAvailable}/${room.energyCapacityAvailable}   SPAWN ${spawning}   QUEUE ${nextQueued}`,
-      `ROLES J:${counts.jrworker || 0} W:${counts.worker || 0} M:${counts.miner || 0} H:${counts.hauler || 0} U:${counts.upgrader || 0} R:${counts.repair || 0}`,
+      "vCORP // " + room.name + " // " + state.phase.toUpperCase(),
+      "GRID " +
+        room.energyAvailable +
+        "/" +
+        room.energyCapacityAvailable +
+        "   SPAWN " +
+        spawning +
+        "   QUEUE " +
+        nextQueued,
+      "ROLES J:" +
+        (counts.jrworker || 0) +
+        " RJ:" +
+        (counts.remotejrworker || 0) +
+        " W:" +
+        (counts.worker || 0) +
+        " M:" +
+        (counts.miner || 0) +
+        " H:" +
+        (counts.hauler || 0) +
+        " U:" +
+        (counts.upgrader || 0) +
+        " R:" +
+        (counts.repair || 0),
       controllerContainerLine,
       safeModeLine,
     ];
@@ -133,11 +166,16 @@ module.exports = {
       Array.prototype.push.apply(lines, checklistLines);
     }
 
+    if (remoteLines && remoteLines.length > 0) {
+      Array.prototype.push.apply(lines, remoteLines);
+    }
+
     Array.prototype.push.apply(lines, sourceLines);
 
     this.drawPanel(room, lines, state, {
       hasPerformanceLine: !!performanceLine,
       checklistCount: checklistLines ? checklistLines.length : 0,
+      remoteCount: remoteLines ? remoteLines.length : 0,
     });
   },
 
@@ -179,7 +217,6 @@ module.exports = {
       strokeWidth: 0.02,
     });
 
-    // Watermark
     room.visual.text("vCORP", x + width + 1 - 1.2, y + 1.1, {
       align: "right",
       color: "#7befff",
@@ -192,31 +229,53 @@ module.exports = {
     const perfIndex = meta.hasPerformanceLine ? 5 : -1;
     const checklistStart = meta.hasPerformanceLine ? 6 : 5;
     const checklistEnd = checklistStart + meta.checklistCount - 1;
+    const remoteStart = checklistEnd + 1;
+    const remoteEnd = remoteStart + meta.remoteCount;
 
     for (let i = 0; i < lines.length; i++) {
       const isPerfLine = meta.hasPerformanceLine && i === perfIndex;
       const isChecklistLine =
         meta.checklistCount > 0 && i >= checklistStart && i <= checklistEnd;
+      const isRemoteLine =
+        meta.remoteCount > 0 && i >= remoteStart && i < remoteEnd;
 
       room.visual.text(lines[i], x + 0.4, y + 1.2 + i * 0.82, {
         align: "left",
-        color: isChecklistLine
-          ? "#7ff7d4"
-          : isPerfLine
-            ? "#7bdcff"
-            : i === 0
-              ? "#b9f8ff"
-              : "#8fe9ff",
-        font: isChecklistLine ? 0.6 : isPerfLine ? 0.56 : i === 0 ? 0.82 : 0.68,
-        opacity: isChecklistLine
-          ? 0.8
-          : isPerfLine
-            ? 0.72
-            : i === 0
-              ? 0.98
-              : 0.88,
+        color: isRemoteLine
+          ? "#ffd166"
+          : isChecklistLine
+            ? "#7ff7d4"
+            : isPerfLine
+              ? "#7bdcff"
+              : i === 0
+                ? "#b9f8ff"
+                : "#8fe9ff",
+        font: isRemoteLine
+          ? 0.6
+          : isChecklistLine
+            ? 0.6
+            : isPerfLine
+              ? 0.56
+              : i === 0
+                ? 0.82
+                : 0.68,
+        opacity: isRemoteLine
+          ? 0.82
+          : isChecklistLine
+            ? 0.8
+            : isPerfLine
+              ? 0.72
+              : i === 0
+                ? 0.98
+                : 0.88,
         stroke: "#021018",
-        strokeWidth: isChecklistLine ? 0.12 : isPerfLine ? 0.12 : 0.14,
+        strokeWidth: isRemoteLine
+          ? 0.12
+          : isChecklistLine
+            ? 0.12
+            : isPerfLine
+              ? 0.12
+              : 0.14,
       });
     }
   },
@@ -234,9 +293,14 @@ module.exports = {
         : last.cpu.used;
 
     return (
-      `PERF CPU ${last.cpu.used.toFixed(2)}   ` +
-      `AVG ${avg.toFixed(2)}   ` +
-      `BUCKET ${last.cpu.bucket}`
+      "PERF CPU " +
+      last.cpu.used.toFixed(2) +
+      "   " +
+      "AVG " +
+      avg.toFixed(2) +
+      "   " +
+      "BUCKET " +
+      last.cpu.bucket
     );
   },
 
@@ -250,29 +314,132 @@ module.exports = {
 
     if (mode === "compact") {
       return [
-        `BUILD EXT ${checklist.extensionsBuilt}/${checklist.extensionsNeeded}   ` +
-          `TWR ${checklist.towersBuilt}/${checklist.towersNeeded}   ` +
-          `RD ${checklist.roadsBuilt}/${checklist.roadsNeeded}   ` +
-          `W ${checklist.wallsBuilt}/${checklist.wallsNeeded}   ` +
-          `R ${checklist.rampartsBuilt}/${checklist.rampartsNeeded}`,
+        "BUILD EXT " +
+          checklist.extensionsBuilt +
+          "/" +
+          checklist.extensionsNeeded +
+          "   " +
+          "TWR " +
+          checklist.towersBuilt +
+          "/" +
+          checklist.towersNeeded +
+          "   " +
+          "RD " +
+          checklist.roadsBuilt +
+          "/" +
+          checklist.roadsNeeded +
+          "   " +
+          "W " +
+          checklist.wallsBuilt +
+          "/" +
+          checklist.wallsNeeded +
+          "   " +
+          "R " +
+          checklist.rampartsBuilt +
+          "/" +
+          checklist.rampartsNeeded,
       ];
     }
 
     return [
-      `BUILD EXT ${checklist.extensionsBuilt}/${checklist.extensionsNeeded}   ` +
-        `TWR ${checklist.towersBuilt}/${checklist.towersNeeded}   ` +
-        `SITES ${checklist.sites}`,
-      `BUILD RD ${checklist.roadsBuilt}/${checklist.roadsNeeded}   ` +
-        `W ${checklist.wallsBuilt}/${checklist.wallsNeeded}   ` +
-        `R ${checklist.rampartsBuilt}/${checklist.rampartsNeeded}`,
+      "BUILD EXT " +
+        checklist.extensionsBuilt +
+        "/" +
+        checklist.extensionsNeeded +
+        "   " +
+        "TWR " +
+        checklist.towersBuilt +
+        "/" +
+        checklist.towersNeeded +
+        "   " +
+        "SITES " +
+        checklist.sites,
+      "BUILD RD " +
+        checklist.roadsBuilt +
+        "/" +
+        checklist.roadsNeeded +
+        "   " +
+        "W " +
+        checklist.wallsBuilt +
+        "/" +
+        checklist.wallsNeeded +
+        "   " +
+        "R " +
+        checklist.rampartsBuilt +
+        "/" +
+        checklist.rampartsNeeded,
     ];
+  },
+
+  getRemoteSiteLines(room) {
+    if (!config.HUD.SHOW_REMOTE_SITES) return [];
+    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return [];
+
+    const mode = config.HUD.REMOTE_SITE_MODE || "detailed";
+    const sites = config.REMOTE_MINING.SITES || {};
+    const lines = [];
+
+    for (const targetRoom in sites) {
+      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
+
+      const site = sites[targetRoom];
+      if (!site || !site.enabled) continue;
+      if (site.homeRoom !== room.name) continue;
+
+      const remoteJrCount = _.filter(Game.creeps, function (creep) {
+        return (
+          creep.memory.role === "remotejrworker" &&
+          creep.memory.room === room.name &&
+          creep.memory.targetRoom === targetRoom
+        );
+      }).length;
+
+      const desiredRemoteJr = site.jrWorkers || 0;
+
+      let status = "IDLE";
+      if (remoteJrCount > 0) {
+        status = "ACTIVE";
+      }
+
+      if (mode === "compact") {
+        lines.push(
+          "REMOTE " +
+            targetRoom +
+            " P" +
+            site.phase +
+            " RJ " +
+            remoteJrCount +
+            "/" +
+            desiredRemoteJr +
+            " " +
+            status,
+        );
+      } else {
+        lines.push(
+          "REMOTE " +
+            targetRoom +
+            "   PHASE " +
+            site.phase +
+            "   RJ " +
+            remoteJrCount +
+            "/" +
+            desiredRemoteJr +
+            "   " +
+            status,
+        );
+      }
+    }
+
+    return lines;
   },
 
   getSafeModeLine(room) {
     if (!room.controller) return "SAFE MODE N/A";
 
     if (room.controller.safeMode && room.controller.safeMode > 0) {
-      return `SAFE MODE ACTIVE ${this.formatTicksAsDhM(room.controller.safeMode)}`;
+      return (
+        "SAFE MODE ACTIVE " + this.formatTicksAsDhM(room.controller.safeMode)
+      );
     }
 
     if (
@@ -281,14 +448,17 @@ module.exports = {
       room.controller.safeModeCooldown &&
       room.controller.safeModeCooldown > 0
     ) {
-      return `SAFE MODE COOLDOWN ${this.formatTicksAsDhM(room.controller.safeModeCooldown)}`;
+      return (
+        "SAFE MODE COOLDOWN " +
+        this.formatTicksAsDhM(room.controller.safeModeCooldown)
+      );
     }
 
     if (
       room.controller.safeModeAvailable &&
       room.controller.safeModeAvailable > 0
     ) {
-      return `SAFE MODE READY x${room.controller.safeModeAvailable}`;
+      return "SAFE MODE READY x" + room.controller.safeModeAvailable;
     }
 
     return "SAFE MODE UNAVAILABLE";
@@ -302,7 +472,7 @@ module.exports = {
     const hours = Math.floor((totalSeconds % 86400) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
 
-    return `${days}d ${hours}h ${minutes}m`;
+    return days + "d " + hours + "h " + minutes + "m";
   },
 
   getTickSeconds() {
@@ -349,12 +519,14 @@ module.exports = {
     switch (creep.memory.role) {
       case "jrworker":
         return "J ⛏";
+      case "remotejrworker":
+        return "RJ 🌐";
       case "worker":
-        return `W ${creep.memory.working ? "🔧" : "⛏"}`;
+        return "W " + (creep.memory.working ? "🔧" : "⛏");
       case "miner":
         return "M ⚡";
       case "hauler":
-        return `H ${creep.memory.delivering ? "📦" : "↩"}`;
+        return "H " + (creep.memory.delivering ? "📦" : "↩");
       case "upgrader":
         return "U ⬆";
       case "repair":
@@ -368,6 +540,8 @@ module.exports = {
     switch (creep.memory.role) {
       case "jrworker":
         return "#d9fb8c";
+      case "remotejrworker":
+        return "#ffd166";
       case "worker":
         return "#89ffb4";
       case "miner":
@@ -387,9 +561,30 @@ module.exports = {
     const counts = state.roleCounts || {};
 
     console.log(
-      `[ROOM ${room.name}] phase=${state.phase} ` +
-        `energy=${room.energyAvailable}/${room.energyCapacityAvailable} ` +
-        `roles J:${counts.jrworker || 0} W:${counts.worker || 0} M:${counts.miner || 0} H:${counts.hauler || 0} U:${counts.upgrader || 0} R:${counts.repair || 0}`,
+      "[ROOM " +
+        room.name +
+        "] phase=" +
+        state.phase +
+        " " +
+        "energy=" +
+        room.energyAvailable +
+        "/" +
+        room.energyCapacityAvailable +
+        " " +
+        "roles J:" +
+        (counts.jrworker || 0) +
+        " RJ:" +
+        (counts.remotejrworker || 0) +
+        " W:" +
+        (counts.worker || 0) +
+        " M:" +
+        (counts.miner || 0) +
+        " H:" +
+        (counts.hauler || 0) +
+        " U:" +
+        (counts.upgrader || 0) +
+        " R:" +
+        (counts.repair || 0),
     );
   },
 };

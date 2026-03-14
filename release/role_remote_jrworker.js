@@ -16,12 +16,14 @@ Important Notes:
 - No remote construction yet
 - No reservation yet
 - No defense yet
+- homeRoom is the preferred memory field for delivery
+- room remains the owning room for creep manager dispatch
 */
 
 module.exports = {
   run(creep) {
     var targetRoom = creep.memory.targetRoom;
-    var homeRoom = creep.memory.room;
+    var homeRoom = creep.memory.homeRoom || creep.memory.room;
 
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;

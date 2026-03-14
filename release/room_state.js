@@ -15,7 +15,11 @@ Phase logic:
 - developing:
     bootstrap roadmap complete
 - stable:
-    development roadmap complete and role counts are healthy
+    development roadmap complete and room economy is healthy
+
+Important Notes:
+- Legacy / migrated rooms should still advance phases if their real operating
+  state matches the expected phase, even if build symmetry is imperfect
 */
 
 const utils = require("utils");
@@ -68,7 +72,10 @@ module.exports = {
 
     var buildStatus = constructionStatus.getStatus(room, provisionalState);
 
-    if (phase !== "bootstrap_jr" && buildStatus.bootstrapComplete) {
+    if (
+      phase !== "bootstrap_jr" &&
+      this.shouldEnterDeveloping(room, provisionalState, buildStatus)
+    ) {
       phase = "developing";
     }
 
@@ -76,12 +83,12 @@ module.exports = {
 
     if (
       phase === "developing" &&
-      buildStatus.developingComplete &&
-      (roleCounts.worker || 0) >= config.CREEPS.workers &&
-      (roleCounts.upgrader || 0) >= config.CREEPS.upgraders &&
-      (roleCounts.miner || 0) >=
-        sources.length * config.CREEPS.minersPerSource &&
-      (roleCounts.hauler || 0) >= desiredTotalHaulers
+      this.shouldEnterStable(
+        room,
+        provisionalState,
+        buildStatus,
+        desiredTotalHaulers,
+      )
     ) {
       phase = "stable";
     }
@@ -108,6 +115,56 @@ module.exports = {
     finalState.buildStatus = constructionStatus.getStatus(room, finalState);
 
     return finalState;
+  },
+
+  shouldEnterDeveloping(room, state, buildStatus) {
+    if (buildStatus.bootstrapComplete) return true;
+
+    // Developer note:
+    // Legacy room tolerance:
+    // if RCL3+ and the minimum economy backbone exists, treat the room as developing.
+    if (
+      room.controller &&
+      room.controller.level >= 3 &&
+      buildStatus.sourceContainersBuilt >= buildStatus.sourceContainersNeeded &&
+      buildStatus.controllerContainersBuilt >=
+        buildStatus.controllerContainersNeeded
+    ) {
+      return true;
+    }
+
+    return false;
+  },
+
+  shouldEnterStable(room, state, buildStatus, desiredTotalHaulers) {
+    var roleCounts = state.roleCounts || {};
+
+    var economyHealthy =
+      (roleCounts.worker || 0) >= config.CREEPS.workers &&
+      (roleCounts.upgrader || 0) >= config.CREEPS.upgraders &&
+      (roleCounts.miner || 0) >=
+        state.sources.length * config.CREEPS.minersPerSource &&
+      (roleCounts.hauler || 0) >= desiredTotalHaulers;
+
+    if (!economyHealthy) return false;
+
+    if (buildStatus.developingComplete) return true;
+
+    // Developer note:
+    // Legacy room tolerance:
+    // if RCL3+, no construction backlog, required extensions/tower are in place,
+    // and economy is healthy, allow stable even if defense/roads are not perfect.
+    if (
+      room.controller &&
+      room.controller.level >= 3 &&
+      buildStatus.sites === 0 &&
+      buildStatus.extensionsBuilt >= buildStatus.extensionsNeeded &&
+      buildStatus.towersBuilt >= buildStatus.towersNeeded
+    ) {
+      return true;
+    }
+
+    return false;
   },
 
   getDesiredTotalHaulers(sources) {

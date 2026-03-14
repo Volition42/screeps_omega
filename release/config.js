@@ -49,6 +49,22 @@ module.exports = {
     //   "detailed" = two lines, easier to read
     SHOW_CONSTRUCTION_CHECKLIST: true,
     CONSTRUCTION_CHECKLIST_MODE: "detailed",
+
+    /*
+    Developer note:
+    Remote site status block shown in the room HUD.
+
+    SHOW_REMOTE_SITES
+    Master toggle for showing configured remote rooms in the home room HUD.
+
+    REMOTE_SITE_MODE
+    "compact"  = one shorter line per remote site
+    "detailed" = one fuller line per remote site
+
+    This is currently tuned for Remote Phase 1 and will expand later.
+    */
+    SHOW_REMOTE_SITES: true,
+    REMOTE_SITE_MODE: "detailed",
   },
 
   CREEPS: {
@@ -105,7 +121,21 @@ module.exports = {
   Developer Notes:
   Repair Behavior Thresholds
 
-  Values represent percentage of max hits unless otherwise noted.
+  criticalContainerThreshold
+  Containers are critical infrastructure for mining and upgrading.
+  When below this threshold, they become high priority repairs.
+
+  importantThreshold
+  General important structures are considered repair candidates below this level.
+
+  spawnExtensionThreshold
+  Spawn and extensions are energy infrastructure and should stay near full HP.
+
+  roadThreshold
+  Roads decay constantly, so this is lower to avoid wasting energy over-repairing.
+
+  rampartMinHits / wallMinHits
+  Early defensive baseline targets. These should scale upward later.
   */
   REPAIR: {
     criticalContainerThreshold: 0.5,
@@ -131,6 +161,21 @@ module.exports = {
   /*
   Developer Notes:
   Defense Planning Configuration
+
+  ENABLED
+  Master toggle for automated defense planning.
+
+  MIN_CONTROLLER_LEVEL
+  Defense construction starts only at or above this controller level.
+
+  PADDING_X / PADDING_Y
+  Size of the planned perimeter around the core.
+
+  GATE_WIDTH
+  Reserved for future wider gate support.
+
+  towerCountAtRCL3
+  Desired number of towers once RCL3 is reached.
   */
   DEFENSE: {
     ENABLED: true,
@@ -194,6 +239,11 @@ module.exports = {
   - Remote JrWorkers only
   - Harvest in remote room and bring energy home
   - No containers, roads, reservation, or defense yet
+
+  Remote spawning policy:
+  - Allowed only when the home room is in developing or stable
+  - Pauses automatically if the home room falls back into bootstrap
+  - Existing remote creeps may continue running, but no new ones should spawn
 
   homeRoom
   The owned room responsible for spawning and receiving energy.
