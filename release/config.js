@@ -22,7 +22,7 @@ Important Notes:
 - Keep the hauler override example in place for future tuning.
 - HUD options should stay easy to toggle during testing.
 - Directive settings control both recurring reports and one-time milestone announcements.
-- Remote mining starts with a simple manual phase 1 setup and can expand later.
+- Remote mining starts with a simple manual setup and expands by phase.
 */
 
 module.exports = {
@@ -40,13 +40,6 @@ module.exports = {
 
     // Developer note:
     // Construction checklist block shown in the room HUD.
-    // ENABLED:
-    //   true  = show construction progress lines
-    //   false = hide them
-    //
-    // MODE:
-    //   "compact"  = one summary line
-    //   "detailed" = two lines, easier to read
     SHOW_CONSTRUCTION_CHECKLIST: true,
     CONSTRUCTION_CHECKLIST_MODE: "detailed",
 
@@ -60,8 +53,6 @@ module.exports = {
     REMOTE_SITE_MODE
     "compact"  = one shorter line per remote site
     "detailed" = one fuller line per remote site
-
-    This is currently tuned for Remote Phase 1 and will expand later.
     */
     SHOW_REMOTE_SITES: true,
     REMOTE_SITE_MODE: "detailed",
@@ -78,10 +69,6 @@ module.exports = {
     workers: 4,
     upgraders: 1,
     repairs: 2,
-
-    // Developer note:
-    // Miners are currently locked to one per source.
-    minersPerSource: 1,
 
     // Developer note:
     // Default hauler count per source when no source-specific override exists.
@@ -104,8 +91,6 @@ module.exports = {
 
   MAX_SITES
   Limits the total number of construction sites the AI will create at once.
-  Screeps allows up to 100 sites globally, but large numbers slow worker focus
-  and can create chaotic build queues. A lower limit keeps construction orderly.
 
   PLAN_INTERVAL
   How often the construction planner runs in ticks.
@@ -120,22 +105,6 @@ module.exports = {
   /*
   Developer Notes:
   Repair Behavior Thresholds
-
-  criticalContainerThreshold
-  Containers are critical infrastructure for mining and upgrading.
-  When below this threshold, they become high priority repairs.
-
-  importantThreshold
-  General important structures are considered repair candidates below this level.
-
-  spawnExtensionThreshold
-  Spawn and extensions are energy infrastructure and should stay near full HP.
-
-  roadThreshold
-  Roads decay constantly, so this is lower to avoid wasting energy over-repairing.
-
-  rampartMinHits / wallMinHits
-  Early defensive baseline targets. These should scale upward later.
   */
   REPAIR: {
     criticalContainerThreshold: 0.5,
@@ -143,39 +112,21 @@ module.exports = {
     spawnExtensionThreshold: 0.9,
     roadThreshold: 0.35,
 
-    rampartMinHits: 5000,
-    wallMinHits: 5000,
+    rampartMinHits: 1000,
+    wallMinHits: 1000,
   },
 
   /*
   Developer Notes:
   Logistics Controls
-
-  controllerContainerReserve
-  Preferred minimum energy to keep in the controller container.
   */
   LOGISTICS: {
-    controllerContainerReserve: 1500,
+    controllerContainerReserve: 1000,
   },
 
   /*
   Developer Notes:
   Defense Planning Configuration
-
-  ENABLED
-  Master toggle for automated defense planning.
-
-  MIN_CONTROLLER_LEVEL
-  Defense construction starts only at or above this controller level.
-
-  PADDING_X / PADDING_Y
-  Size of the planned perimeter around the core.
-
-  GATE_WIDTH
-  Reserved for future wider gate support.
-
-  towerCountAtRCL3
-  Desired number of towers once RCL3 is reached.
   */
   DEFENSE: {
     ENABLED: true,
@@ -191,12 +142,6 @@ module.exports = {
   BODIES: {
     // Developer note:
     // These tiers are keyed off room.energyCapacityAvailable, not current energy.
-    // That means the room plans for what it can support consistently.
-    //
-    // Current intended progression:
-    // 300 = early room
-    // 550 = RCL2 with extensions
-    // 800 = early RCL3 strength
     maxTierEnergy: 800,
   },
 
@@ -234,26 +179,30 @@ module.exports = {
   Developer Notes:
   Remote Mining Configuration
 
-  Phase 1:
-  - Manual remote room config
-  - Remote JrWorkers only
-  - Harvest in remote room and bring energy home
-  - No containers, roads, reservation, or defense yet
-
   Remote spawning policy:
   - Allowed only when the home room is in developing or stable
   - Pauses automatically if the home room falls back into bootstrap
-  - Existing remote creeps may continue running, but no new ones should spawn
 
-  homeRoom
-  The owned room responsible for spawning and receiving energy.
+  Source configuration model:
+  - One miner per source always
+  - Haulers are configurable per source
+  - Source-specific overrides are defined by source id
+  - This model is intended for all remote sources going forward
 
-  phase
-  Current remote rollout stage.
-  Use 1 for Remote JrWorker bootstrap only.
+  reservation:
+  - enabled: whether this remote should be reserved
+  - reservers: number of reserver creeps to maintain
+  - renewBelow: if reservation ticks fall below this, spawn/replace reserver
 
-  jrWorkers
-  Number of remote bootstrap workers to maintain for this site.
+  sourceDefaults:
+  - miners is always 1
+  - haulers defaults per remote source
+
+  sourcesById example:
+  // sourcesById: {
+  //   "5bbcab1c9099fc012e632dbc": { miners: 1, haulers: 1 },
+  //   "5bbcab1c9099fc012e632dbd": { miners: 1, haulers: 2 }
+  // }
   */
   REMOTE_MINING: {
     ENABLED: true,
@@ -264,6 +213,19 @@ module.exports = {
         homeRoom: "E12N33",
         phase: 1,
         jrWorkers: 2,
+
+        reservation: {
+          enabled: true,
+          reservers: 1,
+          renewBelow: 2000,
+        },
+
+        sourceDefaults: {
+          miners: 1,
+          haulers: 1,
+        },
+
+        sourcesById: {},
       },
     },
   },

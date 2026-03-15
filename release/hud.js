@@ -23,17 +23,17 @@ Displayed data:
   - Remote room header
   - Configured remote phase
   - Remote JrWorker count
+  - Reserver count
   - Source energy summary
-  - Dropped energy summary
+  - Reservation summary
   - Hostile presence
   - Same creep label overlay style
 
 Important Notes:
 - Keep the current watermark position and lower text baseline unless explicitly changed
 - Avoid adding expensive visual effects here
-- HUD construction checklist reads from state.buildStatus so it stays synced with
-  room_state, construction_manager, and directive_manager
 - Remote phase 1 creeps are shown as RJ in the role header and creep labels
+- Reservers are shown as RV in the role header and creep labels
 */
 
 const config = require("config");
@@ -156,6 +156,8 @@ module.exports = {
         (counts.jrworker || 0) +
         " RJ:" +
         (counts.remotejrworker || 0) +
+        " RV:" +
+        (counts.reserver || 0) +
         " W:" +
         (counts.worker || 0) +
         " M:" +
@@ -223,6 +225,10 @@ module.exports = {
       return creep.memory.role === "remotejrworker";
     }).length;
 
+    const reservers = _.filter(remoteCreeps, function (creep) {
+      return creep.memory.role === "reserver";
+    }).length;
+
     const sources = remoteRoom.find(FIND_SOURCES);
     const dropped = remoteRoom.find(FIND_DROPPED_RESOURCES, {
       filter: function (r) {
@@ -250,6 +256,7 @@ module.exports = {
 
     const status = remoteJrWorkers > 0 ? "ACTIVE" : "IDLE";
     const threat = hostiles.length > 0 ? "HOSTILES" : "CLEAR";
+    const reservationLine = this.getRemoteReservationLine(remoteRoom);
 
     const lines = [
       "vCORP // REMOTE // " + remoteRoom.name,
@@ -258,11 +265,12 @@ module.exports = {
         remoteJrWorkers +
         "/" +
         (site.jrWorkers || 0) +
-        "   SRC " +
-        sources.length +
-        "   DROP " +
-        droppedEnergy,
-      "ENERGY " + sourcePct + "%   HOME " + homeRoom.name,
+        "   RV " +
+        reservers +
+        "/" +
+        ((site.reservation && site.reservation.reservers) || 0),
+      "ENERGY " + sourcePct + "%   DROP " + droppedEnergy,
+      reservationLine,
     ];
 
     this.drawRemotePanel(remoteRoom, lines, {
@@ -374,7 +382,7 @@ module.exports = {
   drawRemotePanel(room, lines, meta) {
     const x = 0.6;
     const y = 0.45;
-    const width = 15.5;
+    const width = 16.6;
     const height = lines.length * 0.88 + 1.0;
 
     const accent = meta.hostile ? "#ff3b3b" : "#ffd166";
@@ -419,6 +427,19 @@ module.exports = {
         strokeWidth: 0.12,
       });
     }
+  },
+
+  getRemoteReservationLine(remoteRoom) {
+    if (!remoteRoom.controller) {
+      return "RESERVATION UNKNOWN";
+    }
+
+    const reservation = remoteRoom.controller.reservation;
+    if (!reservation) {
+      return "RESERVATION NONE";
+    }
+
+    return "RES " + reservation.username + " " + reservation.ticksToEnd;
   },
 
   getPerformanceLine() {
@@ -535,8 +556,16 @@ module.exports = {
         );
       }).length;
 
+      const reserverCount = _.filter(Game.creeps, function (creep) {
+        return (
+          creep.memory.role === "reserver" &&
+          creep.memory.room === room.name &&
+          creep.memory.targetRoom === targetRoom
+        );
+      }).length;
+
       let status = "IDLE";
-      if (remoteJrCount > 0) {
+      if (remoteJrCount > 0 || reserverCount > 0) {
         status = "ACTIVE";
       }
 
@@ -550,6 +579,10 @@ module.exports = {
             remoteJrCount +
             "/" +
             (site.jrWorkers || 0) +
+            " RV " +
+            reserverCount +
+            "/" +
+            ((site.reservation && site.reservation.reservers) || 0) +
             " " +
             status,
         );
@@ -563,6 +596,10 @@ module.exports = {
             remoteJrCount +
             "/" +
             (site.jrWorkers || 0) +
+            "   RV " +
+            reserverCount +
+            "/" +
+            ((site.reservation && site.reservation.reservers) || 0) +
             "   " +
             status,
         );
@@ -698,6 +735,8 @@ module.exports = {
         return "J ⛏";
       case "remotejrworker":
         return "RJ 🌐";
+      case "reserver":
+        return "RV 🏳";
       case "worker":
         return "W " + (creep.memory.working ? "🔧" : "⛏");
       case "miner":
@@ -719,6 +758,8 @@ module.exports = {
         return "#d9fb8c";
       case "remotejrworker":
         return "#ffd166";
+      case "reserver":
+        return "#c77dff";
       case "worker":
         return "#89ffb4";
       case "miner":
@@ -752,6 +793,8 @@ module.exports = {
         (counts.jrworker || 0) +
         " RJ:" +
         (counts.remotejrworker || 0) +
+        " RV:" +
+        (counts.reserver || 0) +
         " W:" +
         (counts.worker || 0) +
         " M:" +

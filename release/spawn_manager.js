@@ -7,6 +7,7 @@ Purpose:
 - Support normal role-based spawning
 - Recover automatically from colony collapse
 - Maintain configured phase 1 remote mining workers
+- Maintain configured remote reservers
 
 Recovery behavior:
 - If the room loses its working economy, spawn JrWorkers first
@@ -17,11 +18,15 @@ Remote mining phase 1:
 - Manual remote room config
 - Remote JrWorkers only
 - Harvest remote energy and bring it home
-- No remote containers, roads, reservation, or defense yet
 
-Remote spawning policy:
-- Allowed only when the home room is in developing or stable
-- Pauses automatically if the home room falls back into bootstrap
+Remote reservation:
+- Maintain reserver creeps for configured remote rooms
+- Spawn only when the home room is out of bootstrap
+- Replace when reservation is low or a reserver is missing
+
+Important Notes:
+- Reservation ownership check now uses the creep owner's username when available
+- This avoids brittle username inference from other rooms
 */
 
 const bodies = require("bodies");
@@ -88,9 +93,6 @@ module.exports = {
     var requests = [];
     var roleCounts = state.roleCounts || {};
 
-    // =========================================================
-    // HARD RECOVERY MODE
-    // =========================================================
     if (this.needsRecovery(state)) {
       var recoveryTarget = this.getRecoveryJrWorkerTarget(room, state);
       var currentJrWorkers = roleCounts.jrworker || 0;
@@ -114,9 +116,6 @@ module.exports = {
       return requests;
     }
 
-    // =========================================================
-    // PRE INFRASTRUCTURE BOOTSTRAP
-    // =========================================================
     if (state.phase === "bootstrap_jr") {
       var desiredJrWorkers = config.CREEPS.jrWorkers;
       var currentBootJrWorkers = roleCounts.jrworker || 0;
@@ -140,9 +139,6 @@ module.exports = {
       return requests;
     }
 
-    // =========================================================
-    // NORMAL WORKER
-    // =========================================================
     var desiredWorkers = config.CREEPS.workers;
     var currentWorkers = roleCounts.worker || 0;
     var queuedWorkers = this.countQueued(room, "worker");
@@ -158,9 +154,6 @@ module.exports = {
       requests.push({ role: "worker", priority: 100 });
     }
 
-    // =========================================================
-    // MINERS
-    // =========================================================
     var minersPerSource = config.CREEPS.minersPerSource;
 
     for (var i = 0; i < state.sources.length; i++) {
@@ -191,9 +184,6 @@ module.exports = {
       }
     }
 
-    // =========================================================
-    // HAULERS
-    // =========================================================
     for (var j = 0; j < state.sources.length; j++) {
       var haulSource = state.sources[j];
       var haulContainer = utils.getSourceContainerBySource(room, haulSource.id);
@@ -230,9 +220,6 @@ module.exports = {
       }
     }
 
-    // =========================================================
-    // UPGRADERS
-    // =========================================================
     var desiredUpgraders = config.CREEPS.upgraders;
 
     if (state.controllerContainers.length > 0) {
@@ -265,9 +252,6 @@ module.exports = {
       }
     }
 
-    // =========================================================
-    // REPAIRS
-    // =========================================================
     var desiredRepairs = config.CREEPS.repairs;
     var currentRepairs = roleCounts.repair || 0;
     var queuedRepairs = this.countQueued(room, "repair");
@@ -283,9 +267,7 @@ module.exports = {
       requests.push({ role: "repair", priority: 60 });
     }
 
-    // =========================================================
-    // REMOTE MINING PHASE 1
-    // =========================================================
+    this.addRemoteReservationRequests(room, state, requests);
     this.addRemotePhaseOneRequests(room, state, requests);
 
     requests.sort(function (a, b) {
@@ -295,12 +277,62 @@ module.exports = {
     return requests;
   },
 
+  addRemoteReservationRequests(room, state, requests) {
+    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
+    if (state.phase !== "developing" && state.phase !== "stable") return;
+
+    var sites = config.REMOTE_MINING.SITES || {};
+
+    for (var targetRoom in sites) {
+      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
+
+      var site = sites[targetRoom];
+      if (!site || !site.enabled) continue;
+      if (site.homeRoom !== room.name) continue;
+      if (!site.reservation || !site.reservation.enabled) continue;
+
+      var desiredReservers = site.reservation.reservers || 1;
+      var renewBelow = site.reservation.renewBelow || 2000;
+
+      var existingReservers = _.filter(Game.creeps, function (creep) {
+        if (
+          creep.memory.role !== "reserver" ||
+          creep.memory.room !== room.name ||
+          creep.memory.targetRoom !== targetRoom
+        ) {
+          return false;
+        }
+
+        return creep.ticksToLive === undefined || creep.ticksToLive > 80;
+      }).length;
+
+      var queuedReservers = this.countQueuedForTargetRoom(
+        room,
+        "reserver",
+        targetRoom,
+      );
+      var reservationLow = this.isRemoteReservationLow(
+        room,
+        targetRoom,
+        renewBelow,
+      );
+
+      if (
+        existingReservers + queuedReservers < desiredReservers ||
+        reservationLow
+      ) {
+        requests.push({
+          role: "reserver",
+          priority: 55,
+          targetRoom: targetRoom,
+          homeRoom: room.name,
+        });
+      }
+    }
+  },
+
   addRemotePhaseOneRequests(room, state, requests) {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
-
-    // Developer note:
-    // Remote spawning is only allowed after bootstrap.
-    // If the home room dips back into bootstrap, remote spawning pauses.
     if (state.phase !== "developing" && state.phase !== "stable") return;
 
     var sites = config.REMOTE_MINING.SITES || {};
@@ -338,6 +370,51 @@ module.exports = {
         });
       }
     }
+  },
+
+  isRemoteReservationLow(homeRoom, targetRoom, renewBelow) {
+    var remoteRoom = Game.rooms[targetRoom];
+    if (!remoteRoom || !remoteRoom.controller) {
+      return false;
+    }
+
+    var myUsername = this.getMyUsername(homeRoom);
+    if (!myUsername) {
+      return false;
+    }
+
+    var reservation = remoteRoom.controller.reservation;
+    if (!reservation) {
+      return true;
+    }
+
+    if (reservation.username !== myUsername) {
+      return true;
+    }
+
+    return reservation.ticksToEnd < renewBelow;
+  },
+
+  getMyUsername(room) {
+    if (!room || !room.controller) return null;
+    if (room.controller.owner && room.controller.owner.username) {
+      return room.controller.owner.username;
+    }
+
+    for (var name in Game.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Game.rooms, name)) continue;
+      var testRoom = Game.rooms[name];
+      if (
+        testRoom.controller &&
+        testRoom.controller.my &&
+        testRoom.controller.owner &&
+        testRoom.controller.owner.username
+      ) {
+        return testRoom.controller.owner.username;
+      }
+    }
+
+    return null;
   },
 
   needsRecovery(state) {

@@ -10,10 +10,8 @@ Purpose:
 Important Notes:
 - Remote JrWorkers scale with home room energy capacity
 - Remote phase 1 bodies favor extra carry and move for travel efficiency
-- More advanced remote roles can be added later without rewriting this file
+- Reservers scale separately because CLAIM parts have different cost breakpoints
 */
-
-const config = require("config");
 
 module.exports = {
   get(role, room) {
@@ -26,6 +24,9 @@ module.exports = {
 
       case "remotejrworker":
         return this.getRemoteJrWorkerBody(tier);
+
+      case "reserver":
+        return this.getReserverBody(energyCapacity);
 
       case "worker":
         return this.getWorkerBody(tier);
@@ -54,9 +55,6 @@ module.exports = {
   },
 
   getRemoteJrWorkerBody(tier) {
-    // Developer note:
-    // Remote JrWorkers need to walk farther than local creeps.
-    // Scale carry and move together so they remain useful over distance.
     switch (tier) {
       case 3:
         return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
@@ -65,6 +63,16 @@ module.exports = {
       default:
         return [WORK, CARRY, MOVE];
     }
+  },
+
+  getReserverBody(energyCapacity) {
+    // Developer note:
+    // CLAIM parts cost 600 each, so use simple reservation tiers.
+    if (energyCapacity >= 1300) {
+      return [CLAIM, CLAIM, MOVE, MOVE];
+    }
+
+    return [CLAIM, MOVE];
   },
 
   getWorkerBody(tier) {
