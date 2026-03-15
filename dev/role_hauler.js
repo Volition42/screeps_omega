@@ -22,9 +22,21 @@ Normal mode:
 - storage
 - towers below reserve threshold
 
+Pickup priority:
+Normal mode:
+- assigned source container
+- other source containers
+- large dropped energy
+- small dropped energy
+
+Emergency fallback:
+- storage if source-side logistics are unavailable
+
 Important Notes:
-- Pickup logic remains source-logistics focused
-- Haulers still collect dropped energy when practical
+- Storage fallback allows haulers to keep spawn/extensions alive
+  when miners are dead or containers are empty
+- This makes haulers useful during colony recovery without changing
+  miner or upgrader specialization
 */
 
 const utils = require("utils");
@@ -49,13 +61,6 @@ module.exports = {
         },
       });
 
-      if (largeDrop) {
-        if (creep.pickup(largeDrop) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(largeDrop);
-        }
-        return;
-      }
-
       let sourceContainer = null;
 
       if (creep.memory.sourceId) {
@@ -63,6 +68,13 @@ module.exports = {
           creep.room,
           creep.memory.sourceId,
         );
+
+        if (
+          sourceContainer &&
+          (sourceContainer.store[RESOURCE_ENERGY] || 0) <= 0
+        ) {
+          sourceContainer = null;
+        }
       }
 
       if (!sourceContainer) {
@@ -88,6 +100,13 @@ module.exports = {
         return;
       }
 
+      if (largeDrop) {
+        if (creep.pickup(largeDrop) === ERR_NOT_IN_RANGE) {
+          creep.moveTo(largeDrop);
+        }
+        return;
+      }
+
       const smallDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
         filter: function (r) {
           return r.resourceType === RESOURCE_ENERGY;
@@ -97,6 +116,23 @@ module.exports = {
       if (smallDrop) {
         if (creep.pickup(smallDrop) === ERR_NOT_IN_RANGE) {
           creep.moveTo(smallDrop);
+        }
+        return;
+      }
+
+      // Developer note:
+      // Emergency fallback.
+      // If source-side logistics are dry, allow haulers to pull from storage
+      // so they can still power spawn/extensions/towers during recovery.
+      if (
+        creep.room.storage &&
+        (creep.room.storage.store[RESOURCE_ENERGY] || 0) > 0
+      ) {
+        if (
+          creep.withdraw(creep.room.storage, RESOURCE_ENERGY) ===
+          ERR_NOT_IN_RANGE
+        ) {
+          creep.moveTo(creep.room.storage);
         }
       }
 
