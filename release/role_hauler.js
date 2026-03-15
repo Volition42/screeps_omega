@@ -1,5 +1,33 @@
+/*
+Developer Summary:
+Hauler Role
+
+Purpose:
+- Pull energy from source-side logistics
+- Deliver energy using shared room-wide priority logic
+- Support emergency defense and spawn recovery first
+
+Delivery priority:
+Threat mode or low tower energy:
+- spawn
+- towers
+- extensions
+- controller container
+- storage
+
+Normal mode:
+- spawn
+- extensions
+- controller container
+- storage
+- towers below reserve threshold
+
+Important Notes:
+- Pickup logic remains source-logistics focused
+- Haulers still collect dropped energy when practical
+*/
+
 const utils = require("utils");
-const config = require("config");
 
 module.exports = {
   run(creep) {
@@ -13,9 +41,12 @@ module.exports = {
 
     if (!creep.memory.delivering) {
       const largeDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-        filter: (r) =>
-          r.resourceType === RESOURCE_ENERGY &&
-          r.amount >= creep.store.getFreeCapacity(),
+        filter: function (r) {
+          return (
+            r.resourceType === RESOURCE_ENERGY &&
+            r.amount >= creep.store.getFreeCapacity()
+          );
+        },
       });
 
       if (largeDrop) {
@@ -36,13 +67,15 @@ module.exports = {
 
       if (!sourceContainer) {
         sourceContainer = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-          filter: (s) =>
-            s.structureType === STRUCTURE_CONTAINER &&
-            _.some(
-              creep.room.find(FIND_SOURCES),
-              (src) => s.pos.getRangeTo(src) <= 1,
-            ) &&
-            s.store[RESOURCE_ENERGY] > 0,
+          filter: function (s) {
+            return (
+              s.structureType === STRUCTURE_CONTAINER &&
+              _.some(creep.room.find(FIND_SOURCES), function (src) {
+                return s.pos.getRangeTo(src) <= 1;
+              }) &&
+              (s.store[RESOURCE_ENERGY] || 0) > 0
+            );
+          },
         });
       }
 
@@ -56,7 +89,9 @@ module.exports = {
       }
 
       const smallDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-        filter: (r) => r.resourceType === RESOURCE_ENERGY,
+        filter: function (r) {
+          return r.resourceType === RESOURCE_ENERGY;
+        },
       });
 
       if (smallDrop) {
@@ -68,81 +103,19 @@ module.exports = {
       return;
     }
 
-    const spawnTarget = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_SPAWN &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    });
+    const deliveryTarget = utils.getHaulerDeliveryTarget(creep.room, creep);
 
-    if (spawnTarget) {
-      if (creep.transfer(spawnTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(spawnTarget);
-      }
-      return;
-    }
-
-    const extensionTarget = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_EXTENSION &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    });
-
-    if (extensionTarget) {
+    if (deliveryTarget) {
       if (
-        creep.transfer(extensionTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
+        creep.transfer(deliveryTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
       ) {
-        creep.moveTo(extensionTarget);
+        creep.moveTo(deliveryTarget);
       }
       return;
     }
 
-    const towerTarget = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_TOWER &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    });
-
-    if (towerTarget) {
-      if (creep.transfer(towerTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(towerTarget);
-      }
-      return;
-    }
-
-    const controllerReserve = config.LOGISTICS.controllerContainerReserve;
-
-    const controllerContainer = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_CONTAINER &&
-        creep.room.controller &&
-        s.pos.getRangeTo(creep.room.controller) <= 4 &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-        (s.store[RESOURCE_ENERGY] || 0) < controllerReserve,
-    });
-
-    if (controllerContainer) {
-      if (
-        creep.transfer(controllerContainer, RESOURCE_ENERGY) ===
-        ERR_NOT_IN_RANGE
-      ) {
-        creep.moveTo(controllerContainer);
-      }
-      return;
-    }
-
-    const site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
-
-    if (site) {
-      if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site);
-      }
-      return;
-    }
-
-    if (creep.room.controller) {
-      if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(creep.room.controller);
-      }
+    if (creep.room.storage && creep.pos.getRangeTo(creep.room.storage) > 1) {
+      creep.moveTo(creep.room.storage);
     }
   },
 };

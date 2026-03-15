@@ -8,6 +8,7 @@ Purpose:
 - Preserve useful examples for future reference
 
 Major sections:
+- VERSION
 - HUD
 - CREEPS
 - CONSTRUCTION
@@ -26,7 +27,7 @@ Important Notes:
 */
 
 module.exports = {
-  CODENAME: "INFRASTRUCTURE",
+  VERSION: "0.9.0",
 
   HUD: {
     ENABLED: true,
@@ -60,7 +61,7 @@ module.exports = {
 
   CREEPS: {
     // Developer note:
-    // JrWorkers are only used during the pre-infrastructure bootstrap phase.
+    // JrWorkers are only used during the earliest bootstrap phase.
     jrWorkers: 4,
 
     // Developer note:
@@ -70,9 +71,16 @@ module.exports = {
     upgraders: 1,
     repairs: 2,
 
+    /*
+    Developer note:
+    Miners are always one per source.
+    Multi-miner source logic is no longer used.
+    */
+    minersPerSource: 1,
+
     // Developer note:
     // Default hauler count per source when no source-specific override exists.
-    haulersPerSourceDefault: 2,
+    haulersPerSourceDefault: 1,
 
     // Developer note:
     // Optional per-source overrides.
@@ -119,9 +127,22 @@ module.exports = {
   /*
   Developer Notes:
   Logistics Controls
+
+  controllerContainerReserve
+  Preferred minimum energy to keep in the controller container.
+
+  towerEmergencyThreshold
+  If any tower drops below this level, or if hostiles are present,
+  haulers switch to threat mode and towers move ahead of extensions.
+
+  towerReserveThreshold
+  In normal mode, towers are only topped up after storage and only if they are
+  below this reserve level.
   */
   LOGISTICS: {
     controllerContainerReserve: 1000,
+    towerEmergencyThreshold: 400,
+    towerReserveThreshold: 700,
   },
 
   /*
@@ -216,6 +237,25 @@ module.exports = {
 
         reservation: {
           enabled: true,
+          reservers: 1,
+          renewBelow: 2000,
+        },
+
+        sourceDefaults: {
+          miners: 1,
+          haulers: 1,
+        },
+
+        sourcesById: {},
+      },
+      E12N32: {
+        enabled: true,
+        homeRoom: "E12N33",
+        phase: 1,
+        jrWorkers: 2,
+
+        reservation: {
+          enabled: false,
           reservers: 1,
           renewBelow: 2000,
         },

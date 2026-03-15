@@ -1,3 +1,23 @@
+/*
+Developer Summary:
+Repair Role
+
+Purpose:
+- Withdraw energy from shared colony buffers
+- Maintain critical infrastructure and defenses
+- Build when repair pressure is low
+- Upgrade as final fallback
+
+Withdrawal priority:
+- storage
+- source containers
+- harvest source as fallback
+
+Important Notes:
+- Miners and upgraders are unchanged
+- Repairers now follow the same withdrawal order as workers
+*/
+
 const config = require("config");
 const utils = require("utils");
 
@@ -14,57 +34,46 @@ module.exports = {
     }
 
     if (!creep.memory.working) {
-      let sourceContainer = null;
+      let target = null;
 
       if (creep.memory.withdrawTargetId) {
-        sourceContainer = Game.getObjectById(creep.memory.withdrawTargetId);
+        target = Game.getObjectById(creep.memory.withdrawTargetId);
 
         if (
-          !sourceContainer ||
-          sourceContainer.structureType !== STRUCTURE_CONTAINER ||
-          (sourceContainer.store[RESOURCE_ENERGY] || 0) <= 0
+          !target ||
+          ((target.structureType === STRUCTURE_STORAGE ||
+            target.structureType === STRUCTURE_CONTAINER) &&
+            (target.store[RESOURCE_ENERGY] || 0) <= 0)
         ) {
-          sourceContainer = null;
+          target = null;
           delete creep.memory.withdrawTargetId;
         }
       }
 
-      if (!sourceContainer) {
-        sourceContainer = utils.getBalancedSourceContainer(creep.room, creep);
+      if (!target) {
+        target = utils.getGeneralEnergyWithdrawalTarget(creep.room, creep);
 
-        if (sourceContainer) {
-          creep.memory.withdrawTargetId = sourceContainer.id;
+        if (target && target.id) {
+          creep.memory.withdrawTargetId = target.id;
+        } else {
+          delete creep.memory.withdrawTargetId;
         }
       }
 
-      if (sourceContainer) {
-        if (
-          creep.withdraw(sourceContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
-        ) {
-          creep.moveTo(sourceContainer);
+      if (!target) return;
+
+      if (
+        target.structureType === STRUCTURE_STORAGE ||
+        target.structureType === STRUCTURE_CONTAINER
+      ) {
+        if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+          creep.moveTo(target);
         }
         return;
       }
 
-      const controllerContainer = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-        filter: function (s) {
-          return (
-            s.structureType === STRUCTURE_CONTAINER &&
-            creep.room.controller &&
-            s.pos.getRangeTo(creep.room.controller) <= 4 &&
-            s.store[RESOURCE_ENERGY] > 0
-          );
-        },
-      });
-
-      if (controllerContainer) {
-        if (
-          creep.withdraw(controllerContainer, RESOURCE_ENERGY) ===
-          ERR_NOT_IN_RANGE
-        ) {
-          creep.moveTo(controllerContainer);
-        }
-        return;
+      if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target);
       }
 
       return;
