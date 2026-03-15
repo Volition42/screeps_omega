@@ -1,3 +1,23 @@
+/*
+Developer Summary:
+Worker Role
+
+Purpose:
+- Withdraw energy from shared colony buffers
+- Fill spawn first
+- Build second
+- Upgrade controller last
+
+Withdrawal priority:
+- storage
+- source containers
+- harvest source as fallback
+
+Important Notes:
+- Workers no longer prefer controller containers for withdrawal
+- Shared helper keeps worker energy logic aligned with repair creeps
+*/
+
 const utils = require("utils");
 
 module.exports = {
@@ -13,44 +33,48 @@ module.exports = {
     }
 
     if (!creep.memory.working) {
-      let sourceContainer = null;
+      let target = null;
 
       if (creep.memory.withdrawTargetId) {
-        sourceContainer = Game.getObjectById(creep.memory.withdrawTargetId);
+        target = Game.getObjectById(creep.memory.withdrawTargetId);
 
         if (
-          !sourceContainer ||
-          sourceContainer.structureType !== STRUCTURE_CONTAINER ||
-          (sourceContainer.store[RESOURCE_ENERGY] || 0) <= 0
+          !target ||
+          ((target.structureType === STRUCTURE_STORAGE ||
+            target.structureType === STRUCTURE_CONTAINER) &&
+            (target.store[RESOURCE_ENERGY] || 0) <= 0)
         ) {
-          sourceContainer = null;
+          target = null;
           delete creep.memory.withdrawTargetId;
         }
       }
 
-      if (!sourceContainer) {
-        sourceContainer = utils.getBalancedSourceContainer(creep.room, creep);
+      if (!target) {
+        target = utils.getGeneralEnergyWithdrawalTarget(creep.room, creep);
 
-        if (sourceContainer) {
-          creep.memory.withdrawTargetId = sourceContainer.id;
+        if (target && target.id) {
+          creep.memory.withdrawTargetId = target.id;
+        } else {
+          delete creep.memory.withdrawTargetId;
         }
       }
 
-      if (sourceContainer) {
-        if (
-          creep.withdraw(sourceContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
-        ) {
-          creep.moveTo(sourceContainer);
+      if (!target) return;
+
+      if (
+        target.structureType === STRUCTURE_STORAGE ||
+        target.structureType === STRUCTURE_CONTAINER
+      ) {
+        if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+          creep.moveTo(target);
         }
         return;
       }
 
-      const source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
-      if (source) {
-        if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(source);
-        }
+      if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target);
       }
+
       return;
     }
 

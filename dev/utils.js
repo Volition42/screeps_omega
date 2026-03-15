@@ -1,3 +1,22 @@
+/*
+Developer Summary:
+Shared utility helpers.
+
+Purpose:
+- Keep repeated room and structure queries centralized
+- Provide shared energy logistics helpers
+- Support consistent targeting across multiple roles
+
+Important Notes:
+- General withdrawal logic now prefers storage first, then source containers,
+  then direct harvesting as a fallback.
+- Hauler delivery logic now supports conditional tower priority:
+  - Threat mode or low tower energy: spawn -> towers -> extensions -> controller -> storage
+  - Normal mode: spawn -> extensions -> controller -> storage -> towers below reserve
+*/
+
+const config = require("config");
+
 module.exports = {
   getWalkableAdjacentPositions(pos) {
     const terrain = Game.map.getRoomTerrain(pos.roomName);
@@ -61,6 +80,7 @@ module.exports = {
     for (const pos of candidates) {
       const blocked = pos.lookFor(LOOK_STRUCTURES).length > 0;
       const siteBlocked = pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+
       if (blocked || siteBlocked) continue;
 
       const tooClose = _.some(chosen, function (other) {
@@ -146,7 +166,6 @@ module.exports = {
     const terrain = Game.map.getRoomTerrain(room.name);
     const candidates = [];
     const spawn = room.find(FIND_MY_SPAWNS)[0];
-
     const around = [container.pos].concat(
       this.getWalkableAdjacentPositions(container.pos),
     );
@@ -220,5 +239,151 @@ module.exports = {
     });
 
     return scored[0].container;
+  },
+
+  hasThreats(room) {
+    return room.find(FIND_HOSTILE_CREEPS).length > 0;
+  },
+
+  getStorageEnergyTarget(room) {
+    if (!room.storage) return null;
+    if ((room.storage.store[RESOURCE_ENERGY] || 0) <= 0) return null;
+    return room.storage;
+  },
+
+  getGeneralEnergyWithdrawalTarget(room, creep) {
+    const storage = this.getStorageEnergyTarget(room);
+    if (storage) {
+      return storage;
+    }
+
+    const sourceContainer = this.getBalancedSourceContainer(room, creep);
+    if (sourceContainer) {
+      return sourceContainer;
+    }
+
+    return creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+  },
+
+  getLowTowerTarget(room, threshold, creep) {
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_TOWER &&
+          (s.store[RESOURCE_ENERGY] || 0) < threshold &&
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+      },
+    });
+  },
+
+  getSpawnDeliveryTarget(room, creep) {
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_SPAWN &&
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+      },
+    });
+  },
+
+  getExtensionDeliveryTarget(room, creep) {
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_EXTENSION &&
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+      },
+    });
+  },
+
+  getControllerContainerDeliveryTarget(room, creep, reserve) {
+    return creep.pos.findClosestByPath(FIND_STRUCTURES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_CONTAINER &&
+          room.controller &&
+          s.pos.getRangeTo(room.controller) <= 4 &&
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+          (s.store[RESOURCE_ENERGY] || 0) < reserve
+        );
+      },
+    });
+  },
+
+  getStorageDeliveryTarget(room) {
+    if (!room.storage) return null;
+    if (room.storage.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) return null;
+    return room.storage;
+  },
+
+  shouldUseThreatTowerPriority(room) {
+    if (this.hasThreats(room)) return true;
+
+    const emergencyThreshold = config.LOGISTICS.towerEmergencyThreshold;
+    const towers = room.find(FIND_MY_STRUCTURES, {
+      filter: function (s) {
+        return s.structureType === STRUCTURE_TOWER;
+      },
+    });
+
+    return _.some(towers, function (tower) {
+      return (tower.store[RESOURCE_ENERGY] || 0) < emergencyThreshold;
+    });
+  },
+
+  getHaulerDeliveryTarget(room, creep) {
+    const spawnTarget = this.getSpawnDeliveryTarget(room, creep);
+    if (spawnTarget) return spawnTarget;
+
+    const threatMode = this.shouldUseThreatTowerPriority(room);
+
+    if (threatMode) {
+      const emergencyTower = this.getLowTowerTarget(
+        room,
+        room.energyCapacityAvailable,
+        creep,
+      );
+      if (emergencyTower) return emergencyTower;
+
+      const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
+      if (extensionTarget) return extensionTarget;
+
+      const controllerContainer = this.getControllerContainerDeliveryTarget(
+        room,
+        creep,
+        config.LOGISTICS.controllerContainerReserve,
+      );
+      if (controllerContainer) return controllerContainer;
+
+      const storageTarget = this.getStorageDeliveryTarget(room);
+      if (storageTarget) return storageTarget;
+
+      return null;
+    }
+
+    const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
+    if (extensionTarget) return extensionTarget;
+
+    const controllerContainer = this.getControllerContainerDeliveryTarget(
+      room,
+      creep,
+      config.LOGISTICS.controllerContainerReserve,
+    );
+    if (controllerContainer) return controllerContainer;
+
+    const storageTarget = this.getStorageDeliveryTarget(room);
+    if (storageTarget) return storageTarget;
+
+    const reserveTower = this.getLowTowerTarget(
+      room,
+      config.LOGISTICS.towerReserveThreshold,
+      creep,
+    );
+    if (reserveTower) return reserveTower;
+
+    return null;
   },
 };
