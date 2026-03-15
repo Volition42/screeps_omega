@@ -120,8 +120,8 @@ module.exports = {
     spawnExtensionThreshold: 0.9,
     roadThreshold: 0.35,
 
-    rampartMinHits: 1000,
-    wallMinHits: 1000,
+    rampartMinHits: 5000,
+    wallMinHits: 5000,
   },
 
   /*
