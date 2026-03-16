@@ -138,40 +138,33 @@ module.exports = {
     }
 
     if (!sourceContainer) {
-      const sourceContainers = _.filter(
-        utils.getSourceContainers(creep.room),
-        function (container) {
-          return (container.store[RESOURCE_ENERGY] || 0) > 0;
-        },
-      );
-
-      if (sourceContainers.length > 0) {
-        sourceContainer = creep.pos.findClosestByPath(sourceContainers);
-      }
+      sourceContainer = utils.getBalancedSourceContainer(creep.room, creep);
     }
 
     if (sourceContainer) {
       return this.storePickupTarget(creep, sourceContainer, "withdraw");
     }
 
-    const largeDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-      filter: function (resource) {
-        return (
-          resource.resourceType === RESOURCE_ENERGY &&
-          resource.amount >= creep.store.getFreeCapacity()
-        );
+    const droppedEnergy = _.filter(
+      utils.getDroppedEnergyResources(creep.room),
+      function (resource) {
+        return resource.amount > 0;
       },
+    );
+    const largeDrops = _.filter(droppedEnergy, function (resource) {
+      return resource.amount >= creep.store.getFreeCapacity();
     });
+    const largeDrop =
+      largeDrops.length > 0 ? creep.pos.findClosestByPath(largeDrops) : null;
 
     if (largeDrop) {
       return this.storePickupTarget(creep, largeDrop, "pickup");
     }
 
-    const smallDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-      filter: function (resource) {
-        return resource.resourceType === RESOURCE_ENERGY;
-      },
-    });
+    const smallDrop =
+      droppedEnergy.length > 0
+        ? creep.pos.findClosestByPath(droppedEnergy)
+        : null;
 
     if (smallDrop) {
       return this.storePickupTarget(creep, smallDrop, "pickup");

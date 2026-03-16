@@ -121,85 +121,48 @@ module.exports = {
   },
 
   findWorkTarget(creep) {
-    const criticalContainer = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          s.hits < s.hitsMax * config.REPAIR.criticalContainerThreshold
-        );
-      },
-    });
+    // Developer note:
+    // Preserve the existing repair priority order, but prefilter candidate
+    // groups once per room/tick so first acquisition avoids repeated full-room
+    // structure scans.
+    const groups = utils.getRepairTargetGroups(creep.room);
+    const criticalContainer = this.findClosestTarget(
+      creep,
+      groups.criticalContainers,
+    );
 
     if (criticalContainer) {
       return this.storeWorkTarget(creep, criticalContainer, "criticalRepair");
     }
 
-    const importantRepairTarget = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (s) {
-        if (s.structureType === STRUCTURE_ROAD) return false;
-        if (s.structureType === STRUCTURE_WALL) return false;
-        if (s.structureType === STRUCTURE_RAMPART) return false;
-
-        if (s.structureType === STRUCTURE_CONTAINER) {
-          return s.hits < s.hitsMax * config.REPAIR.importantThreshold;
-        }
-
-        if (
-          s.structureType === STRUCTURE_EXTENSION ||
-          s.structureType === STRUCTURE_SPAWN ||
-          s.structureType === STRUCTURE_TOWER
-        ) {
-          return s.hits < s.hitsMax * config.REPAIR.spawnExtensionThreshold;
-        }
-
-        return false;
-      },
-    });
+    const importantRepairTarget = this.findClosestTarget(
+      creep,
+      groups.importantStructures,
+    );
 
     if (importantRepairTarget) {
       return this.storeWorkTarget(creep, importantRepairTarget, "importantRepair");
     }
 
-    const lowRampart = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_RAMPART &&
-          s.hits < config.REPAIR.rampartMinHits
-        );
-      },
-    });
+    const lowRampart = this.findClosestTarget(creep, groups.lowRamparts);
 
     if (lowRampart) {
       return this.storeWorkTarget(creep, lowRampart, "rampartRepair");
     }
 
-    const lowWall = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_WALL &&
-          s.hits < config.REPAIR.wallMinHits
-        );
-      },
-    });
+    const lowWall = this.findClosestTarget(creep, groups.lowWalls);
 
     if (lowWall) {
       return this.storeWorkTarget(creep, lowWall, "wallRepair");
     }
 
-    const roadRepairTarget = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_ROAD &&
-          s.hits < s.hitsMax * config.REPAIR.roadThreshold
-        );
-      },
-    });
+    const roadRepairTarget = this.findClosestTarget(creep, groups.roadRepairs);
 
     if (roadRepairTarget) {
       return this.storeWorkTarget(creep, roadRepairTarget, "roadRepair");
     }
 
-    const site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+    const site = this.findClosestTarget(creep, groups.sites);
     if (site) {
       return this.storeWorkTarget(creep, site, "build");
     }
@@ -209,6 +172,11 @@ module.exports = {
     }
 
     return null;
+  },
+
+  findClosestTarget(creep, targets) {
+    if (!targets || targets.length === 0) return null;
+    return creep.pos.findClosestByPath(targets);
   },
 
   storeWorkTarget(creep, target, kind) {
