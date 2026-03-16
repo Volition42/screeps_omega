@@ -41,99 +41,39 @@ Important Notes:
 
 const utils = require("utils");
 
+const MOVE_OPTIONS = {
+  reusePath: 12,
+};
+
 module.exports = {
   run(creep) {
     if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.delivering = false;
+      delete creep.memory.pickupTargetId;
+      delete creep.memory.pickupTargetKind;
     }
 
     if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
       creep.memory.delivering = true;
+      delete creep.memory.pickupTargetId;
+      delete creep.memory.pickupTargetKind;
     }
 
     if (!creep.memory.delivering) {
-      const largeDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-        filter: function (r) {
-          return (
-            r.resourceType === RESOURCE_ENERGY &&
-            r.amount >= creep.store.getFreeCapacity()
-          );
-        },
-      });
+      const pickupTarget = this.getPickupTarget(creep);
+      if (!pickupTarget) return;
 
-      let sourceContainer = null;
-
-      if (creep.memory.sourceId) {
-        sourceContainer = utils.getSourceContainerBySource(
-          creep.room,
-          creep.memory.sourceId,
-        );
-
-        if (
-          sourceContainer &&
-          (sourceContainer.store[RESOURCE_ENERGY] || 0) <= 0
-        ) {
-          sourceContainer = null;
-        }
-      }
-
-      if (!sourceContainer) {
-        sourceContainer = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-          filter: function (s) {
-            return (
-              s.structureType === STRUCTURE_CONTAINER &&
-              _.some(creep.room.find(FIND_SOURCES), function (src) {
-                return s.pos.getRangeTo(src) <= 1;
-              }) &&
-              (s.store[RESOURCE_ENERGY] || 0) > 0
-            );
-          },
-        });
-      }
-
-      if (sourceContainer) {
-        if (
-          creep.withdraw(sourceContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
-        ) {
-          creep.moveTo(sourceContainer);
+      if (pickupTarget.kind === "pickup") {
+        if (creep.pickup(pickupTarget.target) === ERR_NOT_IN_RANGE) {
+          creep.moveTo(pickupTarget.target, MOVE_OPTIONS);
         }
         return;
       }
 
-      if (largeDrop) {
-        if (creep.pickup(largeDrop) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(largeDrop);
-        }
-        return;
-      }
-
-      const smallDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-        filter: function (r) {
-          return r.resourceType === RESOURCE_ENERGY;
-        },
-      });
-
-      if (smallDrop) {
-        if (creep.pickup(smallDrop) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(smallDrop);
-        }
-        return;
-      }
-
-      // Developer note:
-      // Emergency fallback.
-      // If source-side logistics are dry, allow haulers to pull from storage
-      // so they can still power spawn/extensions/towers during recovery.
       if (
-        creep.room.storage &&
-        (creep.room.storage.store[RESOURCE_ENERGY] || 0) > 0
+        creep.withdraw(pickupTarget.target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
       ) {
-        if (
-          creep.withdraw(creep.room.storage, RESOURCE_ENERGY) ===
-          ERR_NOT_IN_RANGE
-        ) {
-          creep.moveTo(creep.room.storage);
-        }
+        creep.moveTo(pickupTarget.target, MOVE_OPTIONS);
       }
 
       return;
@@ -145,13 +85,129 @@ module.exports = {
       if (
         creep.transfer(deliveryTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
       ) {
-        creep.moveTo(deliveryTarget);
+        creep.moveTo(deliveryTarget, MOVE_OPTIONS);
       }
       return;
     }
 
     if (creep.room.storage && creep.pos.getRangeTo(creep.room.storage) > 1) {
-      creep.moveTo(creep.room.storage);
+      creep.moveTo(creep.room.storage, MOVE_OPTIONS);
     }
+  },
+
+  getPickupTarget(creep) {
+    const cached = this.getCachedPickupTarget(creep);
+    if (cached) return cached;
+
+    return this.findPickupTarget(creep);
+  },
+
+  getCachedPickupTarget(creep) {
+    const targetId = creep.memory.pickupTargetId;
+    const kind = creep.memory.pickupTargetKind;
+    if (!targetId || !kind) return null;
+
+    const target = Game.getObjectById(targetId);
+    if (!this.isValidPickupTarget(target, kind)) {
+      delete creep.memory.pickupTargetId;
+      delete creep.memory.pickupTargetKind;
+      return null;
+    }
+
+    return {
+      target: target,
+      kind: kind,
+    };
+  },
+
+  findPickupTarget(creep) {
+    let sourceContainer = null;
+
+    if (creep.memory.sourceId) {
+      sourceContainer = utils.getSourceContainerBySource(
+        creep.room,
+        creep.memory.sourceId,
+      );
+
+      if (
+        sourceContainer &&
+        (sourceContainer.store[RESOURCE_ENERGY] || 0) <= 0
+      ) {
+        sourceContainer = null;
+      }
+    }
+
+    if (!sourceContainer) {
+      sourceContainer = utils.getBalancedSourceContainer(creep.room, creep);
+    }
+
+    if (sourceContainer) {
+      return this.storePickupTarget(creep, sourceContainer, "withdraw");
+    }
+
+    const droppedEnergy = _.filter(
+      utils.getDroppedEnergyResources(creep.room),
+      function (resource) {
+        return resource.amount > 0;
+      },
+    );
+    const largeDrops = _.filter(droppedEnergy, function (resource) {
+      return resource.amount >= creep.store.getFreeCapacity();
+    });
+    const largeDrop =
+      largeDrops.length > 0 ? creep.pos.findClosestByPath(largeDrops) : null;
+
+    if (largeDrop) {
+      return this.storePickupTarget(creep, largeDrop, "pickup");
+    }
+
+    const smallDrop =
+      droppedEnergy.length > 0
+        ? creep.pos.findClosestByPath(droppedEnergy)
+        : null;
+
+    if (smallDrop) {
+      return this.storePickupTarget(creep, smallDrop, "pickup");
+    }
+
+    // Developer note:
+    // Emergency fallback.
+    // If source-side logistics are dry, allow haulers to pull from storage
+    // so they can still power spawn/extensions/towers during recovery.
+    if (
+      creep.room.storage &&
+      (creep.room.storage.store[RESOURCE_ENERGY] || 0) > 0
+    ) {
+      return this.storePickupTarget(creep, creep.room.storage, "withdraw");
+    }
+
+    return null;
+  },
+
+  storePickupTarget(creep, target, kind) {
+    creep.memory.pickupTargetId = target.id;
+    creep.memory.pickupTargetKind = kind;
+
+    return {
+      target: target,
+      kind: kind,
+    };
+  },
+
+  isValidPickupTarget(target, kind) {
+    if (!target) return false;
+
+    if (kind === "pickup") {
+      return (
+        target.resourceType === RESOURCE_ENERGY &&
+        target.amount > 0
+      );
+    }
+
+    return (
+      (target.structureType === STRUCTURE_CONTAINER ||
+        target.structureType === STRUCTURE_STORAGE) &&
+      (target.store[RESOURCE_ENERGY] || 0) > 0
+    );
   },
 };

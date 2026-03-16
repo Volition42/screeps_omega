@@ -17,7 +17,150 @@ Important Notes:
 
 const config = require("config");
 
+// Developer note:
+// Tick-local room cache. room_manager registers collected room_state once, then
+// hot helpers reuse those arrays/maps instead of rebuilding room.find/Game.creeps
+// scans in each caller.
+var runtimeCacheTick = null;
+var runtimeStateByRoom = {};
+var runtimeCacheByRoom = {};
+
+function resetRuntimeCachesIfNeeded() {
+  if (runtimeCacheTick === Game.time) return;
+
+  runtimeCacheTick = Game.time;
+  runtimeStateByRoom = {};
+  runtimeCacheByRoom = {};
+}
+
+function groupObjectsByType(objects) {
+  var grouped = {};
+
+  for (var i = 0; i < objects.length; i++) {
+    var object = objects[i];
+    var type = object.structureType;
+
+    if (!type) continue;
+    if (!grouped[type]) grouped[type] = [];
+
+    grouped[type].push(object);
+  }
+
+  return grouped;
+}
+
+function getRegisteredState(room) {
+  resetRuntimeCachesIfNeeded();
+  return runtimeStateByRoom[room.name] || null;
+}
+
+function getHomeCreeps(room, state) {
+  if (state && state.homeCreeps) return state.homeCreeps;
+
+  return _.filter(Game.creeps, function (creep) {
+    return creep.memory && creep.memory.room === room.name;
+  });
+}
+
+function getSourceContainers(structures, sources) {
+  return _.filter(structures, function (structure) {
+    if (structure.structureType !== STRUCTURE_CONTAINER) return false;
+
+    return _.some(sources, function (source) {
+      return structure.pos.getRangeTo(source) <= 1;
+    });
+  });
+}
+
+function getSourceContainersBySourceId(sourceContainers, sources) {
+  var bySourceId = {};
+
+  for (var i = 0; i < sources.length; i++) {
+    var source = sources[i];
+    bySourceId[source.id] =
+      _.find(sourceContainers, function (container) {
+        return container.pos.getRangeTo(source) <= 1;
+      }) || null;
+  }
+
+  return bySourceId;
+}
+
+function getWithdrawUsersByTargetId(creeps) {
+  var usersByTargetId = {};
+
+  for (var i = 0; i < creeps.length; i++) {
+    var creep = creeps[i];
+    var targetId = creep.memory ? creep.memory.withdrawTargetId : null;
+
+    if (!targetId) continue;
+
+    usersByTargetId[targetId] = (usersByTargetId[targetId] || 0) + 1;
+  }
+
+  return usersByTargetId;
+}
+
+function buildRuntimeCache(room) {
+  var state = getRegisteredState(room);
+  var structures = state && state.structures ? state.structures : room.find(FIND_STRUCTURES);
+  var sources = state && state.sources ? state.sources : room.find(FIND_SOURCES);
+  var sites =
+    state && state.sites ? state.sites : room.find(FIND_CONSTRUCTION_SITES);
+  var creeps = state && state.creeps ? state.creeps : room.find(FIND_MY_CREEPS);
+  var hostileCreeps =
+    state && state.hostileCreeps
+      ? state.hostileCreeps
+      : room.find(FIND_HOSTILE_CREEPS);
+  var structuresByType =
+    state && state.structuresByType
+      ? state.structuresByType
+      : groupObjectsByType(structures);
+  var sourceContainers =
+    state && state.sourceContainers
+      ? state.sourceContainers
+      : getSourceContainers(structures, sources);
+  var sourceContainersBySourceId =
+    state && state.sourceContainersBySourceId
+      ? state.sourceContainersBySourceId
+      : getSourceContainersBySourceId(sourceContainers, sources);
+  var homeCreeps = getHomeCreeps(room, state);
+
+  return {
+    state: state,
+    structures: structures,
+    structuresByType: structuresByType,
+    sources: sources,
+    sites: sites,
+    creeps: creeps,
+    hostileCreeps: hostileCreeps,
+    sourceContainers: sourceContainers,
+    sourceContainersBySourceId: sourceContainersBySourceId,
+    homeCreeps: homeCreeps,
+  };
+}
+
+function getRuntimeCache(room) {
+  resetRuntimeCachesIfNeeded();
+
+  if (!runtimeCacheByRoom[room.name]) {
+    runtimeCacheByRoom[room.name] = buildRuntimeCache(room);
+  }
+
+  return runtimeCacheByRoom[room.name];
+}
+
 module.exports = {
+  setRoomRuntimeState(room, state) {
+    resetRuntimeCachesIfNeeded();
+    runtimeStateByRoom[room.name] = state;
+    delete runtimeCacheByRoom[room.name];
+  },
+
+  getRoomRuntimeCache(room) {
+    return getRuntimeCache(room);
+  },
+
   getWalkableAdjacentPositions(pos) {
     const terrain = Game.map.getRoomTerrain(pos.roomName);
     const results = [];
@@ -43,7 +186,8 @@ module.exports = {
     if (!room.controller) return [];
 
     const terrain = Game.map.getRoomTerrain(room.name);
-    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    const state = getRegisteredState(room);
+    const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
     const candidates = [];
 
     for (
@@ -98,7 +242,8 @@ module.exports = {
   },
 
   getSourceContainerPosition(room, source) {
-    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    const state = getRegisteredState(room);
+    const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
     const positions = this.getWalkableAdjacentPositions(source.pos);
 
     positions.sort(function (a, b) {
@@ -120,44 +265,33 @@ module.exports = {
   },
 
   getSourceContainerBySource(room, sourceId) {
-    const source = Game.getObjectById(sourceId);
-    if (!source) return null;
+    const cache = getRuntimeCache(room);
 
-    return (
-      source.pos.findInRange(FIND_STRUCTURES, 1, {
-        filter: function (s) {
-          return s.structureType === STRUCTURE_CONTAINER;
-        },
-      })[0] || null
-    );
+    if (
+      cache.sourceContainersBySourceId &&
+      Object.prototype.hasOwnProperty.call(cache.sourceContainersBySourceId, sourceId)
+    ) {
+      return cache.sourceContainersBySourceId[sourceId];
+    }
+
+    return null;
   },
 
   getControllerContainers(room) {
     if (!room.controller) return [];
 
-    return room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          s.pos.getRangeTo(room.controller) <= 4
-        );
-      },
+    const cache = getRuntimeCache(room);
+
+    return _.filter(cache.structures, function (structure) {
+      return (
+        structure.structureType === STRUCTURE_CONTAINER &&
+        structure.pos.getRangeTo(room.controller) <= 4
+      );
     });
   },
 
   getSourceContainers(room) {
-    const sources = room.find(FIND_SOURCES);
-
-    return room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          _.some(sources, function (source) {
-            return s.pos.getRangeTo(source) <= 1;
-          })
-        );
-      },
-    });
+    return getRuntimeCache(room).sourceContainers;
   },
 
   getUpgraderWorkPosition(room, container) {
@@ -165,7 +299,8 @@ module.exports = {
 
     const terrain = Game.map.getRoomTerrain(room.name);
     const candidates = [];
-    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    const state = getRegisteredState(room);
+    const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
     const around = [container.pos].concat(
       this.getWalkableAdjacentPositions(container.pos),
     );
@@ -206,7 +341,11 @@ module.exports = {
   },
 
   getBalancedSourceContainer(room, creep) {
-    const containers = this.getSourceContainers(room).filter(
+    const cache = getRuntimeCache(room);
+    if (!cache.withdrawUsersByTargetId) {
+      cache.withdrawUsersByTargetId = getWithdrawUsersByTargetId(cache.homeCreeps);
+    }
+    const containers = cache.sourceContainers.filter(
       function (container) {
         return (container.store[RESOURCE_ENERGY] || 0) > 0;
       },
@@ -215,14 +354,11 @@ module.exports = {
     if (containers.length === 0) return null;
 
     const scored = _.map(containers, function (container) {
-      const users = _.filter(Game.creeps, function (other) {
-        return (
-          other.name !== creep.name &&
-          other.memory &&
-          other.memory.room === room.name &&
-          other.memory.withdrawTargetId === container.id
-        );
-      }).length;
+      var users = cache.withdrawUsersByTargetId[container.id] || 0;
+
+      if (creep.memory && creep.memory.withdrawTargetId === container.id) {
+        users = Math.max(0, users - 1);
+      }
 
       return {
         container: container,
@@ -242,7 +378,7 @@ module.exports = {
   },
 
   hasThreats(room) {
-    return room.find(FIND_HOSTILE_CREEPS).length > 0;
+    return getRuntimeCache(room).hostileCreeps.length > 0;
   },
 
   getStorageEnergyTarget(room) {
@@ -322,16 +458,96 @@ module.exports = {
   shouldUseThreatTowerPriority(room) {
     if (this.hasThreats(room)) return true;
 
+    const cache = getRuntimeCache(room);
     const emergencyThreshold = config.LOGISTICS.towerEmergencyThreshold;
-    const towers = room.find(FIND_MY_STRUCTURES, {
-      filter: function (s) {
-        return s.structureType === STRUCTURE_TOWER;
-      },
-    });
+    const towers = cache.structuresByType[STRUCTURE_TOWER] || [];
 
     return _.some(towers, function (tower) {
       return (tower.store[RESOURCE_ENERGY] || 0) < emergencyThreshold;
     });
+  },
+
+  getDroppedEnergyResources(room) {
+    const cache = getRuntimeCache(room);
+
+    if (!cache.droppedEnergy) {
+      cache.droppedEnergy = room.find(FIND_DROPPED_RESOURCES, {
+        filter: function (resource) {
+          return resource.resourceType === RESOURCE_ENERGY;
+        },
+      });
+    }
+
+    return cache.droppedEnergy;
+  },
+
+  getRepairTargetGroups(room) {
+    const cache = getRuntimeCache(room);
+
+    if (!cache.repairTargetGroups) {
+      const structures = cache.structures;
+
+      cache.repairTargetGroups = {
+        criticalContainers: _.filter(structures, function (structure) {
+          return (
+            structure.structureType === STRUCTURE_CONTAINER &&
+            structure.hits < structure.hitsMax * config.REPAIR.criticalContainerThreshold
+          );
+        }),
+        importantStructures: _.filter(structures, function (structure) {
+          if (structure.structureType === STRUCTURE_CONTAINER) {
+            return structure.hits < structure.hitsMax * config.REPAIR.importantThreshold;
+          }
+
+          return (
+            (structure.structureType === STRUCTURE_EXTENSION ||
+              structure.structureType === STRUCTURE_SPAWN ||
+              structure.structureType === STRUCTURE_TOWER) &&
+            structure.hits < structure.hitsMax * config.REPAIR.spawnExtensionThreshold
+          );
+        }),
+        lowRamparts: _.filter(structures, function (structure) {
+          return (
+            structure.structureType === STRUCTURE_RAMPART &&
+            structure.hits < config.REPAIR.rampartMinHits
+          );
+        }),
+        lowWalls: _.filter(structures, function (structure) {
+          return (
+            structure.structureType === STRUCTURE_WALL &&
+            structure.hits < config.REPAIR.wallMinHits
+          );
+        }),
+        roadRepairs: _.filter(structures, function (structure) {
+          return (
+            structure.structureType === STRUCTURE_ROAD &&
+            structure.hits < structure.hitsMax * config.REPAIR.roadThreshold
+          );
+        }),
+        sites: cache.sites,
+      };
+    }
+
+    return cache.repairTargetGroups;
+  },
+
+  getTowerRepairTargets(room) {
+    const cache = getRuntimeCache(room);
+
+    if (!cache.towerRepairTargets) {
+      cache.towerRepairTargets = _.filter(cache.structures, function (structure) {
+        return (
+          (structure.structureType === STRUCTURE_ROAD &&
+            structure.hits < structure.hitsMax * 0.5) ||
+          (structure.structureType === STRUCTURE_WALL &&
+            structure.hits < 2000) ||
+          (structure.structureType === STRUCTURE_RAMPART &&
+            structure.hits < 2000)
+        );
+      });
+    }
+
+    return cache.towerRepairTargets;
   },
 
   getHaulerDeliveryTarget(room, creep) {

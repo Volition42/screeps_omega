@@ -30,15 +30,19 @@ Feel like polished corporate reporting without spamming noise.
 */
 
 const config = require("config");
-const constructionStatus = require("construction_status");
+
+const OPERATIONAL_REPEAT_INTERVAL = 100;
 
 module.exports = {
   run(room, state) {
     if (!config.DIRECTIVES.ENABLED) return;
 
-    this.ensureTracker(room);
+    const roomMemory = this.getRoomMemory(room);
+    const tracker = this.ensureTracker(roomMemory);
 
-    const immediateLines = this.getImmediateDirectiveLines(room, state);
+    this.updateProgressTrackerIfNeeded(room, roomMemory);
+
+    const immediateLines = this.getImmediateDirectiveLines(room, state, tracker);
     if (immediateLines) {
       this.printLines(immediateLines);
       return;
@@ -46,7 +50,7 @@ module.exports = {
 
     if (Game.time % config.DIRECTIVES.INTERVAL !== 0) return;
 
-    const lines = this.getRecurringDirectiveLines(room, state);
+    const lines = this.getRecurringDirectiveLines(room, state, roomMemory, tracker);
     if (lines) {
       this.printLines(lines);
     }
@@ -58,13 +62,19 @@ module.exports = {
     }
   },
 
-  ensureTracker(room) {
+  getRoomMemory(room) {
     if (!Memory.rooms) Memory.rooms = {};
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
 
-    if (!Memory.rooms[room.name].directiveTracker) {
-      Memory.rooms[room.name].directiveTracker = {
+    return Memory.rooms[room.name];
+  },
+
+  ensureTracker(roomMemory) {
+    if (!roomMemory.directiveTracker) {
+      roomMemory.directiveTracker = {
         lastPhase: null,
+        lastOperationalSignature: null,
+        lastOperationalTick: 0,
         announced: {
           bootstrapComplete: false,
           defenseComplete: false,
@@ -73,22 +83,22 @@ module.exports = {
         },
       };
     }
+
+    return roomMemory.directiveTracker;
   },
 
-  getImmediateDirectiveLines(room, state) {
-    const phaseLines = this.getPhaseTransitionDirectiveLines(room, state);
+  getImmediateDirectiveLines(room, state, tracker) {
+    const phaseLines = this.getPhaseTransitionDirectiveLines(room, state, tracker);
     if (phaseLines) return phaseLines;
 
-    const milestoneLines = this.getMilestoneDirectiveLines(room, state);
+    const milestoneLines = this.getMilestoneDirectiveLines(room, state, tracker);
     if (milestoneLines) return milestoneLines;
 
     return null;
   },
 
-  getPhaseTransitionDirectiveLines(room, state) {
+  getPhaseTransitionDirectiveLines(room, state, tracker) {
     if (!config.DIRECTIVES.SHOW_PHASE_TRANSITION_DIRECTIVES) return null;
-
-    const tracker = Memory.rooms[room.name].directiveTracker;
     const currentPhase = state.phase;
 
     if (tracker.lastPhase === null) {
@@ -144,12 +154,11 @@ module.exports = {
     ];
   },
 
-  getMilestoneDirectiveLines(room, state) {
+  getMilestoneDirectiveLines(room, state, tracker) {
     if (!config.DIRECTIVES.SHOW_MILESTONE_DIRECTIVES) return null;
 
-    const tracker = Memory.rooms[room.name].directiveTracker;
-    const buildStatus =
-      state.buildStatus || constructionStatus.getStatus(room, state);
+    const buildStatus = state.buildStatus;
+    if (!buildStatus) return null;
     const header = `[vCORP Directive Update] [Sector:${room.name}]`;
 
     if (!tracker.announced.bootstrapComplete && buildStatus.bootstrapComplete) {
@@ -212,17 +221,17 @@ module.exports = {
     return null;
   },
 
-  getRecurringDirectiveLines(room, state) {
+  getRecurringDirectiveLines(room, state, roomMemory, tracker) {
     const performanceLines = this.getPerformanceDirectiveLines(room);
     if (performanceLines) return performanceLines;
 
-    const progressLines = this.getProgressDirectiveLines(room);
+    const progressLines = this.getProgressDirectiveLines(room, roomMemory);
     if (progressLines) return progressLines;
 
     const constructionLines = this.getConstructionDirectiveLines(room, state);
     if (constructionLines) return constructionLines;
 
-    return this.getOperationalDirectiveLines(room, state);
+    return this.getOperationalDirectiveLines(room, state, tracker);
   },
 
   getPerformanceDirectiveLines(room) {
@@ -276,12 +285,12 @@ module.exports = {
     return null;
   },
 
-  getProgressDirectiveLines(room) {
+  getProgressDirectiveLines(room, roomMemory) {
     if (!config.DIRECTIVES.SHOW_PROGRESS_DIRECTIVES) return null;
     if (!room.controller || !room.controller.my) return null;
     if (!room.controller.progressTotal) return null;
 
-    const progress = this.updateProgressTracker(room);
+    const progress = roomMemory.progressTracker;
     if (!progress) return null;
 
     const reportInterval = config.DIRECTIVES.PROGRESS_REPORT_INTERVAL || 100;
@@ -317,8 +326,7 @@ module.exports = {
     const interval = config.DIRECTIVES.CONSTRUCTION_REPORT_INTERVAL || 75;
     if (Game.time % interval !== 0) return null;
 
-    const checklist =
-      state.buildStatus || constructionStatus.getStatus(room, state);
+    const checklist = state.buildStatus;
     if (!checklist) return null;
 
     const header = `[vCORP Directive Update] [Sector:${room.name}]`;
@@ -349,13 +357,24 @@ module.exports = {
     ];
   },
 
-  updateProgressTracker(room) {
+  updateProgressTrackerIfNeeded(room, roomMemory) {
+    if (!config.DIRECTIVES.SHOW_PROGRESS_DIRECTIVES) return;
+    if (!room.controller || !room.controller.my) return;
+    if (!room.controller.progressTotal) return;
+
+    const tracker = roomMemory.progressTracker;
     const sampleInterval = config.DIRECTIVES.PROGRESS_SAMPLE_INTERVAL || 25;
 
-    if (!Memory.rooms) Memory.rooms = {};
-    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
-    if (!Memory.rooms[room.name].progressTracker) {
-      Memory.rooms[room.name].progressTracker = {
+    if (!tracker || Game.time - tracker.lastTick >= sampleInterval) {
+      this.updateProgressTracker(room, roomMemory);
+    }
+  },
+
+  updateProgressTracker(room, roomMemory) {
+    const sampleInterval = config.DIRECTIVES.PROGRESS_SAMPLE_INTERVAL || 25;
+
+    if (!roomMemory.progressTracker) {
+      roomMemory.progressTracker = {
         lastTick: Game.time,
         lastProgress: room.controller.progress,
         rate: 0,
@@ -367,7 +386,7 @@ module.exports = {
       };
     }
 
-    const tracker = Memory.rooms[room.name].progressTracker;
+    const tracker = roomMemory.progressTracker;
 
     if (Game.time - tracker.lastTick >= sampleInterval) {
       const deltaTicks = Game.time - tracker.lastTick;
@@ -394,7 +413,7 @@ module.exports = {
     return tracker;
   },
 
-  getOperationalDirectiveLines(room, state) {
+  getOperationalDirectiveLines(room, state, tracker) {
     const roomName = room.name;
     const controllerLevel = room.controller ? room.controller.level : 0;
     const hostiles = state.hostileCreeps ? state.hostileCreeps.length : 0;
@@ -407,8 +426,35 @@ module.exports = {
       : 0;
     const energyLine = `${room.energyAvailable}/${room.energyCapacityAvailable}`;
 
+    const operationalSignature =
+      state.phase +
+      "|" +
+      controllerLevel +
+      "|" +
+      hostiles +
+      "|" +
+      constructionSites +
+      "|" +
+      sourceContainers +
+      "|" +
+      controllerContainers;
+
+    // Developer note:
+    // Operational directives are informative only, so identical room state is
+    // reported less often to cut repeated string assembly and console noise.
+    if (
+      tracker.lastOperationalSignature === operationalSignature &&
+      Game.time - tracker.lastOperationalTick < OPERATIONAL_REPEAT_INTERVAL
+    ) {
+      return null;
+    }
+
+    tracker.lastOperationalSignature = operationalSignature;
+    tracker.lastOperationalTick = Game.time;
+
     const header = `[vCORP Directive Update] [Sector:${roomName}]`;
-    const footer = `[vCORP Status] phase=${state.phase} rcl=${controllerLevel} energy=${energyLine}`;
+    const footer =
+      `[vCORP Status] phase=${state.phase} rcl=${controllerLevel} energy=${energyLine}`;
 
     if (hostiles > 0) {
       return [
