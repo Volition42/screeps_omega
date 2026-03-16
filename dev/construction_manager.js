@@ -38,6 +38,7 @@ module.exports = {
     if (Game.time - mem.lastPlan < config.CONSTRUCTION.PLAN_INTERVAL) return;
     mem.lastPlan = Game.time;
 
+    var context = this.createPlanContext(room, state);
     var plan = roadmap.getPlan(
       state.phase,
       room.controller ? room.controller.level : 0,
@@ -45,65 +46,111 @@ module.exports = {
     if (!plan || !plan.actions) return;
 
     for (var i = 0; i < plan.actions.length; i++) {
-      if (this.isSiteCapReached(room)) return;
+      if (this.isSiteCapReached(context)) return;
 
       var action = plan.actions[i];
 
       switch (action) {
         case "sourceContainers":
-          this.placeSourceContainers(room, state);
+          this.placeSourceContainers(context);
           break;
 
         case "controllerContainer":
-          this.placeControllerContainer(room);
+          this.placeControllerContainer(context);
           break;
 
         case "anchorRoads":
-          this.placeAnchorRoads(room, state);
+          this.placeAnchorRoads(context);
           break;
 
         case "backboneRoads":
-          this.placeBackboneRoads(room, state);
+          this.placeBackboneRoads(context);
           break;
 
         case "extensionStamps":
-          this.placeExtensionStamps(room, state);
+          this.placeExtensionStamps(context);
           break;
 
         case "towerStamp":
-          this.placeTowerStamp(room, state);
+          this.placeTowerStamp(context);
           break;
 
         case "internalRoads":
-          this.placeInternalRoads(room, state);
+          this.placeInternalRoads(context);
           break;
         case "storage":
-          this.placeStorage(room, state);
+          this.placeStorage(context);
           break;
 
         case "defense":
-          this.placeDefense(room, state);
+          this.placeDefense(context);
           break;
       }
     }
   },
 
-  isSiteCapReached(room) {
-    return (
-      room.find(FIND_CONSTRUCTION_SITES).length >= config.CONSTRUCTION.MAX_SITES
-    );
+  createPlanContext(room, state) {
+    return {
+      room: room,
+      state: state,
+      terrain: room.getTerrain(),
+      siteCount: state.sites ? state.sites.length : 0,
+      buildStatus: state.buildStatus || constructionStatus.getStatus(room, state),
+      plannedSitesByType: {},
+      anchorOrigin: undefined,
+    };
   },
 
-  placeStorage(room, state) {
+  isSiteCapReached(context) {
+    return context.siteCount >= config.CONSTRUCTION.MAX_SITES;
+  },
+
+  getAnchorOrigin(context) {
+    if (context.anchorOrigin === undefined) {
+      context.anchorOrigin = stamps.getAnchorOrigin(context.room, context.state);
+    }
+
+    return context.anchorOrigin;
+  },
+
+  getSitesByType(context, structureType) {
+    var existing =
+      context.state.sitesByType && context.state.sitesByType[structureType]
+        ? context.state.sitesByType[structureType]
+        : [];
+    var planned = context.plannedSitesByType[structureType] || [];
+
+    return existing.concat(planned);
+  },
+
+  recordSitePlacement(context, pos, structureType) {
+    if (!context.plannedSitesByType[structureType]) {
+      context.plannedSitesByType[structureType] = [];
+    }
+
+    context.plannedSitesByType[structureType].push({
+      pos: pos,
+      structureType: structureType,
+    });
+    context.siteCount++;
+  },
+
+  createSite(context, pos, structureType) {
+    if (pos.createConstructionSite(structureType) !== OK) return false;
+
+    this.recordSitePlacement(context, pos, structureType);
+    return true;
+  },
+
+  placeStorage(context) {
+    var room = context.room;
+    var state = context.state;
     if (!room.controller || room.controller.level < 4) return;
 
-    const existing = room.find(FIND_STRUCTURES, {
-      filter: (s) => s.structureType === STRUCTURE_STORAGE,
-    }).length;
-
-    const sites = room.find(FIND_CONSTRUCTION_SITES, {
-      filter: (s) => s.structureType === STRUCTURE_STORAGE,
-    }).length;
+    const existing = state.structuresByType[STRUCTURE_STORAGE]
+      ? state.structuresByType[STRUCTURE_STORAGE].length
+      : 0;
+    const sites = this.getSitesByType(context, STRUCTURE_STORAGE).length;
 
     if (existing + sites > 0) return;
 
@@ -120,87 +167,77 @@ module.exports = {
     for (const c of candidates) {
       const pos = new RoomPosition(c.x, c.y, room.name);
 
-      if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
+      if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
 
       const blocked =
         pos.lookFor(LOOK_STRUCTURES).length ||
         pos.lookFor(LOOK_CONSTRUCTION_SITES).length;
 
       if (!blocked) {
-        pos.createConstructionSite(STRUCTURE_STORAGE);
+        this.createSite(context, pos, STRUCTURE_STORAGE);
         return;
       }
     }
   },
 
-  placeSourceContainers(room, state) {
+  placeSourceContainers(context) {
+    var room = context.room;
+    var state = context.state;
+
     for (var i = 0; i < state.sources.length; i++) {
-      if (this.isSiteCapReached(room)) return;
+      if (this.isSiteCapReached(context)) return;
 
       var source = state.sources[i];
-
-      var existing = source.pos.findInRange(FIND_STRUCTURES, 1, {
-        filter: function (s) {
-          return s.structureType === STRUCTURE_CONTAINER;
+      var existing = state.sourceContainersBySourceId[source.id];
+      var existingSite = _.find(
+        this.getSitesByType(context, STRUCTURE_CONTAINER),
+        function (site) {
+          return site.pos.getRangeTo(source) <= 1;
         },
-      })[0];
-
-      var existingSite = source.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
-        filter: function (s) {
-          return s.structureType === STRUCTURE_CONTAINER;
-        },
-      })[0];
+      );
 
       if (existing || existingSite) continue;
 
       var pos = utils.getSourceContainerPosition(room, source);
       if (pos) {
-        pos.createConstructionSite(STRUCTURE_CONTAINER);
+        this.createSite(context, pos, STRUCTURE_CONTAINER);
       }
     }
   },
 
-  placeControllerContainer(room) {
+  placeControllerContainer(context) {
+    var room = context.room;
     if (!room.controller) return;
 
-    var existing = room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          s.pos.getRangeTo(room.controller) <= 4
-        );
+    var existing = context.state.controllerContainers.length;
+    var existingSites = _.filter(
+      this.getSitesByType(context, STRUCTURE_CONTAINER),
+      function (site) {
+        return room.controller && site.pos.getRangeTo(room.controller) <= 4;
       },
-    }).length;
-
-    var existingSites = room.find(FIND_CONSTRUCTION_SITES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          s.pos.getRangeTo(room.controller) <= 4
-        );
-      },
-    }).length;
+    ).length;
 
     if (existing + existingSites >= 1) return;
 
     var positions = utils.getControllerContainerPositions(room, 1);
 
     for (var i = 0; i < positions.length; i++) {
-      if (this.isSiteCapReached(room)) return;
+      if (this.isSiteCapReached(context)) return;
 
-      var result = positions[i].createConstructionSite(STRUCTURE_CONTAINER);
-      if (result === OK) return;
+      if (this.createSite(context, positions[i], STRUCTURE_CONTAINER)) return;
     }
   },
 
-  placeAnchorRoads(room, state) {
-    var origin = stamps.getAnchorOrigin(room, state);
+  placeAnchorRoads(context) {
+    var origin = this.getAnchorOrigin(context);
     if (!origin) return;
 
-    this.placeStampRoads(room, origin, "anchor_v1");
+    this.placeStampRoads(context, origin, "anchor_v1");
   },
 
-  placeBackboneRoads(room, state) {
+  placeBackboneRoads(context) {
+    var room = context.room;
+    var state = context.state;
     var spawn = state.spawns[0];
     if (!spawn) return;
 
@@ -208,15 +245,15 @@ module.exports = {
     var controllerContainers = state.controllerContainers || [];
 
     for (var i = 0; i < sourceContainers.length; i++) {
-      if (this.isSiteCapReached(room)) return;
+      if (this.isSiteCapReached(context)) return;
 
       var sourceContainer = sourceContainers[i];
-      this.placeRoadPath(room, sourceContainer.pos, spawn.pos, 1);
+      this.placeRoadPath(context, sourceContainer.pos, spawn.pos, 1);
 
       for (var j = 0; j < controllerContainers.length; j++) {
-        if (this.isSiteCapReached(room)) return;
+        if (this.isSiteCapReached(context)) return;
         this.placeRoadPath(
-          room,
+          context,
           sourceContainer.pos,
           controllerContainers[j].pos,
           0,
@@ -225,28 +262,29 @@ module.exports = {
     }
   },
 
-  placeExtensionStamps(room, state) {
+  placeExtensionStamps(context) {
+    var room = context.room;
     if (!room.controller) return;
 
-    var status = constructionStatus.getStatus(room, state);
+    var status = context.buildStatus;
     var remainingExtensions = status.extensionsNeeded - status.extensionsBuilt;
     if (remainingExtensions <= 0) return;
 
-    var origin = stamps.getAnchorOrigin(room, state);
+    var origin = this.getAnchorOrigin(context);
     if (!origin) return;
 
     var stampOrigins = stamps.getExtensionStampOrigins(origin);
 
     for (var i = 0; i < stampOrigins.length; i++) {
-      if (this.isSiteCapReached(room)) return;
+      if (this.isSiteCapReached(context)) return;
       if (remainingExtensions <= 0) return;
 
       // Roads first so the stamp network starts forming immediately.
-      this.placeStampRoads(room, stampOrigins[i], "extension_plus_v1");
+      this.placeStampRoads(context, stampOrigins[i], "extension_plus_v1");
 
       // Then place extensions from the same stamp.
       remainingExtensions -= this.placeStampExtensions(
-        room,
+        context,
         stampOrigins[i],
         "extension_plus_v1",
         remainingExtensions,
@@ -254,25 +292,26 @@ module.exports = {
     }
   },
 
-  placeTowerStamp(room, state) {
+  placeTowerStamp(context) {
+    var room = context.room;
     if (!room.controller || room.controller.level < 3) return;
 
-    var status = constructionStatus.getStatus(room, state);
+    var status = context.buildStatus;
     var remainingTowers = status.towersNeeded - status.towersBuilt;
     if (remainingTowers <= 0) return;
 
-    var origin = stamps.getAnchorOrigin(room, state);
+    var origin = this.getAnchorOrigin(context);
     if (!origin) return;
 
     var towerOrigins = stamps.getTowerStampOrigins(origin);
 
     for (var i = 0; i < towerOrigins.length; i++) {
-      if (this.isSiteCapReached(room)) return;
+      if (this.isSiteCapReached(context)) return;
       if (remainingTowers <= 0) return;
 
-      this.placeStampRoads(room, towerOrigins[i], "tower_cluster_v1");
+      this.placeStampRoads(context, towerOrigins[i], "tower_cluster_v1");
       remainingTowers -= this.placeStampTowers(
-        room,
+        context,
         towerOrigins[i],
         "tower_cluster_v1",
         remainingTowers,
@@ -280,71 +319,64 @@ module.exports = {
     }
   },
 
-  placeInternalRoads(room, state) {
+  placeInternalRoads(context) {
+    var room = context.room;
+    var state = context.state;
     var spawn = state.spawns[0];
     if (!spawn) return;
 
-    var extensions = room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return s.structureType === STRUCTURE_EXTENSION;
-      },
-    });
-
-    var towers = room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return s.structureType === STRUCTURE_TOWER;
-      },
-    });
+    var extensions = state.extensions || [];
+    var towers = state.structuresByType[STRUCTURE_TOWER] || [];
 
     for (var i = 0; i < extensions.length; i++) {
-      if (this.isSiteCapReached(room)) return;
-      this.placeRoadPath(room, spawn.pos, extensions[i].pos, 1);
+      if (this.isSiteCapReached(context)) return;
+      this.placeRoadPath(context, spawn.pos, extensions[i].pos, 1);
     }
 
     for (var j = 0; j < towers.length; j++) {
-      if (this.isSiteCapReached(room)) return;
-      this.placeRoadPath(room, spawn.pos, towers[j].pos, 1);
+      if (this.isSiteCapReached(context)) return;
+      this.placeRoadPath(context, spawn.pos, towers[j].pos, 1);
     }
   },
 
-  placeDefense(room, state) {
-    var plan = this.getDefenseRing(room, state);
+  placeDefense(context) {
+    var plan = this.getDefenseRing(context);
     if (!plan) return;
 
     for (var i = 0; i < plan.gates.length; i++) {
-      if (this.isSiteCapReached(room)) return;
-      this.tryPlaceStructureSite(room, plan.gates[i], STRUCTURE_RAMPART);
+      if (this.isSiteCapReached(context)) return;
+      this.tryPlaceStructureSite(context, plan.gates[i], STRUCTURE_RAMPART);
     }
 
     for (var j = 0; j < plan.walls.length; j++) {
-      if (this.isSiteCapReached(room)) return;
-      this.tryPlaceStructureSite(room, plan.walls[j], STRUCTURE_WALL);
+      if (this.isSiteCapReached(context)) return;
+      this.tryPlaceStructureSite(context, plan.walls[j], STRUCTURE_WALL);
     }
   },
 
-  placeStampRoads(room, origin, stampName) {
+  placeStampRoads(context, origin, stampName) {
     stamps.forEachRoadPosition(
       origin,
       stampName,
       function (pos) {
-        if (this.isSiteCapReached(room)) return;
-        this.tryPlaceStructureSite(room, pos, STRUCTURE_ROAD);
+        if (this.isSiteCapReached(context)) return;
+        this.tryPlaceStructureSite(context, pos, STRUCTURE_ROAD);
       },
       this,
     );
   },
 
-  placeStampExtensions(room, origin, stampName, limit) {
+  placeStampExtensions(context, origin, stampName, limit) {
     var placed = 0;
 
     stamps.forEachExtensionPosition(
       origin,
       stampName,
       function (pos) {
-        if (this.isSiteCapReached(room)) return;
+        if (this.isSiteCapReached(context)) return;
         if (placed >= limit) return;
 
-        if (this.tryPlaceStructureSite(room, pos, STRUCTURE_EXTENSION)) {
+        if (this.tryPlaceStructureSite(context, pos, STRUCTURE_EXTENSION)) {
           placed++;
         }
       },
@@ -354,17 +386,17 @@ module.exports = {
     return placed;
   },
 
-  placeStampTowers(room, origin, stampName, limit) {
+  placeStampTowers(context, origin, stampName, limit) {
     var placed = 0;
 
     stamps.forEachTowerPosition(
       origin,
       stampName,
       function (pos) {
-        if (this.isSiteCapReached(room)) return;
+        if (this.isSiteCapReached(context)) return;
         if (placed >= limit) return;
 
-        if (this.tryPlaceStructureSite(room, pos, STRUCTURE_TOWER)) {
+        if (this.tryPlaceStructureSite(context, pos, STRUCTURE_TOWER)) {
           placed++;
         }
       },
@@ -374,24 +406,26 @@ module.exports = {
     return placed;
   },
 
-  placeRoadPath(room, fromPos, toPos, range) {
+  placeRoadPath(context, fromPos, toPos, range) {
+    var room = context.room;
     var path = fromPos.findPathTo(toPos, {
       ignoreCreeps: true,
       range: range,
     });
 
     for (var i = 0; i < path.length; i++) {
-      if (this.isSiteCapReached(room)) return;
+      if (this.isSiteCapReached(context)) return;
 
       var step = path[i];
       var pos = new RoomPosition(step.x, step.y, room.name);
-      this.tryPlaceStructureSite(room, pos, STRUCTURE_ROAD);
+      this.tryPlaceStructureSite(context, pos, STRUCTURE_ROAD);
     }
   },
 
-  tryPlaceStructureSite(room, pos, structureType) {
+  tryPlaceStructureSite(context, pos, structureType) {
+    var room = context.room;
     if (pos.x < 2 || pos.x > 47 || pos.y < 2 || pos.y > 47) return false;
-    if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_WALL) return false;
+    if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) return false;
 
     var structures = pos.lookFor(LOOK_STRUCTURES);
     var sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
@@ -422,10 +456,15 @@ module.exports = {
 
     if (blocked) return false;
 
-    return pos.createConstructionSite(structureType) === OK;
+    if (pos.createConstructionSite(structureType) !== OK) return false;
+
+    this.recordSitePlacement(context, pos, structureType);
+    return true;
   },
 
-  getDefenseRing(room, state) {
+  getDefenseRing(context) {
+    var room = context.room;
+    var state = context.state;
     var spawn = state.spawns[0];
     var controller = room.controller;
     if (!spawn || !controller) return null;
@@ -438,7 +477,7 @@ module.exports = {
     var minY = Math.max(2, Math.min(spawn.pos.y, controller.pos.y) - paddingY);
     var maxY = Math.min(47, Math.max(spawn.pos.y, controller.pos.y) + paddingY);
 
-    var terrain = room.getTerrain();
+    var terrain = context.terrain;
     var walls = [];
     var gates = [];
 

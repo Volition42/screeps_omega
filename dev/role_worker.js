@@ -20,6 +20,10 @@ Important Notes:
 
 const utils = require("utils");
 
+const MOVE_OPTIONS = {
+  reusePath: 10,
+};
+
 module.exports = {
   run(creep) {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
@@ -66,13 +70,13 @@ module.exports = {
         target.structureType === STRUCTURE_CONTAINER
       ) {
         if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(target);
+          creep.moveTo(target, MOVE_OPTIONS);
         }
         return;
       }
 
       if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target);
+        creep.moveTo(target, MOVE_OPTIONS);
       }
 
       return;
@@ -89,7 +93,7 @@ module.exports = {
 
     if (spawnTarget) {
       if (creep.transfer(spawnTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(spawnTarget);
+        creep.moveTo(spawnTarget, MOVE_OPTIONS);
       }
       return;
     }
@@ -97,14 +101,14 @@ module.exports = {
     const site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
     if (site) {
       if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site);
+        creep.moveTo(site, MOVE_OPTIONS);
       }
       return;
     }
 
     if (creep.room.controller) {
       if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(creep.room.controller);
+        creep.moveTo(creep.room.controller, MOVE_OPTIONS);
       }
     }
   },

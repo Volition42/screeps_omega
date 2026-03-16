@@ -36,22 +36,16 @@ module.exports = {
     // Harvest mode
     if (!creep.memory.working) {
       if (creep.room.name !== targetRoom) {
-        creep.moveTo(new RoomPosition(25, 25, targetRoom), {
-          reusePath: 20,
-          visualizePathStyle: { stroke: "#ffaa00" },
-        });
+        this.moveToRoom(creep, targetRoom, "#ffaa00");
         return;
       }
 
-      var source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
-      if (!source) {
-        source = creep.pos.findClosestByPath(FIND_SOURCES);
-      }
+      var source = this.getHarvestSource(creep);
 
       if (source) {
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
           creep.moveTo(source, {
-            reusePath: 10,
+            reusePath: 15,
             visualizePathStyle: { stroke: "#ffaa00" },
           });
         }
@@ -62,10 +56,7 @@ module.exports = {
 
     // Delivery mode
     if (creep.room.name !== homeRoom) {
-      creep.moveTo(new RoomPosition(25, 25, homeRoom), {
-        reusePath: 20,
-        visualizePathStyle: { stroke: "#66ccff" },
-      });
+      this.moveToRoom(creep, homeRoom, "#66ccff");
       return;
     }
 
@@ -82,7 +73,7 @@ module.exports = {
     if (energyTarget) {
       if (creep.transfer(energyTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         creep.moveTo(energyTarget, {
-          reusePath: 10,
+          reusePath: 15,
           visualizePathStyle: { stroke: "#66ccff" },
         });
       }
@@ -93,7 +84,7 @@ module.exports = {
     if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
       if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         creep.moveTo(storage, {
-          reusePath: 10,
+          reusePath: 15,
           visualizePathStyle: { stroke: "#66ccff" },
         });
       }
@@ -112,7 +103,7 @@ module.exports = {
     if (container) {
       if (creep.transfer(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         creep.moveTo(container, {
-          reusePath: 10,
+          reusePath: 15,
           visualizePathStyle: { stroke: "#66ccff" },
         });
       }
@@ -122,10 +113,48 @@ module.exports = {
     if (creep.room.controller) {
       if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
         creep.moveTo(creep.room.controller, {
-          reusePath: 10,
+          reusePath: 15,
           visualizePathStyle: { stroke: "#66ccff" },
         });
       }
     }
+  },
+
+  getHarvestSource(creep) {
+    var source = null;
+
+    if (creep.memory.harvestSourceId) {
+      source = Game.getObjectById(creep.memory.harvestSourceId);
+
+      if (
+        !source ||
+        source.room.name !== creep.room.name ||
+        source.energy <= 0
+      ) {
+        source = null;
+        delete creep.memory.harvestSourceId;
+      }
+    }
+
+    if (!source) {
+      source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+      if (!source) {
+        source = creep.pos.findClosestByPath(FIND_SOURCES);
+      }
+
+      if (source) {
+        creep.memory.harvestSourceId = source.id;
+      }
+    }
+
+    return source;
+  },
+
+  moveToRoom(creep, roomName, stroke) {
+    creep.moveTo(new RoomPosition(25, 25, roomName), {
+      reusePath: 50,
+      range: 20,
+      visualizePathStyle: { stroke: stroke },
+    });
   },
 };
