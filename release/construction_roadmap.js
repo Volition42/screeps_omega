@@ -23,56 +23,107 @@ Design Notes:
 */
 
 module.exports = {
+  ROADMAPS: {
+    bootstrap_jr: {
+      phase: "bootstrap_jr",
+      buildList: [],
+    },
+
+    bootstrap: {
+      phase: "bootstrap",
+      buildList: [
+        "sourceContainers",
+        "controllerContainer",
+        "anchorRoads",
+        "backboneRoads",
+      ],
+    },
+
+    developing: {
+      phase: "developing",
+      buildList: [
+        "sourceContainers",
+        "controllerContainer",
+        "anchorRoads",
+        "backboneRoads",
+        "extensionStamps",
+        "towerStamp",
+        "storage",
+        "internalRoads",
+        "defense",
+      ],
+    },
+
+    stable: {
+      phase: "stable",
+      buildList: [
+        "anchorRoads",
+        "backboneRoads",
+        "extensionStamps",
+        "towerStamp",
+        "storage",
+        "internalRoads",
+        "defense",
+      ],
+    },
+
+    rcl5: {
+      phase: "rcl5",
+      buildList: [
+        "anchorRoads",
+        "backboneRoads",
+        "extensionStamps",
+        "towerStamp",
+        "storage",
+        "internalRoads",
+        "defense",
+      ],
+      placeholders: ["links", "second_spawn_support", "remote_phase_two_rollout"],
+    },
+
+    rcl6: {
+      phase: "rcl6",
+      buildList: [
+        "anchorRoads",
+        "backboneRoads",
+        "extensionStamps",
+        "towerStamp",
+        "storage",
+        "internalRoads",
+        "defense",
+      ],
+      placeholders: ["labs", "terminal", "remote_scoring", "advanced_defense"],
+    },
+  },
+
   getPlan(phase, controllerLevel) {
+    var roadmapPhase = this.getRoadmapPhase(phase, controllerLevel);
+    var plan = this.ROADMAPS[roadmapPhase] || this.ROADMAPS.bootstrap;
+
+    return {
+      phase: phase,
+      roadmapPhase: roadmapPhase,
+      buildList: plan.buildList.slice(),
+      actions: plan.buildList.slice(),
+      placeholders: plan.placeholders ? plan.placeholders.slice() : [],
+    };
+  },
+
+  getRoadmapPhase(phase, controllerLevel) {
+    if (controllerLevel >= 6) return "rcl6";
+    if (controllerLevel >= 5) return "rcl5";
+
     switch (phase) {
       case "bootstrap_jr":
-        return {
-          phase: "bootstrap_jr",
-          actions: [],
-        };
-
+        return "bootstrap_jr";
       case "bootstrap":
-        return {
-          phase: "bootstrap",
-          actions: [
-            "sourceContainers",
-            "controllerContainer",
-            "anchorRoads",
-            "backboneRoads",
-          ],
-        };
-
+        return "bootstrap";
       case "developing":
-        return {
-          phase: "developing",
-          actions: [
-            "sourceContainers",
-            "controllerContainer",
-            "anchorRoads",
-            "backboneRoads",
-            "extensionStamps",
-            "towerStamp",
-            "storage",
-            "internalRoads",
-            "defense",
-          ],
-        };
-
+        return "developing";
       case "stable":
-        return {
-          phase: "stable",
-          actions: [
-            "anchorRoads",
-            "backboneRoads",
-            "extensionStamps",
-            "towerStamp",
-            "internalRoads",
-            "defense",
-          ],
-        };
-
+        return "stable";
       default:
-        return this.getPlan("bootstrap", controllerLevel);
+        return "bootstrap";
     }
   },
 

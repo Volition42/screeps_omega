@@ -192,6 +192,14 @@ module.exports = {
   isValidWorkTarget(target, kind) {
     if (!target) return false;
 
+    const defenseTargets =
+      target.room && target.room.name
+        ? utils.getDefenseMaintenanceTargets(target.room)
+        : {
+            rampartMinHits: config.REPAIR.rampartMinHits,
+            wallMinHits: config.REPAIR.wallMinHits,
+          };
+
     switch (kind) {
       case "criticalRepair":
         return (
@@ -212,12 +220,12 @@ module.exports = {
       case "rampartRepair":
         return (
           target.structureType === STRUCTURE_RAMPART &&
-          target.hits < config.REPAIR.rampartMinHits
+          target.hits < defenseTargets.rampartMinHits
         );
       case "wallRepair":
         return (
           target.structureType === STRUCTURE_WALL &&
-          target.hits < config.REPAIR.wallMinHits
+          target.hits < defenseTargets.wallMinHits
         );
       case "roadRepair":
         return (

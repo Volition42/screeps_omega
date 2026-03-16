@@ -334,6 +334,7 @@ module.exports = {
     if (
       checklist.extensionsBuilt >= checklist.extensionsNeeded &&
       checklist.towersBuilt >= checklist.towersNeeded &&
+      checklist.storageBuilt >= checklist.storageNeeded &&
       checklist.roadsBuilt >= checklist.roadsNeeded &&
       checklist.wallsBuilt >= checklist.wallsNeeded &&
       checklist.rampartsBuilt >= checklist.rampartsNeeded &&
@@ -350,6 +351,7 @@ module.exports = {
         : "Additional infrastructure capacity has been identified for future allocation.",
       `Checklist: EXT ${checklist.extensionsBuilt}/${checklist.extensionsNeeded} | ` +
         `TOWER ${checklist.towersBuilt}/${checklist.towersNeeded} | ` +
+        `STORAGE ${checklist.storageBuilt}/${checklist.storageNeeded} | ` +
         `ROADS ${checklist.roadsBuilt}/${checklist.roadsNeeded} | ` +
         `WALL ${checklist.wallsBuilt}/${checklist.wallsNeeded} | ` +
         `RAMP ${checklist.rampartsBuilt}/${checklist.rampartsNeeded}`,

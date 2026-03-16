@@ -16,6 +16,7 @@ Important Notes:
 */
 
 const config = require("config");
+const logisticsManager = require("logistics_manager");
 
 // Developer note:
 // Tick-local room cache. room_manager registers collected room_state once, then
@@ -99,6 +100,30 @@ function getWithdrawUsersByTargetId(creeps) {
   }
 
   return usersByTargetId;
+}
+
+function getDefenseMaintenanceTargets(room) {
+  const controllerLevel = room.controller ? room.controller.level : 0;
+  const configured = config.DEFENSE.maintenanceByControllerLevel || {};
+
+  let target = configured[controllerLevel];
+
+  if (typeof target !== "number") {
+    if (controllerLevel >= 6) target = 100000;
+    else if (controllerLevel >= 5) target = 50000;
+    else if (controllerLevel >= 4) target = 25000;
+    else if (controllerLevel >= 3) target = 10000;
+    else target = Math.max(
+      config.REPAIR.wallMinHits || 5000,
+      config.REPAIR.rampartMinHits || 5000,
+    );
+  }
+
+  return {
+    wallMinHits: target,
+    rampartMinHits: target,
+    towerRepairFloor: Math.max(2000, Math.floor(target * 0.4)),
+  };
 }
 
 function buildRuntimeCache(room) {
@@ -381,6 +406,10 @@ module.exports = {
     return getRuntimeCache(room).hostileCreeps.length > 0;
   },
 
+  getDefenseMaintenanceTargets(room) {
+    return getDefenseMaintenanceTargets(room);
+  },
+
   getStorageEnergyTarget(room) {
     if (!room.storage) return null;
     if ((room.storage.store[RESOURCE_ENERGY] || 0) <= 0) return null;
@@ -388,17 +417,8 @@ module.exports = {
   },
 
   getGeneralEnergyWithdrawalTarget(room, creep) {
-    const storage = this.getStorageEnergyTarget(room);
-    if (storage) {
-      return storage;
-    }
-
-    const sourceContainer = this.getBalancedSourceContainer(room, creep);
-    if (sourceContainer) {
-      return sourceContainer;
-    }
-
-    return creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+    const state = getRegisteredState(room) || getRuntimeCache(room).state;
+    return logisticsManager.getGeneralEnergyWithdrawalTarget(room, creep, state);
   },
 
   getLowTowerTarget(room, threshold, creep) {
@@ -486,6 +506,7 @@ module.exports = {
 
     if (!cache.repairTargetGroups) {
       const structures = cache.structures;
+      const thresholds = getDefenseMaintenanceTargets(room);
 
       cache.repairTargetGroups = {
         criticalContainers: _.filter(structures, function (structure) {
@@ -509,13 +530,13 @@ module.exports = {
         lowRamparts: _.filter(structures, function (structure) {
           return (
             structure.structureType === STRUCTURE_RAMPART &&
-            structure.hits < config.REPAIR.rampartMinHits
+            structure.hits < thresholds.rampartMinHits
           );
         }),
         lowWalls: _.filter(structures, function (structure) {
           return (
             structure.structureType === STRUCTURE_WALL &&
-            structure.hits < config.REPAIR.wallMinHits
+            structure.hits < thresholds.wallMinHits
           );
         }),
         roadRepairs: _.filter(structures, function (structure) {
@@ -535,14 +556,16 @@ module.exports = {
     const cache = getRuntimeCache(room);
 
     if (!cache.towerRepairTargets) {
+      const thresholds = getDefenseMaintenanceTargets(room);
+
       cache.towerRepairTargets = _.filter(cache.structures, function (structure) {
         return (
           (structure.structureType === STRUCTURE_ROAD &&
             structure.hits < structure.hitsMax * 0.5) ||
           (structure.structureType === STRUCTURE_WALL &&
-            structure.hits < 2000) ||
+            structure.hits < thresholds.towerRepairFloor) ||
           (structure.structureType === STRUCTURE_RAMPART &&
-            structure.hits < 2000)
+            structure.hits < thresholds.towerRepairFloor)
         );
       });
     }
@@ -551,55 +574,7 @@ module.exports = {
   },
 
   getHaulerDeliveryTarget(room, creep) {
-    const spawnTarget = this.getSpawnDeliveryTarget(room, creep);
-    if (spawnTarget) return spawnTarget;
-
-    const threatMode = this.shouldUseThreatTowerPriority(room);
-
-    if (threatMode) {
-      const emergencyTower = this.getLowTowerTarget(
-        room,
-        room.energyCapacityAvailable,
-        creep,
-      );
-      if (emergencyTower) return emergencyTower;
-
-      const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
-      if (extensionTarget) return extensionTarget;
-
-      const controllerContainer = this.getControllerContainerDeliveryTarget(
-        room,
-        creep,
-        config.LOGISTICS.controllerContainerReserve,
-      );
-      if (controllerContainer) return controllerContainer;
-
-      const storageTarget = this.getStorageDeliveryTarget(room);
-      if (storageTarget) return storageTarget;
-
-      return null;
-    }
-
-    const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
-    if (extensionTarget) return extensionTarget;
-
-    const controllerContainer = this.getControllerContainerDeliveryTarget(
-      room,
-      creep,
-      config.LOGISTICS.controllerContainerReserve,
-    );
-    if (controllerContainer) return controllerContainer;
-
-    const storageTarget = this.getStorageDeliveryTarget(room);
-    if (storageTarget) return storageTarget;
-
-    const reserveTower = this.getLowTowerTarget(
-      room,
-      config.LOGISTICS.towerReserveThreshold,
-      creep,
-    );
-    if (reserveTower) return reserveTower;
-
-    return null;
+    const state = getRegisteredState(room) || getRuntimeCache(room).state;
+    return logisticsManager.getHaulerDeliveryTarget(room, creep, state);
   },
 };

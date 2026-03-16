@@ -426,6 +426,11 @@ module.exports = {
           "/" +
           checklist.towersNeeded +
           "   " +
+          "ST " +
+          checklist.storageBuilt +
+          "/" +
+          checklist.storageNeeded +
+          "   " +
           "RD " +
           checklist.roadsBuilt +
           "/" +
@@ -454,6 +459,11 @@ module.exports = {
         "/" +
         checklist.towersNeeded +
         "   " +
+        "ST " +
+        checklist.storageBuilt +
+        "/" +
+        checklist.storageNeeded +
+        "   " +
         "SITES " +
         checklist.sites,
       "BUILD RD " +
@@ -479,6 +489,18 @@ module.exports = {
 
     const mode = config.HUD.REMOTE_SITE_MODE || "detailed";
     const lines = [];
+    const remotePlan = state.remotePlan || null;
+
+    if (remotePlan && remotePlan.activeSites > 0) {
+      lines.push(
+        "REMOTE CAP " +
+          remotePlan.activeSites +
+          "/" +
+          remotePlan.recommendedSiteCap +
+          "   P2 READY " +
+          remotePlan.phaseTwoReadySites,
+      );
+    }
 
     for (let i = 0; i < remoteSummaries.length; i++) {
       const summary = remoteSummaries[i];
@@ -610,14 +632,11 @@ module.exports = {
   drawRemoteCreepLabels(homeRoom, state) {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
 
-    const sites = config.REMOTE_MINING.SITES || {};
+    const sites = state.remoteSites || [];
 
-    for (const targetRoom in sites) {
-      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
-
-      const site = sites[targetRoom];
-      if (!site || !site.enabled) continue;
-      if (site.homeRoom !== homeRoom.name) continue;
+    for (let i = 0; i < sites.length; i++) {
+      const site = sites[i];
+      const targetRoom = site.targetRoom;
 
       const remoteRoom = Game.rooms[targetRoom];
       if (!remoteRoom) continue;
@@ -724,15 +743,12 @@ module.exports = {
   getRemoteSiteSummaries(homeRoom, state) {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return [];
 
-    const sites = config.REMOTE_MINING.SITES || {};
+    const sites = state.remoteSites || [];
     const summaries = [];
 
-    for (const targetRoom in sites) {
-      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
-
-      const site = sites[targetRoom];
-      if (!site || !site.enabled) continue;
-      if (site.homeRoom !== homeRoom.name) continue;
+    for (let i = 0; i < sites.length; i++) {
+      const site = sites[i];
+      const targetRoom = site.targetRoom;
 
       const remoteRoom = Game.rooms[targetRoom] || null;
       const scan = this.getRemoteRoomScan(homeRoom.name, targetRoom, remoteRoom);

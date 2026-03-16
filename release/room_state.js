@@ -24,6 +24,8 @@ Important Notes:
 
 const config = require("config");
 const constructionStatus = require("construction_status");
+const logisticsManager = require("logistics_manager");
+const remoteManager = require("remote_manager");
 
 module.exports = {
   collect(room) {
@@ -117,6 +119,13 @@ module.exports = {
 
     var finalState = this.createState(sharedState, phase);
 
+    finalState.remoteSites = remoteManager.getHomeRoomSites(room.name);
+    finalState.remotePlan = remoteManager.getHomeRoomPlan(
+      room,
+      finalState,
+      finalState.remoteSites,
+    );
+    finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
     finalState.buildStatus = constructionStatus.getStatus(room, finalState);
 
     return finalState;
