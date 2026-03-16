@@ -43,12 +43,12 @@ module.exports = {
       state.phase,
       room.controller ? room.controller.level : 0,
     );
-    if (!plan || !plan.actions) return;
+    if (!plan || !plan.buildList) return;
 
-    for (var i = 0; i < plan.actions.length; i++) {
+    for (var i = 0; i < plan.buildList.length; i++) {
       if (this.isSiteCapReached(context)) return;
 
-      var action = plan.actions[i];
+      var action = plan.buildList[i];
 
       switch (action) {
         case "sourceContainers":
@@ -98,6 +98,10 @@ module.exports = {
       buildStatus: state.buildStatus || constructionStatus.getStatus(room, state),
       plannedSitesByType: {},
       anchorOrigin: undefined,
+      roadmapPhase: roadmap.getPlan(
+        state.phase,
+        room.controller ? room.controller.level : 0,
+      ).roadmapPhase,
     };
   },
 

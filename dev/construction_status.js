@@ -46,6 +46,9 @@ module.exports = {
     var towersNeeded = roadmap.getDesiredTowerCount(room.controller.level);
     var towersBuilt = this.countBuiltAndSites(room, state, STRUCTURE_TOWER);
 
+    var storageNeeded = this.hasAction(plan, "storage") ? 1 : 0;
+    var storageBuilt = this.countBuiltAndSites(room, state, STRUCTURE_STORAGE);
+
     var roadsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_ROAD);
     var roadsNeeded = this.getRoadGoal(room, state, plan, anchor);
 
@@ -75,6 +78,9 @@ module.exports = {
       towersBuilt: towersBuilt,
       towersNeeded: towersNeeded,
 
+      storageBuilt: storageBuilt,
+      storageNeeded: storageNeeded,
+
       roadsBuilt: roadsBuilt,
       roadsNeeded: roadsNeeded,
 
@@ -96,6 +102,7 @@ module.exports = {
     status.developingComplete =
       status.extensionsBuilt >= status.extensionsNeeded &&
       status.towersBuilt >= status.towersNeeded &&
+      status.storageBuilt >= status.storageNeeded &&
       status.wallsBuilt >= status.wallsNeeded &&
       status.rampartsBuilt >= status.rampartsNeeded;
 
@@ -120,6 +127,9 @@ module.exports = {
 
       towersBuilt: 0,
       towersNeeded: 0,
+
+      storageBuilt: 0,
+      storageNeeded: 0,
 
       roadsBuilt: 0,
       roadsNeeded: 0,
@@ -360,7 +370,9 @@ module.exports = {
   },
 
   hasAction(plan, action) {
-    if (!plan || !plan.actions) return false;
-    return plan.actions.indexOf(action) !== -1;
+    if (!plan) return false;
+
+    var buildList = plan.buildList || plan.actions || [];
+    return buildList.indexOf(action) !== -1;
   },
 };

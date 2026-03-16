@@ -29,6 +29,7 @@ Remote reservation:
 
 const bodies = require("bodies");
 const config = require("config");
+const remoteManager = require("remote_manager");
 
 const RESERVATION_CHECK_INTERVAL = 10;
 
@@ -276,16 +277,14 @@ module.exports = {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
     if (state.phase !== "developing" && state.phase !== "stable") return;
 
-    var sites = config.REMOTE_MINING.SITES || {};
+    var sites =
+      state.remoteSites || remoteManager.getHomeRoomSites(room.name);
 
-    for (var targetRoom in sites) {
-      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
-
-      var site = sites[targetRoom];
-      if (!site || !site.enabled) continue;
-      if (site.homeRoom !== room.name) continue;
+    for (var i = 0; i < sites.length; i++) {
+      var site = sites[i];
       if (!site.reservation || site.reservation.enabled !== true) continue;
 
+      var targetRoom = site.targetRoom;
       var desiredReservers = site.reservation.reservers || 1;
       var renewBelow = site.reservation.renewBelow || 2000;
 
@@ -387,14 +386,13 @@ module.exports = {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
     if (state.phase !== "developing" && state.phase !== "stable") return;
 
-    var sites = config.REMOTE_MINING.SITES || {};
+    var sites =
+      state.remoteSites || remoteManager.getHomeRoomSites(room.name);
 
-    for (var targetRoom in sites) {
-      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
-
-      var site = sites[targetRoom];
-      if (!site || !site.enabled) continue;
-      if (site.homeRoom !== room.name) continue;
+    for (var i = 0; i < sites.length; i++) {
+      var site = sites[i];
+      var targetRoom = site.targetRoom;
+      if (!site.phaseHooks || !site.phaseHooks.phaseOneReady) continue;
       if (site.phase !== 1) continue;
 
       var desired = site.jrWorkers || 0;
@@ -411,7 +409,7 @@ module.exports = {
         targetRoom,
       );
 
-      for (var i = existing + queued; i < desired; i++) {
+      for (var count = existing + queued; count < desired; count++) {
         requests.push({
           role: "remotejrworker",
           priority: 50,

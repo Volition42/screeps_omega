@@ -158,6 +158,17 @@ module.exports = {
     GATE_WIDTH: 1,
 
     towerCountAtRCL3: 1,
+
+    // Developer note:
+    // Wall and rampart upkeep scales by controller level so maintenance work
+    // rises with room maturity without changing gate planning behavior.
+    maintenanceByControllerLevel: {
+      2: 5000,
+      3: 10000,
+      4: 25000,
+      5: 50000,
+      6: 100000,
+    },
   },
 
   BODIES: {
