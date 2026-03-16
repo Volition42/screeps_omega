@@ -11,14 +11,10 @@ module.exports = {
   run(room) {
     const state = roomState.collect(room);
 
-    Memory.rooms = Memory.rooms || {};
-    Memory.rooms[room.name] = Memory.rooms[room.name] || {};
-    Memory.rooms[room.name].stateCache = state;
-
     constructionManager.plan(room, state);
     towerManager.run(room);
     spawnManager.run(room, state);
-    creepManager.run(room);
+    creepManager.run(room, state);
     controllerSigner.run(room);
     directiveManager.run(room, state);
     hud.run(room, state);

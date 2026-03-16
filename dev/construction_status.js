@@ -31,25 +31,33 @@ module.exports = {
       : 0;
     var sourceContainersNeeded = state.sources ? state.sources.length : 0;
 
-    var controllerContainersBuilt = this.countControllerContainers(room);
+    var controllerContainersBuilt = this.countControllerContainers(room, state);
     var controllerContainersNeeded = 1;
 
     var extensionsNeeded = roadmap.getDesiredExtensionCount(
       room.controller.level,
     );
-    var extensionsBuilt = this.countBuiltAndSites(room, STRUCTURE_EXTENSION);
+    var extensionsBuilt = this.countBuiltAndSites(
+      room,
+      state,
+      STRUCTURE_EXTENSION,
+    );
 
     var towersNeeded = roadmap.getDesiredTowerCount(room.controller.level);
-    var towersBuilt = this.countBuiltAndSites(room, STRUCTURE_TOWER);
+    var towersBuilt = this.countBuiltAndSites(room, state, STRUCTURE_TOWER);
 
-    var roadsBuilt = this.countBuiltAndSites(room, STRUCTURE_ROAD);
+    var roadsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_ROAD);
     var roadsNeeded = this.getRoadGoal(room, state, plan, anchor);
 
     var defenseGoal = this.getDefenseGoal(room, state);
-    var wallsBuilt = this.countBuiltAndSites(room, STRUCTURE_WALL);
-    var rampartsBuilt = this.countBuiltAndSites(room, STRUCTURE_RAMPART);
+    var wallsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_WALL);
+    var rampartsBuilt = this.countBuiltAndSites(
+      room,
+      state,
+      STRUCTURE_RAMPART,
+    );
 
-    var sites = room.find(FIND_CONSTRUCTION_SITES).length;
+    var sites = state.sites ? state.sites.length : room.find(FIND_CONSTRUCTION_SITES).length;
 
     var status = {
       phase: state.phase,
@@ -151,42 +159,58 @@ module.exports = {
     return false;
   },
 
-  countBuiltAndSites(room, structureType) {
-    var built = room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return s.structureType === structureType;
-      },
-    }).length;
+  countBuiltAndSites(room, state, structureType) {
+    var built =
+      state.structuresByType && state.structuresByType[structureType]
+        ? state.structuresByType[structureType].length
+        : room.find(FIND_STRUCTURES, {
+            filter: function (s) {
+              return s.structureType === structureType;
+            },
+          }).length;
 
-    var sites = room.find(FIND_CONSTRUCTION_SITES, {
-      filter: function (s) {
-        return s.structureType === structureType;
-      },
-    }).length;
+    var sites =
+      state.sitesByType && state.sitesByType[structureType]
+        ? state.sitesByType[structureType].length
+        : room.find(FIND_CONSTRUCTION_SITES, {
+            filter: function (s) {
+              return s.structureType === structureType;
+            },
+          }).length;
 
     return built + sites;
   },
 
-  countControllerContainers(room) {
-    var built = room.find(FIND_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          room.controller &&
-          s.pos.getRangeTo(room.controller) <= 4
-        );
-      },
-    }).length;
+  countControllerContainers(room, state) {
+    var built = state.controllerContainers
+      ? state.controllerContainers.length
+      : room.find(FIND_STRUCTURES, {
+          filter: function (s) {
+            return (
+              s.structureType === STRUCTURE_CONTAINER &&
+              room.controller &&
+              s.pos.getRangeTo(room.controller) <= 4
+            );
+          },
+        }).length;
 
-    var sites = room.find(FIND_CONSTRUCTION_SITES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_CONTAINER &&
-          room.controller &&
-          s.pos.getRangeTo(room.controller) <= 4
-        );
-      },
-    }).length;
+    var sites = state.sites
+      ? _.filter(state.sites, function (site) {
+          return (
+            site.structureType === STRUCTURE_CONTAINER &&
+            room.controller &&
+            site.pos.getRangeTo(room.controller) <= 4
+          );
+        }).length
+      : room.find(FIND_CONSTRUCTION_SITES, {
+          filter: function (s) {
+            return (
+              s.structureType === STRUCTURE_CONTAINER &&
+              room.controller &&
+              s.pos.getRangeTo(room.controller) <= 4
+            );
+          },
+        }).length;
 
     return built + sites;
   },
