@@ -6,7 +6,7 @@ Purpose:
 - Maintain the room workforce by phase
 - Support normal role-based spawning
 - Recover automatically from colony collapse
-- Maintain configured phase 1 remote mining workers
+- Maintain configured remote mining workers
 - Maintain configured remote reservers
 
 Recovery behavior:
@@ -14,19 +14,17 @@ Recovery behavior:
 - JrWorkers are the emergency bootstrap role
 - Once energy flow returns, normal spawning resumes
 
-Remote mining phase 1:
+Remote mining:
 - Manual remote room config
-- Remote JrWorkers only
-- Harvest remote energy and bring it home
+- Remote spawning is allowed only when the home room is developing or stable
+- Remote spawning pauses automatically if the home room falls back into bootstrap
 
 Remote reservation:
 - Maintain reserver creeps for configured remote rooms
-- Spawn only when the home room is out of bootstrap
-- Replace when reservation is low or a reserver is missing
-
-Important Notes:
-- Reservation ownership check now uses the creep owner's username when available
-- This avoids brittle username inference from other rooms
+- Reservation is fully controlled per remote room config
+- Spawn only up to desired reserver count
+- For visible rooms, replace only when reservation is missing / not yours / below threshold
+- For unseen rooms, maintain only baseline reserver coverage
 */
 
 const bodies = require("bodies");
@@ -289,7 +287,7 @@ module.exports = {
       var site = sites[targetRoom];
       if (!site || !site.enabled) continue;
       if (site.homeRoom !== room.name) continue;
-      if (!site.reservation || !site.reservation.enabled) continue;
+      if (!site.reservation || site.reservation.enabled !== true) continue;
 
       var desiredReservers = site.reservation.reservers || 1;
       var renewBelow = site.reservation.renewBelow || 2000;
@@ -311,16 +309,20 @@ module.exports = {
         "reserver",
         targetRoom,
       );
-      var reservationLow = this.isRemoteReservationLow(
+      var totalReservers = existingReservers + queuedReservers;
+
+      if (totalReservers >= desiredReservers) {
+        continue;
+      }
+
+      var shouldSpawn = this.shouldSpawnReserver(
         room,
         targetRoom,
         renewBelow,
+        totalReservers,
       );
 
-      if (
-        existingReservers + queuedReservers < desiredReservers ||
-        reservationLow
-      ) {
+      if (shouldSpawn) {
         requests.push({
           role: "reserver",
           priority: 55,
@@ -329,6 +331,56 @@ module.exports = {
         });
       }
     }
+  },
+
+  shouldSpawnReserver(homeRoom, targetRoom, renewBelow, totalReservers) {
+    var remoteRoom = Game.rooms[targetRoom];
+
+    // Developer note:
+    // If the room is not visible, only maintain baseline coverage.
+    // Do not keep spawning blindly.
+    if (!remoteRoom || !remoteRoom.controller) {
+      return totalReservers === 0;
+    }
+
+    var reservationState = this.getRemoteReservationState(homeRoom, remoteRoom);
+
+    if (!reservationState.hasMyReservation) {
+      return true;
+    }
+
+    return reservationState.ticksToEnd < renewBelow;
+  },
+
+  getRemoteReservationState(homeRoom, remoteRoom) {
+    var myUsername = this.getMyUsername(homeRoom);
+
+    if (!remoteRoom || !remoteRoom.controller || !myUsername) {
+      return {
+        hasMyReservation: false,
+        ticksToEnd: 0,
+      };
+    }
+
+    var reservation = remoteRoom.controller.reservation;
+    if (!reservation) {
+      return {
+        hasMyReservation: false,
+        ticksToEnd: 0,
+      };
+    }
+
+    if (reservation.username !== myUsername) {
+      return {
+        hasMyReservation: false,
+        ticksToEnd: reservation.ticksToEnd || 0,
+      };
+    }
+
+    return {
+      hasMyReservation: true,
+      ticksToEnd: reservation.ticksToEnd || 0,
+    };
   },
 
   addRemotePhaseOneRequests(room, state, requests) {
@@ -370,29 +422,6 @@ module.exports = {
         });
       }
     }
-  },
-
-  isRemoteReservationLow(homeRoom, targetRoom, renewBelow) {
-    var remoteRoom = Game.rooms[targetRoom];
-    if (!remoteRoom || !remoteRoom.controller) {
-      return false;
-    }
-
-    var myUsername = this.getMyUsername(homeRoom);
-    if (!myUsername) {
-      return false;
-    }
-
-    var reservation = remoteRoom.controller.reservation;
-    if (!reservation) {
-      return true;
-    }
-
-    if (reservation.username !== myUsername) {
-      return true;
-    }
-
-    return reservation.ticksToEnd < renewBelow;
   },
 
   getMyUsername(room) {

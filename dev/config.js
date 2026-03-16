@@ -255,7 +255,7 @@ module.exports = {
         jrWorkers: 2,
 
         reservation: {
-          enabled: false,
+          enabled: true,
           reservers: 1,
           renewBelow: 2000,
         },
