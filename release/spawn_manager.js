@@ -28,8 +28,15 @@ Remote reservation:
 */
 
 const bodies = require("bodies");
-const utils = require("utils");
 const config = require("config");
+
+const RESERVATION_CHECK_INTERVAL = 10;
+
+var remoteReservationCache = {};
+var usernameCache = {
+  tick: 0,
+  username: null,
+};
 
 module.exports = {
   run(room, state) {
@@ -156,16 +163,10 @@ module.exports = {
 
     for (var i = 0; i < state.sources.length; i++) {
       var source = state.sources[i];
-      var sourceContainer = utils.getSourceContainerBySource(room, source.id);
+      var sourceContainer = state.sourceContainersBySourceId[source.id];
       if (!sourceContainer) continue;
 
-      var existingMiners = _.filter(Game.creeps, function (creep) {
-        return (
-          creep.memory.role === "miner" &&
-          creep.memory.room === room.name &&
-          creep.memory.sourceId === source.id
-        );
-      }).length;
+      var existingMiners = this.getRoleSourceCount(state, "miner", source.id);
 
       var queuedMiners = this.countQueuedForSource(room, "miner", source.id);
 
@@ -184,20 +185,18 @@ module.exports = {
 
     for (var j = 0; j < state.sources.length; j++) {
       var haulSource = state.sources[j];
-      var haulContainer = utils.getSourceContainerBySource(room, haulSource.id);
+      var haulContainer = state.sourceContainersBySourceId[haulSource.id];
       if (!haulContainer) continue;
 
       var desiredHaulersForSource = this.getDesiredHaulersForSource(
         haulSource.id,
       );
 
-      var existingHaulers = _.filter(Game.creeps, function (creep) {
-        return (
-          creep.memory.role === "hauler" &&
-          creep.memory.room === room.name &&
-          creep.memory.sourceId === haulSource.id
-        );
-      }).length;
+      var existingHaulers = this.getRoleSourceCount(
+        state,
+        "hauler",
+        haulSource.id,
+      );
 
       var queuedHaulers = this.countQueuedForSource(
         room,
@@ -223,13 +222,11 @@ module.exports = {
     if (state.controllerContainers.length > 0) {
       var controllerContainer = state.controllerContainers[0];
 
-      var existingUpgraders = _.filter(Game.creeps, function (creep) {
-        return (
-          creep.memory.role === "upgrader" &&
-          creep.memory.room === room.name &&
-          creep.memory.targetId === controllerContainer.id
-        );
-      }).length;
+      var existingUpgraders = this.getRoleTargetCount(
+        state,
+        "upgrader",
+        controllerContainer.id,
+      );
 
       var queuedUpgraders = this.countQueuedForTarget(
         room,
@@ -292,17 +289,16 @@ module.exports = {
       var desiredReservers = site.reservation.reservers || 1;
       var renewBelow = site.reservation.renewBelow || 2000;
 
-      var existingReservers = _.filter(Game.creeps, function (creep) {
-        if (
-          creep.memory.role !== "reserver" ||
-          creep.memory.room !== room.name ||
-          creep.memory.targetRoom !== targetRoom
-        ) {
-          return false;
-        }
+      var existingReservers = _.filter(
+        this.getRoleTargetRoomCreeps(state, "reserver", targetRoom),
+        function (creep) {
+          if (creep.memory.role !== "reserver") {
+            return false;
+          }
 
-        return creep.ticksToLive === undefined || creep.ticksToLive > 80;
-      }).length;
+          return creep.ticksToLive === undefined || creep.ticksToLive > 80;
+        },
+      ).length;
 
       var queuedReservers = this.countQueuedForTargetRoom(
         room,
@@ -343,7 +339,11 @@ module.exports = {
       return totalReservers === 0;
     }
 
-    var reservationState = this.getRemoteReservationState(homeRoom, remoteRoom);
+    var reservationState = this.getCachedRemoteReservationState(
+      homeRoom,
+      targetRoom,
+      remoteRoom,
+    );
 
     if (!reservationState.hasMyReservation) {
       return true;
@@ -399,13 +399,11 @@ module.exports = {
 
       var desired = site.jrWorkers || 0;
 
-      var existing = _.filter(Game.creeps, function (creep) {
-        return (
-          creep.memory.role === "remotejrworker" &&
-          creep.memory.room === room.name &&
-          creep.memory.targetRoom === targetRoom
-        );
-      }).length;
+      var existing = this.getRoleTargetRoomCount(
+        state,
+        "remotejrworker",
+        targetRoom,
+      );
 
       var queued = this.countQueuedForTargetRoom(
         room,
@@ -425,9 +423,15 @@ module.exports = {
   },
 
   getMyUsername(room) {
+    if (usernameCache.tick === Game.time) {
+      return usernameCache.username;
+    }
+
     if (!room || !room.controller) return null;
     if (room.controller.owner && room.controller.owner.username) {
-      return room.controller.owner.username;
+      usernameCache.tick = Game.time;
+      usernameCache.username = room.controller.owner.username;
+      return usernameCache.username;
     }
 
     for (var name in Game.rooms) {
@@ -439,11 +443,80 @@ module.exports = {
         testRoom.controller.owner &&
         testRoom.controller.owner.username
       ) {
-        return testRoom.controller.owner.username;
+        usernameCache.tick = Game.time;
+        usernameCache.username = testRoom.controller.owner.username;
+        return usernameCache.username;
       }
     }
 
+    usernameCache.tick = Game.time;
+    usernameCache.username = null;
     return null;
+  },
+
+  getCachedRemoteReservationState(homeRoom, targetRoom, remoteRoom) {
+    var cacheKey = homeRoom.name + ":" + targetRoom;
+    var cached = remoteReservationCache[cacheKey];
+
+    // Developer note:
+    // Reservation state only needs coarse refreshes. Keeping a short-lived
+    // cache avoids controller reservation checks every tick for each remote.
+    if (cached && Game.time - cached.tick < RESERVATION_CHECK_INTERVAL) {
+      return cached.state;
+    }
+
+    var state = this.getRemoteReservationState(homeRoom, remoteRoom);
+
+    remoteReservationCache[cacheKey] = {
+      tick: Game.time,
+      state: state,
+    };
+
+    return state;
+  },
+
+  getRoleSourceCount(state, role, sourceId) {
+    return this.getRoleSourceCreeps(state, role, sourceId).length;
+  },
+
+  getRoleSourceCreeps(state, role, sourceId) {
+    if (
+      !state.sourceRoleMap ||
+      !state.sourceRoleMap[role] ||
+      !state.sourceRoleMap[role][sourceId]
+    ) {
+      return [];
+    }
+
+    return state.sourceRoleMap[role][sourceId];
+  },
+
+  getRoleTargetCount(state, role, targetId) {
+    if (
+      !state.targetRoleMap ||
+      !state.targetRoleMap[role] ||
+      !state.targetRoleMap[role][targetId]
+    ) {
+      return 0;
+    }
+
+    return state.targetRoleMap[role][targetId].length;
+  },
+
+  getRoleTargetRoomCount(state, role, targetRoom) {
+    return this.getRoleTargetRoomCreeps(state, role, targetRoom).length;
+  },
+
+  getRoleTargetRoomCreeps(state, role, targetRoom) {
+    if (
+      !state.targetRoomRoleMap ||
+      !state.targetRoomRoleMap[role] ||
+      !state.targetRoomRoleMap[role][targetRoom]
+    ) {
+      return [];
+    }
+
+    return state.targetRoomRoleMap[role][targetRoom];
   },
 
   needsRecovery(state) {

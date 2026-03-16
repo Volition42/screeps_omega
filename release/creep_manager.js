@@ -22,10 +22,8 @@ const roleUpgrader = require("role_upgrader");
 const roleRepair = require("role_repair");
 
 module.exports = {
-  run(room) {
-    const creeps = _.filter(Game.creeps, function (creep) {
-      return creep.memory.room === room.name;
-    });
+  run(room, state) {
+    const creeps = state && state.homeCreeps ? state.homeCreeps : [];
 
     for (let i = 0; i < creeps.length; i++) {
       const creep = creeps[i];

@@ -37,21 +37,26 @@ Important Notes:
 */
 
 const config = require("config");
-const utils = require("utils");
+
+const REMOTE_HUD_SCAN_INTERVAL = 5;
+
+var remoteHudScanCache = {};
 
 module.exports = {
   run(room, state) {
     if (!config.HUD.ENABLED) return;
 
-    this.drawSummary(room, state);
-    this.drawRemoteRoomHuds(room);
+    const remoteSummaries = this.getRemoteSiteSummaries(room, state);
+
+    this.drawSummary(room, state, remoteSummaries);
+    this.drawRemoteRoomHuds(room, state, remoteSummaries);
 
     if (
       config.HUD.CREEP_LABELS &&
       Game.time % config.HUD.LABEL_INTERVAL === 0
     ) {
-      this.drawCreepLabels(room);
-      this.drawRemoteCreepLabels(room);
+      this.drawCreepLabels(room, state);
+      this.drawRemoteCreepLabels(room, state);
     }
 
     if (Game.time % config.HUD.CONSOLE_INTERVAL === 0) {
@@ -59,7 +64,7 @@ module.exports = {
     }
   },
 
-  drawSummary(room, state) {
+  drawSummary(room, state, remoteSummaries) {
     const counts = state.roleCounts || {};
 
     const queue =
@@ -77,31 +82,14 @@ module.exports = {
     const safeModeLine = this.getSafeModeLine(room);
     const performanceLine = this.getPerformanceLine();
     const checklistLines = this.getConstructionChecklistLines(state);
-    const remoteLines = this.getRemoteSiteLines(room);
+    const remoteLines = this.getRemoteSiteLines(room, state, remoteSummaries);
 
     const sourceLines = _.map(
       state.sources,
       function (source) {
-        const sourceContainer = utils.getSourceContainerBySource(
-          room,
-          source.id,
-        );
-
-        const minerCount = _.filter(Game.creeps, function (creep) {
-          return (
-            creep.memory.role === "miner" &&
-            creep.memory.room === room.name &&
-            creep.memory.sourceId === source.id
-          );
-        }).length;
-
-        const haulerCount = _.filter(Game.creeps, function (creep) {
-          return (
-            creep.memory.role === "hauler" &&
-            creep.memory.room === room.name &&
-            creep.memory.sourceId === source.id
-          );
-        }).length;
+        const sourceContainer = state.sourceContainersBySourceId[source.id];
+        const minerCount = this.getRoleSourceCount(state, "miner", source.id);
+        const haulerCount = this.getRoleSourceCount(state, "hauler", source.id);
 
         const desiredMiners = config.CREEPS.minersPerSource;
         const desiredHaulers = this.getDesiredHaulersForSource(source.id);
@@ -193,93 +181,45 @@ module.exports = {
     });
   },
 
-  drawRemoteRoomHuds(homeRoom) {
+  drawRemoteRoomHuds(homeRoom, state, remoteSummaries) {
     if (!config.HUD.SHOW_REMOTE_SITES) return;
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
 
-    const sites = config.REMOTE_MINING.SITES || {};
+    for (let i = 0; i < remoteSummaries.length; i++) {
+      const summary = remoteSummaries[i];
 
-    for (const targetRoom in sites) {
-      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
+      if (!summary.visible || !summary.remoteRoom) continue;
 
-      const site = sites[targetRoom];
-      if (!site || !site.enabled) continue;
-      if (site.homeRoom !== homeRoom.name) continue;
-
-      const remoteRoom = Game.rooms[targetRoom];
-      if (!remoteRoom) continue;
-
-      this.drawRemoteRoomPanel(homeRoom, remoteRoom, site);
+      this.drawRemoteRoomPanel(homeRoom, summary);
     }
   },
 
-  drawRemoteRoomPanel(homeRoom, remoteRoom, site) {
-    const remoteCreeps = _.filter(Game.creeps, function (creep) {
-      return (
-        creep.memory.room === homeRoom.name &&
-        creep.memory.targetRoom === remoteRoom.name
-      );
-    });
-
-    const remoteJrWorkers = _.filter(remoteCreeps, function (creep) {
-      return creep.memory.role === "remotejrworker";
-    }).length;
-
-    const reservers = _.filter(remoteCreeps, function (creep) {
-      return creep.memory.role === "reserver";
-    }).length;
-
-    const sources = remoteRoom.find(FIND_SOURCES);
-    const dropped = remoteRoom.find(FIND_DROPPED_RESOURCES, {
-      filter: function (r) {
-        return r.resourceType === RESOURCE_ENERGY;
-      },
-    });
-    const hostiles = remoteRoom.find(FIND_HOSTILE_CREEPS);
-
-    let sourceEnergy = 0;
-    let sourceCapacity = 0;
-    for (let i = 0; i < sources.length; i++) {
-      sourceEnergy += sources[i].energy;
-      sourceCapacity += sources[i].energyCapacity;
-    }
-
-    let droppedEnergy = 0;
-    for (let j = 0; j < dropped.length; j++) {
-      droppedEnergy += dropped[j].amount;
-    }
-
-    const sourcePct =
-      sourceCapacity > 0
-        ? Math.round((sourceEnergy / sourceCapacity) * 100)
-        : 0;
-
-    const status = remoteJrWorkers > 0 ? "ACTIVE" : "IDLE";
-    const threat = hostiles.length > 0 ? "HOSTILES" : "CLEAR";
-    const reservationLine = this.getRemoteReservationLine(remoteRoom);
+  drawRemoteRoomPanel(homeRoom, summary) {
+    const remoteRoom = summary.remoteRoom;
+    const site = summary.site;
 
     const lines = [
       "vCORP // REMOTE // " + remoteRoom.name,
-      "PHASE " + site.phase + "   STATUS " + status + "   " + threat,
+      "PHASE " + site.phase + "   STATUS " + summary.status + "   " + summary.threat,
       "RJ " +
-        remoteJrWorkers +
+        summary.remoteJrWorkers +
         "/" +
         (site.jrWorkers || 0) +
         "   RV " +
-        reservers +
+        summary.reservers +
         "/" +
         ((site.reservation && site.reservation.reservers) || 0),
-      "ENERGY " + sourcePct + "%   DROP " + droppedEnergy,
-      reservationLine,
+      "ENERGY " + summary.sourcePct + "%   DROP " + summary.droppedEnergy,
+      summary.reservationLine,
     ];
 
     this.drawRemotePanel(remoteRoom, lines, {
-      hostile: hostiles.length > 0,
+      hostile: summary.hostiles > 0,
     });
   },
 
   drawPanel(room, lines, state, meta) {
-    const hostiles = room.find(FIND_HOSTILE_CREEPS).length > 0;
+    const hostiles = state.hostileCreeps && state.hostileCreeps.length > 0;
     const phase = state.phase || "bootstrap";
 
     const phaseColor = hostiles
@@ -533,41 +473,17 @@ module.exports = {
     ];
   },
 
-  getRemoteSiteLines(room) {
+  getRemoteSiteLines(room, state, remoteSummaries) {
     if (!config.HUD.SHOW_REMOTE_SITES) return [];
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return [];
 
     const mode = config.HUD.REMOTE_SITE_MODE || "detailed";
-    const sites = config.REMOTE_MINING.SITES || {};
     const lines = [];
 
-    for (const targetRoom in sites) {
-      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
-
-      const site = sites[targetRoom];
-      if (!site || !site.enabled) continue;
-      if (site.homeRoom !== room.name) continue;
-
-      const remoteJrCount = _.filter(Game.creeps, function (creep) {
-        return (
-          creep.memory.role === "remotejrworker" &&
-          creep.memory.room === room.name &&
-          creep.memory.targetRoom === targetRoom
-        );
-      }).length;
-
-      const reserverCount = _.filter(Game.creeps, function (creep) {
-        return (
-          creep.memory.role === "reserver" &&
-          creep.memory.room === room.name &&
-          creep.memory.targetRoom === targetRoom
-        );
-      }).length;
-
-      let status = "IDLE";
-      if (remoteJrCount > 0 || reserverCount > 0) {
-        status = "ACTIVE";
-      }
+    for (let i = 0; i < remoteSummaries.length; i++) {
+      const summary = remoteSummaries[i];
+      const site = summary.site;
+      const targetRoom = summary.targetRoom;
 
       if (mode === "compact") {
         lines.push(
@@ -576,15 +492,15 @@ module.exports = {
             " P" +
             site.phase +
             " RJ " +
-            remoteJrCount +
+            summary.remoteJrWorkers +
             "/" +
             (site.jrWorkers || 0) +
             " RV " +
-            reserverCount +
+            summary.reservers +
             "/" +
             ((site.reservation && site.reservation.reservers) || 0) +
             " " +
-            status,
+            summary.status,
         );
       } else {
         lines.push(
@@ -593,15 +509,15 @@ module.exports = {
             "   PHASE " +
             site.phase +
             "   RJ " +
-            remoteJrCount +
+            summary.remoteJrWorkers +
             "/" +
             (site.jrWorkers || 0) +
             "   RV " +
-            reserverCount +
+            summary.reservers +
             "/" +
             ((site.reservation && site.reservation.reservers) || 0) +
             "   " +
-            status,
+            summary.status,
         );
       }
     }
@@ -673,8 +589,8 @@ module.exports = {
     return config.CREEPS.haulersPerSourceDefault;
   },
 
-  drawCreepLabels(room) {
-    const creeps = room.find(FIND_MY_CREEPS);
+  drawCreepLabels(room, state) {
+    const creeps = state.creeps || [];
 
     for (let i = 0; i < creeps.length; i++) {
       const creep = creeps[i];
@@ -691,7 +607,7 @@ module.exports = {
     }
   },
 
-  drawRemoteCreepLabels(homeRoom) {
+  drawRemoteCreepLabels(homeRoom, state) {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
 
     const sites = config.REMOTE_MINING.SITES || {};
@@ -706,12 +622,9 @@ module.exports = {
       const remoteRoom = Game.rooms[targetRoom];
       if (!remoteRoom) continue;
 
-      const creeps = _.filter(Game.creeps, function (creep) {
-        return (
-          creep.pos.roomName === targetRoom &&
-          creep.memory.room === homeRoom.name
-        );
-      });
+      const creeps =
+        (state.creepsByCurrentRoom && state.creepsByCurrentRoom[targetRoom]) ||
+        [];
 
       for (let i = 0; i < creeps.length; i++) {
         const creep = creeps[i];
@@ -806,5 +719,136 @@ module.exports = {
         " R:" +
         (counts.repair || 0),
     );
+  },
+
+  getRemoteSiteSummaries(homeRoom, state) {
+    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return [];
+
+    const sites = config.REMOTE_MINING.SITES || {};
+    const summaries = [];
+
+    for (const targetRoom in sites) {
+      if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
+
+      const site = sites[targetRoom];
+      if (!site || !site.enabled) continue;
+      if (site.homeRoom !== homeRoom.name) continue;
+
+      const remoteRoom = Game.rooms[targetRoom] || null;
+      const scan = this.getRemoteRoomScan(homeRoom.name, targetRoom, remoteRoom);
+      const remoteJrWorkers = this.getRoleTargetRoomCount(
+        state,
+        "remotejrworker",
+        targetRoom,
+      );
+      const reservers = this.getRoleTargetRoomCount(
+        state,
+        "reserver",
+        targetRoom,
+      );
+
+      summaries.push({
+        targetRoom: targetRoom,
+        site: site,
+        remoteRoom: remoteRoom,
+        visible: !!remoteRoom,
+        remoteJrWorkers: remoteJrWorkers,
+        reservers: reservers,
+        status: remoteJrWorkers > 0 || reservers > 0 ? "ACTIVE" : "IDLE",
+        threat: scan.hostiles > 0 ? "HOSTILES" : "CLEAR",
+        sourcePct: scan.sourcePct,
+        droppedEnergy: scan.droppedEnergy,
+        hostiles: scan.hostiles,
+        reservationLine: scan.reservationLine,
+      });
+    }
+
+    return summaries;
+  },
+
+  getRemoteRoomScan(homeRoomName, targetRoom, remoteRoom) {
+    const cacheKey = homeRoomName + ":" + targetRoom;
+    const cached = remoteHudScanCache[cacheKey];
+
+    if (cached && Game.time - cached.tick < REMOTE_HUD_SCAN_INTERVAL) {
+      return cached.scan;
+    }
+
+    if (!remoteRoom) {
+      if (cached) {
+        return cached.scan;
+      }
+
+      return {
+        sourcePct: 0,
+        droppedEnergy: 0,
+        hostiles: 0,
+        reservationLine: "RESERVATION UNKNOWN",
+      };
+    }
+
+    const sources = remoteRoom.find(FIND_SOURCES);
+    const dropped = remoteRoom.find(FIND_DROPPED_RESOURCES, {
+      filter: function (resource) {
+        return resource.resourceType === RESOURCE_ENERGY;
+      },
+    });
+    const hostiles = remoteRoom.find(FIND_HOSTILE_CREEPS);
+
+    let sourceEnergy = 0;
+    let sourceCapacity = 0;
+    for (let i = 0; i < sources.length; i++) {
+      sourceEnergy += sources[i].energy;
+      sourceCapacity += sources[i].energyCapacity;
+    }
+
+    let droppedEnergy = 0;
+    for (let j = 0; j < dropped.length; j++) {
+      droppedEnergy += dropped[j].amount;
+    }
+
+    const scan = {
+      sourcePct:
+        sourceCapacity > 0
+          ? Math.round((sourceEnergy / sourceCapacity) * 100)
+          : 0,
+      droppedEnergy: droppedEnergy,
+      hostiles: hostiles.length,
+      reservationLine: this.getRemoteReservationLine(remoteRoom),
+    };
+
+    // Developer note:
+    // Remote HUD room scans are intentionally throttled. The HUD keeps drawing
+    // every tick, but expensive remote room.find calls refresh only periodically.
+    remoteHudScanCache[cacheKey] = {
+      tick: Game.time,
+      scan: scan,
+    };
+
+    return scan;
+  },
+
+  getRoleSourceCount(state, role, sourceId) {
+    if (
+      !state.sourceRoleMap ||
+      !state.sourceRoleMap[role] ||
+      !state.sourceRoleMap[role][sourceId]
+    ) {
+      return 0;
+    }
+
+    return state.sourceRoleMap[role][sourceId].length;
+  },
+
+  getRoleTargetRoomCount(state, role, targetRoom) {
+    if (
+      !state.targetRoomRoleMap ||
+      !state.targetRoomRoleMap[role] ||
+      !state.targetRoomRoleMap[role][targetRoom]
+    ) {
+      return 0;
+    }
+
+    return state.targetRoomRoleMap[role][targetRoom].length;
   },
 };
