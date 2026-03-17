@@ -119,7 +119,7 @@ module.exports = {
 
     var finalState = this.createState(sharedState, phase);
 
-    finalState.remoteSites = remoteManager.getHomeRoomSites(room.name);
+    finalState.remoteSites = remoteManager.getHomeRoomSites(room.name, finalState);
     finalState.remotePlan = remoteManager.getHomeRoomPlan(
       room,
       finalState,

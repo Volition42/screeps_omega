@@ -108,6 +108,8 @@ module.exports = {
   CONSTRUCTION: {
     MAX_SITES: 8,
     PLAN_INTERVAL: 50,
+    REMOTE_MAX_SITES: 4,
+    REMOTE_PLAN_INTERVAL: 75,
   },
 
   /*
@@ -214,6 +216,8 @@ module.exports = {
   Remote spawning policy:
   - Allowed only when the home room is in developing or stable
   - Pauses automatically if the home room falls back into bootstrap
+  - Phase 2 uses remote workers to establish containers and roads before
+    source-specialized remote miners and haulers take over
 
   Source configuration model:
   - One miner per source always
@@ -238,6 +242,7 @@ module.exports = {
   */
   REMOTE_MINING: {
     ENABLED: true,
+    phase2WorkersDefault: 1,
 
     SITES: {
       E11N33: {
@@ -245,6 +250,7 @@ module.exports = {
         homeRoom: "E12N33",
         phase: 1,
         jrWorkers: 2,
+        remoteWorkers: 1,
 
         reservation: {
           enabled: true,
@@ -264,6 +270,7 @@ module.exports = {
         homeRoom: "E12N33",
         phase: 1,
         jrWorkers: 2,
+        remoteWorkers: 1,
 
         reservation: {
           enabled: true,

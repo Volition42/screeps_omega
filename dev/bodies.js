@@ -25,6 +25,15 @@ module.exports = {
       case "remotejrworker":
         return this.getRemoteJrWorkerBody(tier);
 
+      case "remoteworker":
+        return this.getRemoteWorkerBody(tier);
+
+      case "remoteminer":
+        return this.getRemoteMinerBody(tier);
+
+      case "remotehauler":
+        return this.getRemoteHaulerBody(tier);
+
       case "reserver":
         return this.getReserverBody(energyCapacity);
 
@@ -62,6 +71,39 @@ module.exports = {
         return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
       default:
         return [WORK, CARRY, MOVE];
+    }
+  },
+
+  getRemoteWorkerBody(tier) {
+    switch (tier) {
+      case 3:
+        return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
+      case 2:
+        return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
+      default:
+        return [WORK, CARRY, MOVE];
+    }
+  },
+
+  getRemoteMinerBody(tier) {
+    switch (tier) {
+      case 3:
+        return [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE];
+      case 2:
+        return [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE];
+      default:
+        return [WORK, WORK, CARRY, MOVE];
+    }
+  },
+
+  getRemoteHaulerBody(tier) {
+    switch (tier) {
+      case 3:
+        return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE];
+      case 2:
+        return [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
+      default:
+        return [CARRY, CARRY, CARRY, MOVE, MOVE];
     }
   },
 

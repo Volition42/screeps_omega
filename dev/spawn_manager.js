@@ -264,6 +264,7 @@ module.exports = {
     }
 
     this.addRemoteReservationRequests(room, state, requests);
+    this.addRemotePhaseTwoRequests(room, state, requests);
     this.addRemotePhaseOneRequests(room, state, requests);
 
     requests.sort(function (a, b) {
@@ -416,6 +417,107 @@ module.exports = {
           targetRoom: targetRoom,
           homeRoom: room.name,
         });
+      }
+    }
+  },
+
+  addRemotePhaseTwoRequests(room, state, requests) {
+    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
+    if (state.phase !== "developing" && state.phase !== "stable") return;
+
+    var sites =
+      state.remoteSites || remoteManager.getHomeRoomSites(room.name, state);
+
+    for (var i = 0; i < sites.length; i++) {
+      var site = sites[i];
+      var targetRoom = site.targetRoom;
+      if (!site.phaseHooks || !site.phaseHooks.phaseTwoReady) continue;
+      if (site.phase === 1) continue;
+
+      var desiredRemoteWorkers =
+        site.phaseTargets && typeof site.phaseTargets.remoteWorkers === "number"
+          ? site.phaseTargets.remoteWorkers
+          : 0;
+      var existingRemoteWorkers = this.getRoleTargetRoomCount(
+        state,
+        "remoteworker",
+        targetRoom,
+      );
+      var queuedRemoteWorkers = this.countQueuedForTargetRoom(
+        room,
+        "remoteworker",
+        targetRoom,
+      );
+
+      for (
+        var workerIndex = existingRemoteWorkers + queuedRemoteWorkers;
+        workerIndex < desiredRemoteWorkers;
+        workerIndex++
+      ) {
+        requests.push({
+          role: "remoteworker",
+          priority: 58,
+          targetRoom: targetRoom,
+          homeRoom: room.name,
+        });
+      }
+
+      var sourceDetails = site.sourceDetails || [];
+
+      for (var j = 0; j < sourceDetails.length; j++) {
+        var sourceDetail = sourceDetails[j];
+        if (!sourceDetail.containerBuilt) continue;
+
+        var existingRemoteMiners = this.getRoleSourceCount(
+          state,
+          "remoteminer",
+          sourceDetail.sourceId,
+        );
+        var queuedRemoteMiners = this.countQueuedForSource(
+          room,
+          "remoteminer",
+          sourceDetail.sourceId,
+        );
+
+        for (
+          var minerIndex = existingRemoteMiners + queuedRemoteMiners;
+          minerIndex < 1;
+          minerIndex++
+        ) {
+          requests.push({
+            role: "remoteminer",
+            priority: 54,
+            sourceId: sourceDetail.sourceId,
+            targetRoom: targetRoom,
+            homeRoom: room.name,
+          });
+        }
+
+        var desiredRemoteHaulers = sourceDetail.desiredRemoteHaulers || 1;
+        var existingRemoteHaulers = this.getRoleSourceCount(
+          state,
+          "remotehauler",
+          sourceDetail.sourceId,
+        );
+        var queuedRemoteHaulers = this.countQueuedForSource(
+          room,
+          "remotehauler",
+          sourceDetail.sourceId,
+        );
+
+        for (
+          var haulerIndex = existingRemoteHaulers + queuedRemoteHaulers;
+          haulerIndex < desiredRemoteHaulers;
+          haulerIndex++
+        ) {
+          requests.push({
+            role: "remotehauler",
+            priority: 53,
+            sourceId: sourceDetail.sourceId,
+            targetRoom: targetRoom,
+            homeRoom: room.name,
+          });
+        }
       }
     }
   },

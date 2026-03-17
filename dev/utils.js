@@ -25,6 +25,7 @@ const logisticsManager = require("logistics_manager");
 var runtimeCacheTick = null;
 var runtimeStateByRoom = {};
 var runtimeCacheByRoom = {};
+var routeDirectionCacheByKey = {};
 
 function resetRuntimeCachesIfNeeded() {
   if (runtimeCacheTick === Game.time) return;
@@ -32,6 +33,7 @@ function resetRuntimeCachesIfNeeded() {
   runtimeCacheTick = Game.time;
   runtimeStateByRoom = {};
   runtimeCacheByRoom = {};
+  routeDirectionCacheByKey = {};
 }
 
 function groupObjectsByType(objects) {
@@ -124,6 +126,22 @@ function getDefenseMaintenanceTargets(room) {
     rampartMinHits: target,
     towerRepairFloor: Math.max(2000, Math.floor(target * 0.4)),
   };
+}
+
+function getRouteExitDirection(fromRoomName, targetRoomName) {
+  resetRuntimeCachesIfNeeded();
+
+  var cacheKey = fromRoomName + ":" + targetRoomName;
+  if (Object.prototype.hasOwnProperty.call(routeDirectionCacheByKey, cacheKey)) {
+    return routeDirectionCacheByKey[cacheKey];
+  }
+
+  var route = Game.map.findRoute(fromRoomName, targetRoomName);
+  var direction =
+    Array.isArray(route) && route.length > 0 ? route[0].exit : null;
+
+  routeDirectionCacheByKey[cacheKey] = direction;
+  return direction;
 }
 
 function buildRuntimeCache(room) {
@@ -287,6 +305,61 @@ module.exports = {
     }
 
     return null;
+  },
+
+  getRemoteSourceContainerPosition(room, source, homeRoomName) {
+    var anchor = this.getRemoteExitPosition(room, homeRoomName, source.pos);
+    var positions = this.getWalkableAdjacentPositions(source.pos);
+
+    if (positions.length === 0) return null;
+
+    positions.sort(function (a, b) {
+      var aScore = anchor ? a.getRangeTo(anchor) : a.getRangeTo(25, 25);
+      var bScore = anchor ? b.getRangeTo(anchor) : b.getRangeTo(25, 25);
+      return aScore - bScore;
+    });
+
+    for (var i = 0; i < positions.length; i++) {
+      var pos = positions[i];
+      var blocked = pos.lookFor(LOOK_STRUCTURES).length > 0;
+      var siteBlocked = pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+
+      if (!blocked && !siteBlocked) {
+        return pos;
+      }
+    }
+
+    return positions[0];
+  },
+
+  getRemoteExitPosition(room, targetRoomName, startPos) {
+    var direction = getRouteExitDirection(room.name, targetRoomName);
+    if (!direction) return null;
+
+    var exits = room.find(direction);
+    if (!exits || exits.length === 0) return null;
+
+    return startPos.findClosestByPath(exits);
+  },
+
+  getRemoteRoadPlanPositions(room, fromPos, targetRoomName) {
+    var exitPos = this.getRemoteExitPosition(room, targetRoomName, fromPos);
+    if (!exitPos) return [];
+
+    var path = fromPos.findPathTo(exitPos, {
+      ignoreCreeps: true,
+      range: 1,
+    });
+    var positions = [];
+
+    for (var i = 0; i < path.length; i++) {
+      var step = path[i];
+
+      if (step.x < 2 || step.x > 47 || step.y < 2 || step.y > 47) continue;
+      positions.push(new RoomPosition(step.x, step.y, room.name));
+    }
+
+    return positions;
   },
 
   getSourceContainerBySource(room, sourceId) {

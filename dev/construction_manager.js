@@ -46,7 +46,7 @@ module.exports = {
     if (!plan || !plan.buildList) return;
 
     for (var i = 0; i < plan.buildList.length; i++) {
-      if (this.isSiteCapReached(context)) return;
+      if (this.isSiteCapReached(context)) break;
 
       var action = plan.buildList[i];
 
@@ -87,6 +87,8 @@ module.exports = {
           break;
       }
     }
+
+    this.planRemoteSites(room, state);
   },
 
   createPlanContext(room, state) {
@@ -106,7 +108,11 @@ module.exports = {
   },
 
   isSiteCapReached(context) {
-    return context.siteCount >= config.CONSTRUCTION.MAX_SITES;
+    var maxSites = context.isRemote
+      ? config.CONSTRUCTION.REMOTE_MAX_SITES || config.CONSTRUCTION.MAX_SITES
+      : config.CONSTRUCTION.MAX_SITES;
+
+    return context.siteCount >= maxSites;
   },
 
   getAnchorOrigin(context) {
@@ -355,6 +361,87 @@ module.exports = {
     for (var j = 0; j < plan.walls.length; j++) {
       if (this.isSiteCapReached(context)) return;
       this.tryPlaceStructureSite(context, plan.walls[j], STRUCTURE_WALL);
+    }
+  },
+
+  planRemoteSites(homeRoom, state) {
+    var remoteSites = state.remoteSites || [];
+    if (remoteSites.length === 0) return;
+
+    var roomMemory = Memory.rooms[homeRoom.name];
+    if (!roomMemory.construction.remotePlans) {
+      roomMemory.construction.remotePlans = {};
+    }
+
+    for (var i = 0; i < remoteSites.length; i++) {
+      var site = remoteSites[i];
+      if (!site.phaseHooks || !site.phaseHooks.phaseTwoReady) continue;
+      if (!site.visible || !site.remoteRoom || !site.remoteState) continue;
+
+      var remoteMemory = roomMemory.construction.remotePlans[site.targetRoom];
+      if (!remoteMemory) {
+        roomMemory.construction.remotePlans[site.targetRoom] = {
+          lastPlan: 0,
+        };
+        remoteMemory = roomMemory.construction.remotePlans[site.targetRoom];
+      }
+
+      if (
+        Game.time - remoteMemory.lastPlan <
+        (config.CONSTRUCTION.REMOTE_PLAN_INTERVAL || config.CONSTRUCTION.PLAN_INTERVAL)
+      ) {
+        continue;
+      }
+
+      remoteMemory.lastPlan = Game.time;
+
+      var context = this.createRemotePlanContext(homeRoom, state, site);
+      this.placeRemoteSourceContainers(context);
+      this.placeRemoteRoads(context);
+    }
+  },
+
+  createRemotePlanContext(homeRoom, state, site) {
+    return {
+      room: site.remoteRoom,
+      homeRoom: homeRoom,
+      state: site.remoteState,
+      remoteSite: site,
+      terrain: site.remoteRoom.getTerrain(),
+      siteCount: site.progress ? site.progress.activeConstructionSites : 0,
+      plannedSitesByType: {},
+      isRemote: true,
+    };
+  },
+
+  placeRemoteSourceContainers(context) {
+    var sourceDetails = context.remoteSite.sourceDetails || [];
+
+    for (var i = 0; i < sourceDetails.length; i++) {
+      if (this.isSiteCapReached(context)) return;
+
+      var detail = sourceDetails[i];
+      if (detail.containerBuilt || detail.containerPlanned || !detail.containerPos) {
+        continue;
+      }
+
+      this.tryPlaceStructureSite(context, detail.containerPos, STRUCTURE_CONTAINER);
+    }
+  },
+
+  placeRemoteRoads(context) {
+    var sourceDetails = context.remoteSite.sourceDetails || [];
+
+    for (var i = 0; i < sourceDetails.length; i++) {
+      if (this.isSiteCapReached(context)) return;
+
+      var detail = sourceDetails[i];
+      var roadPositions = detail.roadPositions || [];
+
+      for (var j = 0; j < roadPositions.length; j++) {
+        if (this.isSiteCapReached(context)) return;
+        this.tryPlaceStructureSite(context, roadPositions[j], STRUCTURE_ROAD);
+      }
     }
   },
 
