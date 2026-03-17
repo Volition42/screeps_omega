@@ -197,6 +197,7 @@ module.exports = {
         {
           side: "right",
           lineMode: "remote",
+          hideAccentBar: true,
         },
       );
     }
@@ -221,7 +222,12 @@ module.exports = {
 
     const lines = [
       "vCORP // REMOTE // " + remoteRoom.name,
-      "PHASE " + site.phase + "   STATUS " + summary.status + "   " + summary.threat,
+      "PHASE " +
+        site.phase +
+        "   STATUS " +
+        summary.status +
+        "   " +
+        summary.threat,
       "RJ " +
         summary.remoteJrWorkers +
         "/" +
@@ -268,6 +274,7 @@ module.exports = {
     const panelOptions = options || {};
     const side = panelOptions.side || "left";
     const lineMode = panelOptions.lineMode || "default";
+    const hideAccentBar = !!panelOptions.hideAccentBar;
 
     const phaseColor = hostiles
       ? "#ff3b3b"
@@ -282,8 +289,8 @@ module.exports = {
     const y = 0.45;
     const height = lines.length * 0.88 + 1.1;
     const accentX = side === "right" ? x + width + 0.04 : x - 0.18;
-    const brandAlign = side === "right" ? "left" : "right";
-    const brandX = side === "right" ? x + 0.2 : x + width - 0.2;
+    const brandAlign = "right";
+    const brandX = x + width - 0.2;
 
     room.visual.rect(x, y, width, height, {
       fill: "#06131f",
@@ -292,12 +299,14 @@ module.exports = {
       strokeWidth: 0.05,
     });
 
-    room.visual.rect(accentX, y, 0.14, height, {
-      fill: phaseColor,
-      opacity: 0.85,
-      stroke: phaseColor,
-      strokeWidth: 0.02,
-    });
+    if (!hideAccentBar) {
+      room.visual.rect(accentX, y, 0.14, height, {
+        fill: phaseColor,
+        opacity: 0.85,
+        stroke: phaseColor,
+        strokeWidth: 0.02,
+      });
+    }
 
     room.visual.rect(x, y, width, 0.22, {
       fill: "#39d5ff",
@@ -540,11 +549,11 @@ module.exports = {
 
     if (remotePlan && remotePlan.activeSites > 0) {
       lines.push(
-        "REMOTE CAP " +
+        "REMOTE CAP: " +
           remotePlan.activeSites +
           "/" +
           remotePlan.recommendedSiteCap +
-          "   P2 READY " +
+          " P2 READY: " +
           remotePlan.phaseTwoReadySites,
       );
     }
@@ -570,41 +579,42 @@ module.exports = {
             summary.status,
         );
       } else {
+        // Stack each remote site's block so the mirrored home-room panel stays
+        // readable without widening beyond the existing HUD footprint.
+        lines.push("ROOM:" + targetRoom);
         lines.push(
-          "REMOTE " +
-            targetRoom +
-            "   PHASE " +
-            site.phase +
-            "   RW " +
+          "   PHASE: " +
+            String(site.phase || "").toUpperCase() +
+            " RES: " +
+            summary.reservationShort,
+        );
+        lines.push(
+          "   RW: " +
             summary.remoteWorkers +
             "/" +
             (site.remoteWorkers || 0) +
-            "   RM " +
+            " RM: " +
             summary.remoteMiners +
             "/" +
             summary.desiredRemoteMiners +
-            "   RH " +
+            "  RH: " +
             summary.remoteHaulers +
             "/" +
-            summary.desiredRemoteHaulers +
-            "   " +
-            summary.status,
+            summary.desiredRemoteHaulers,
         );
         lines.push(
-          "BOX " +
+          "   BOX: " +
             summary.sourceContainersBuilt +
             "/" +
             summary.sourceContainersNeeded +
             " +" +
             summary.sourceContainersPlanned +
-            "   RD " +
+            " RD " +
             summary.roadsBuilt +
             "/" +
             summary.roadsTarget +
             " +" +
-            summary.roadsPlanned +
-            "   RES " +
-            summary.reservationShort,
+            summary.roadsPlanned,
         );
       }
     }
