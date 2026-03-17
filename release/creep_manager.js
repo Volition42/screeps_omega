@@ -14,6 +14,9 @@ Important Notes:
 
 const roleJrWorker = require("role_jrworker");
 const roleRemoteJrWorker = require("role_remote_jrworker");
+const roleRemoteWorker = require("role_remote_worker");
+const roleRemoteMiner = require("role_remote_miner");
+const roleRemoteHauler = require("role_remote_hauler");
 const roleReserver = require("role_reserver");
 const roleWorker = require("role_worker");
 const roleMiner = require("role_miner");
@@ -35,6 +38,18 @@ module.exports = {
 
         case "remotejrworker":
           roleRemoteJrWorker.run(creep);
+          break;
+
+        case "remoteworker":
+          roleRemoteWorker.run(creep);
+          break;
+
+        case "remoteminer":
+          roleRemoteMiner.run(creep);
+          break;
+
+        case "remotehauler":
+          roleRemoteHauler.run(creep);
           break;
 
         case "reserver":

@@ -144,6 +144,12 @@ module.exports = {
         (counts.jrworker || 0) +
         " RJ:" +
         (counts.remotejrworker || 0) +
+        " RW:" +
+        (counts.remoteworker || 0) +
+        " RM:" +
+        (counts.remoteminer || 0) +
+        " RH:" +
+        (counts.remotehauler || 0) +
         " RV:" +
         (counts.reserver || 0) +
         " W:" +
@@ -205,11 +211,34 @@ module.exports = {
         summary.remoteJrWorkers +
         "/" +
         (site.jrWorkers || 0) +
+        " RW " +
+        summary.remoteWorkers +
+        "/" +
+        (site.remoteWorkers || 0),
+      "RM " +
+        summary.remoteMiners +
+        "/" +
+        summary.desiredRemoteMiners +
+        "   RH " +
+        summary.remoteHaulers +
+        "/" +
+        summary.desiredRemoteHaulers +
         "   RV " +
         summary.reservers +
         "/" +
         ((site.reservation && site.reservation.reservers) || 0),
-      "ENERGY " + summary.sourcePct + "%   DROP " + summary.droppedEnergy,
+      "BOX " +
+        summary.sourceContainersBuilt +
+        "/" +
+        summary.sourceContainersNeeded +
+        " +" +
+        summary.sourceContainersPlanned +
+        "   RD " +
+        summary.roadsBuilt +
+        "/" +
+        summary.roadsTarget +
+        " +" +
+        summary.roadsPlanned,
       summary.reservationLine,
     ];
 
@@ -513,14 +542,12 @@ module.exports = {
             targetRoom +
             " P" +
             site.phase +
-            " RJ " +
-            summary.remoteJrWorkers +
-            "/" +
-            (site.jrWorkers || 0) +
-            " RV " +
-            summary.reservers +
-            "/" +
-            ((site.reservation && site.reservation.reservers) || 0) +
+            " RW " +
+            summary.remoteWorkers +
+            " RM " +
+            summary.remoteMiners +
+            " RH " +
+            summary.remoteHaulers +
             " " +
             summary.status,
         );
@@ -530,16 +557,36 @@ module.exports = {
             targetRoom +
             "   PHASE " +
             site.phase +
-            "   RJ " +
-            summary.remoteJrWorkers +
+            "   RW " +
+            summary.remoteWorkers +
             "/" +
-            (site.jrWorkers || 0) +
-            "   RV " +
-            summary.reservers +
+            (site.remoteWorkers || 0) +
+            "   RM " +
+            summary.remoteMiners +
             "/" +
-            ((site.reservation && site.reservation.reservers) || 0) +
+            summary.desiredRemoteMiners +
+            "   RH " +
+            summary.remoteHaulers +
+            "/" +
+            summary.desiredRemoteHaulers +
             "   " +
             summary.status,
+        );
+        lines.push(
+          "BOX " +
+            summary.sourceContainersBuilt +
+            "/" +
+            summary.sourceContainersNeeded +
+            " +" +
+            summary.sourceContainersPlanned +
+            "   RD " +
+            summary.roadsBuilt +
+            "/" +
+            summary.roadsTarget +
+            " +" +
+            summary.roadsPlanned +
+            "   RES " +
+            summary.reservationShort,
         );
       }
     }
@@ -667,6 +714,12 @@ module.exports = {
         return "J ⛏";
       case "remotejrworker":
         return "RJ 🌐";
+      case "remoteworker":
+        return "RW 🔧";
+      case "remoteminer":
+        return "RM ⛏";
+      case "remotehauler":
+        return "RH 📦";
       case "reserver":
         return "RV 🏳";
       case "worker":
@@ -690,6 +743,12 @@ module.exports = {
         return "#d9fb8c";
       case "remotejrworker":
         return "#ffd166";
+      case "remoteworker":
+        return "#89ffb4";
+      case "remoteminer":
+        return "#62d8ff";
+      case "remotehauler":
+        return "#e7fcff";
       case "reserver":
         return "#c77dff";
       case "worker":
@@ -725,6 +784,12 @@ module.exports = {
         (counts.jrworker || 0) +
         " RJ:" +
         (counts.remotejrworker || 0) +
+        " RW:" +
+        (counts.remoteworker || 0) +
+        " RM:" +
+        (counts.remoteminer || 0) +
+        " RH:" +
+        (counts.remotehauler || 0) +
         " RV:" +
         (counts.reserver || 0) +
         " W:" +
@@ -750,17 +815,18 @@ module.exports = {
       const site = sites[i];
       const targetRoom = site.targetRoom;
 
-      const remoteRoom = Game.rooms[targetRoom] || null;
-      const scan = this.getRemoteRoomScan(homeRoom.name, targetRoom, remoteRoom);
-      const remoteJrWorkers = this.getRoleTargetRoomCount(
-        state,
-        "remotejrworker",
-        targetRoom,
-      );
-      const reservers = this.getRoleTargetRoomCount(
-        state,
-        "reserver",
-        targetRoom,
+      const remoteRoom = site.remoteRoom || Game.rooms[targetRoom] || null;
+      const roleCounts = site.assignedRoleCounts || {};
+      const progress = site.progress || {};
+      const desiredRemoteMiners = site.sourceDetails
+        ? site.sourceDetails.length
+        : 0;
+      const desiredRemoteHaulers = _.reduce(
+        site.sourceDetails || [],
+        function (total, detail) {
+          return total + (detail.desiredRemoteHaulers || 0);
+        },
+        0,
       );
 
       summaries.push({
@@ -768,18 +834,47 @@ module.exports = {
         site: site,
         remoteRoom: remoteRoom,
         visible: !!remoteRoom,
-        remoteJrWorkers: remoteJrWorkers,
-        reservers: reservers,
-        status: remoteJrWorkers > 0 || reservers > 0 ? "ACTIVE" : "IDLE",
-        threat: scan.hostiles > 0 ? "HOSTILES" : "CLEAR",
-        sourcePct: scan.sourcePct,
-        droppedEnergy: scan.droppedEnergy,
-        hostiles: scan.hostiles,
-        reservationLine: scan.reservationLine,
+        remoteJrWorkers: roleCounts.remotejrworker || 0,
+        remoteWorkers: roleCounts.remoteworker || 0,
+        remoteMiners: roleCounts.remoteminer || 0,
+        remoteHaulers: roleCounts.remotehauler || 0,
+        desiredRemoteMiners: desiredRemoteMiners,
+        desiredRemoteHaulers: desiredRemoteHaulers,
+        reservers: roleCounts.reserver || 0,
+        status: site.statusLabel || "IDLE",
+        threat: progress.hostiles > 0 ? "HOSTILES" : "CLEAR",
+        sourceContainersBuilt: progress.sourceContainersBuilt || 0,
+        sourceContainersPlanned: progress.sourceContainersPlanned || 0,
+        sourceContainersNeeded: progress.sourceCount || 0,
+        roadsBuilt: progress.roadsBuilt || 0,
+        roadsPlanned: progress.roadsPlanned || 0,
+        roadsTarget: progress.roadsTarget || 0,
+        hostiles: progress.hostiles || 0,
+        reservationShort: site.reservationStatus
+          ? site.reservationStatus.label
+          : "UNKNOWN",
+        reservationLine: this.getRemoteReservationSummaryLine(site),
       });
     }
 
     return summaries;
+  },
+
+  getRemoteReservationSummaryLine(site) {
+    if (!site.reservationStatus) {
+      return "RES UNKNOWN";
+    }
+
+    if (site.reservationStatus.status === "none") {
+      return "RES NONE";
+    }
+
+    return (
+      "RES " +
+      site.reservationStatus.label +
+      " " +
+      (site.reservationStatus.ticksToEnd || 0)
+    );
   },
 
   getRemoteRoomScan(homeRoomName, targetRoom, remoteRoom) {
