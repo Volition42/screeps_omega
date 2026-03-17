@@ -130,7 +130,9 @@ module.exports = {
     const controllerContainerLine =
       "CTRL BOX " + state.controllerContainers.length + "/1";
 
-    const lines = [
+    // Keep the core home-room summary isolated so remote monitoring can render
+    // in its own mirrored panel without changing the room or creep overlays.
+    const mainLines = [
       "vCORP // " + room.name + " // " + state.phase.toUpperCase(),
       "GRID " +
         room.energyAvailable +
@@ -167,24 +169,37 @@ module.exports = {
     ];
 
     if (performanceLine) {
-      lines.push(performanceLine);
+      mainLines.push(performanceLine);
     }
 
     if (checklistLines && checklistLines.length > 0) {
-      Array.prototype.push.apply(lines, checklistLines);
+      Array.prototype.push.apply(mainLines, checklistLines);
     }
 
-    if (remoteLines && remoteLines.length > 0) {
-      Array.prototype.push.apply(lines, remoteLines);
-    }
+    Array.prototype.push.apply(mainLines, sourceLines);
 
-    Array.prototype.push.apply(lines, sourceLines);
-
-    this.drawPanel(room, lines, state, {
+    this.drawPanel(room, mainLines, state, {
       hasPerformanceLine: !!performanceLine,
       checklistCount: checklistLines ? checklistLines.length : 0,
-      remoteCount: remoteLines ? remoteLines.length : 0,
     });
+
+    if (remoteLines && remoteLines.length > 0) {
+      // Reuse the existing remote monitoring lines, but attach them to the
+      // top-right edge so the home HUD reads as two focused panels.
+      this.drawPanel(
+        room,
+        remoteLines,
+        state,
+        {
+          hasPerformanceLine: false,
+          checklistCount: 0,
+        },
+        {
+          side: "right",
+          lineMode: "remote",
+        },
+      );
+    }
   },
 
   drawRemoteRoomHuds(homeRoom, state, remoteSummaries) {
@@ -247,9 +262,12 @@ module.exports = {
     });
   },
 
-  drawPanel(room, lines, state, meta) {
+  drawPanel(room, lines, state, meta, options) {
     const hostiles = state.hostileCreeps && state.hostileCreeps.length > 0;
     const phase = state.phase || "bootstrap";
+    const panelOptions = options || {};
+    const side = panelOptions.side || "left";
+    const lineMode = panelOptions.lineMode || "default";
 
     const phaseColor = hostiles
       ? "#ff3b3b"
@@ -259,10 +277,13 @@ module.exports = {
           ? "#38ff9c"
           : "#39d5ff";
 
-    const x = 0.6;
-    const y = 0.45;
     const width = 17.8;
+    const x = side === "right" ? 49 - width - 0.6 : 0.6;
+    const y = 0.45;
     const height = lines.length * 0.88 + 1.1;
+    const accentX = side === "right" ? x + width + 0.04 : x - 0.18;
+    const brandAlign = side === "right" ? "left" : "right";
+    const brandX = side === "right" ? x + 0.2 : x + width - 0.2;
 
     room.visual.rect(x, y, width, height, {
       fill: "#06131f",
@@ -271,7 +292,7 @@ module.exports = {
       strokeWidth: 0.05,
     });
 
-    room.visual.rect(x - 0.18, y, 0.14, height, {
+    room.visual.rect(accentX, y, 0.14, height, {
       fill: phaseColor,
       opacity: 0.85,
       stroke: phaseColor,
@@ -285,8 +306,8 @@ module.exports = {
       strokeWidth: 0.02,
     });
 
-    room.visual.text("vCORP", x + width + 1 - 1.2, y + 1.1, {
-      align: "right",
+    room.visual.text("vCORP", brandX, y + 1.1, {
+      align: brandAlign,
       color: "#7befff",
       font: 0.9,
       opacity: 0.22,
@@ -297,19 +318,16 @@ module.exports = {
     const perfIndex = meta.hasPerformanceLine ? 5 : -1;
     const checklistStart = meta.hasPerformanceLine ? 6 : 5;
     const checklistEnd = checklistStart + meta.checklistCount - 1;
-    const remoteStart = checklistEnd + 1;
-    const remoteEnd = remoteStart + meta.remoteCount;
 
     for (let i = 0; i < lines.length; i++) {
+      const isRemoteMode = lineMode === "remote";
       const isPerfLine = meta.hasPerformanceLine && i === perfIndex;
       const isChecklistLine =
         meta.checklistCount > 0 && i >= checklistStart && i <= checklistEnd;
-      const isRemoteLine =
-        meta.remoteCount > 0 && i >= remoteStart && i < remoteEnd;
 
       room.visual.text(lines[i], x + 0.4, y + 1.2 + i * 0.82, {
         align: "left",
-        color: isRemoteLine
+        color: isRemoteMode
           ? "#ffd166"
           : isChecklistLine
             ? "#7ff7d4"
@@ -318,7 +336,7 @@ module.exports = {
               : i === 0
                 ? "#b9f8ff"
                 : "#8fe9ff",
-        font: isRemoteLine
+        font: isRemoteMode
           ? 0.6
           : isChecklistLine
             ? 0.6
@@ -327,7 +345,7 @@ module.exports = {
               : i === 0
                 ? 0.82
                 : 0.68,
-        opacity: isRemoteLine
+        opacity: isRemoteMode
           ? 0.82
           : isChecklistLine
             ? 0.8
@@ -337,7 +355,7 @@ module.exports = {
                 ? 0.98
                 : 0.88,
         stroke: "#021018",
-        strokeWidth: isRemoteLine
+        strokeWidth: isRemoteMode
           ? 0.12
           : isChecklistLine
             ? 0.12
