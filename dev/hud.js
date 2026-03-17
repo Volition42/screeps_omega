@@ -34,6 +34,7 @@ Important Notes:
 - Avoid adding expensive visual effects here
 - Remote phase 1 creeps are shown as RJ in the role header and creep labels
 - Reservers are shown as RV in the role header and creep labels
+- Defenders are shown as D in the role header and creep labels
 */
 
 const config = require("config");
@@ -154,6 +155,8 @@ module.exports = {
         (counts.remotehauler || 0) +
         " RV:" +
         (counts.reserver || 0) +
+        " D:" +
+        (counts.defender || 0) +
         " W:" +
         (counts.worker || 0) +
         " M:" +
@@ -242,7 +245,9 @@ module.exports = {
         "   RV " +
         summary.reservers +
         "/" +
-        ((site.reservation && site.reservation.reservers) || 0),
+        ((site.reservation && site.reservation.reservers) || 0) +
+        "   D " +
+        summary.defenders,
       "BOX " +
         summary.sourceContainersBuilt +
         "/" +
@@ -570,6 +575,8 @@ module.exports = {
             summary.remoteMiners +
             " RH " +
             summary.remoteHaulers +
+            " D " +
+            summary.defenders +
             " " +
             summary.status,
         );
@@ -597,7 +604,9 @@ module.exports = {
             "  RH: " +
             summary.remoteHaulers +
             "/" +
-            summary.desiredRemoteHaulers,
+            summary.desiredRemoteHaulers +
+            " D: " +
+            summary.defenders,
         );
         lines.push(
           "   BOX: " +
@@ -747,6 +756,8 @@ module.exports = {
         return "RH 📦";
       case "reserver":
         return "RV 🏳";
+      case "defender":
+        return "D ⚔";
       case "worker":
         return "W " + (creep.memory.working ? "🔧" : "⛏");
       case "miner":
@@ -776,6 +787,8 @@ module.exports = {
         return "#e7fcff";
       case "reserver":
         return "#c77dff";
+      case "defender":
+        return "#ff6b6b";
       case "worker":
         return "#89ffb4";
       case "miner":
@@ -817,6 +830,8 @@ module.exports = {
         (counts.remotehauler || 0) +
         " RV:" +
         (counts.reserver || 0) +
+        " D:" +
+        (counts.defender || 0) +
         " W:" +
         (counts.worker || 0) +
         " M:" +
@@ -863,6 +878,7 @@ module.exports = {
         remoteWorkers: roleCounts.remoteworker || 0,
         remoteMiners: roleCounts.remoteminer || 0,
         remoteHaulers: roleCounts.remotehauler || 0,
+        defenders: this.getRoleTargetRoomCount(state, "defender", targetRoom),
         desiredRemoteMiners: desiredRemoteMiners,
         desiredRemoteHaulers: desiredRemoteHaulers,
         reservers: roleCounts.reserver || 0,
