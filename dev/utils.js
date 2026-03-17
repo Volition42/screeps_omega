@@ -503,6 +503,21 @@ module.exports = {
     });
   },
 
+  getDefenseIntruders(room, hostiles, powerCreeps) {
+    var hostileCreeps = this.getDefenseHostiles(room, hostiles);
+    var hostilePowerCreeps = powerCreeps;
+
+    if (!hostilePowerCreeps && room && typeof FIND_HOSTILE_POWER_CREEPS !== "undefined") {
+      hostilePowerCreeps = room.find(FIND_HOSTILE_POWER_CREEPS);
+    }
+
+    hostilePowerCreeps = _.filter(hostilePowerCreeps || [], function (creep) {
+      return module.exports.isDefenseHostile(creep);
+    });
+
+    return hostileCreeps.concat(hostilePowerCreeps);
+  },
+
   getDefenseMaintenanceTargets(room) {
     return getDefenseMaintenanceTargets(room);
   },

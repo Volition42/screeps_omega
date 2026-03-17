@@ -84,9 +84,12 @@ module.exports = {
   },
 
   getPriorityHostile(creep, threat) {
-    var hostiles = utils.getDefenseHostiles(
+    var hostiles = utils.getDefenseIntruders(
       creep.room,
       creep.room.find(FIND_HOSTILE_CREEPS),
+      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+        ? creep.room.find(FIND_HOSTILE_POWER_CREEPS)
+        : [],
     );
 
     if (hostiles.length === 0) return null;
@@ -97,23 +100,31 @@ module.exports = {
       return controllerHostile;
     }
 
+    var closestByPath = creep.pos.findClosestByPath(hostiles);
+
+    if (closestByPath) {
+      return closestByPath;
+    }
+
     hostiles.sort(function (a, b) {
-      var aClaim = a.getActiveBodyparts(CLAIM);
-      var bClaim = b.getActiveBodyparts(CLAIM);
+      var aClaim = this.getActiveBodyparts(a, CLAIM);
+      var bClaim = this.getActiveBodyparts(b, CLAIM);
       if (aClaim !== bClaim) return bClaim - aClaim;
 
-      var aHeal = a.getActiveBodyparts(HEAL);
-      var bHeal = b.getActiveBodyparts(HEAL);
+      var aHeal = this.getActiveBodyparts(a, HEAL);
+      var bHeal = this.getActiveBodyparts(b, HEAL);
       if (aHeal !== bHeal) return bHeal - aHeal;
 
       var aCombat =
-        a.getActiveBodyparts(ATTACK) + a.getActiveBodyparts(RANGED_ATTACK);
+        this.getActiveBodyparts(a, ATTACK) +
+        this.getActiveBodyparts(a, RANGED_ATTACK);
       var bCombat =
-        b.getActiveBodyparts(ATTACK) + b.getActiveBodyparts(RANGED_ATTACK);
+        this.getActiveBodyparts(b, ATTACK) +
+        this.getActiveBodyparts(b, RANGED_ATTACK);
       if (aCombat !== bCombat) return bCombat - aCombat;
 
       return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
-    });
+    }, this);
 
     return hostiles[0];
   },
@@ -136,7 +147,7 @@ module.exports = {
 
     var claimers = _.filter(hostiles, function (hostile) {
       var nearController = hostile.pos.getRangeTo(controller) <= 4;
-      var hasClaim = hostile.getActiveBodyparts(CLAIM) > 0;
+      var hasClaim = this.getActiveBodyparts(hostile, CLAIM) > 0;
 
       if (!nearController && !hasClaim) return false;
 
@@ -149,9 +160,15 @@ module.exports = {
       }
 
       return nearController || hasClaim;
-    });
+    }, this);
 
     if (claimers.length === 0) return null;
+
+    var closestByPath = creep.pos.findClosestByPath(claimers);
+
+    if (closestByPath) {
+      return closestByPath;
+    }
 
     claimers.sort(function (a, b) {
       var aRange = creep.pos.getRangeTo(a);
@@ -171,6 +188,14 @@ module.exports = {
       range: 1,
       visualizePathStyle: { stroke: "#ff6b6b" },
     });
+  },
+
+  getActiveBodyparts(creep, partType) {
+    if (!creep || typeof creep.getActiveBodyparts !== "function") {
+      return 0;
+    }
+
+    return creep.getActiveBodyparts(partType);
   },
 
   rally(creep, homeRoomName) {
