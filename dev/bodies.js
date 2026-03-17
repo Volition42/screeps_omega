@@ -52,6 +52,9 @@ module.exports = {
       case "repair":
         return this.getRepairBody(tier);
 
+      case "defender":
+        return this.getDefenderBody(energyCapacity);
+
       default:
         return [WORK, CARRY, MOVE];
     }
@@ -170,5 +173,33 @@ module.exports = {
       default:
         return [WORK, CARRY, MOVE];
     }
+  },
+
+  getDefenderBody(energyCapacity) {
+    if (energyCapacity >= 760) {
+      return [
+        TOUGH,
+        TOUGH,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ];
+    }
+
+    if (energyCapacity >= 590) {
+      return [TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE];
+    }
+
+    if (energyCapacity >= 430) {
+      return [ATTACK, ATTACK, MOVE, MOVE, MOVE];
+    }
+
+    return [ATTACK, MOVE, MOVE];
   },
 };

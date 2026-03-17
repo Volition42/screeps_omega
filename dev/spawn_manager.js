@@ -29,6 +29,7 @@ Remote reservation:
 
 const bodies = require("bodies");
 const config = require("config");
+const defenseManager = require("defense_manager");
 const remoteManager = require("remote_manager");
 
 const RESERVATION_CHECK_INTERVAL = 10;
@@ -98,8 +99,11 @@ module.exports = {
   getSpawnRequests(room, state) {
     var requests = [];
     var roleCounts = state.roleCounts || {};
+    var reaction = defenseManager.getReactionConfig();
 
     if (this.needsRecovery(state)) {
+      this.addDefenseRequests(room, state, requests, reaction);
+
       var recoveryTarget = this.getRecoveryJrWorkerTarget(room, state);
       var currentJrWorkers = roleCounts.jrworker || 0;
       var queuedJrWorkers = this.countQueued(room, "jrworker");
@@ -123,6 +127,8 @@ module.exports = {
     }
 
     if (state.phase === "bootstrap_jr") {
+      this.addDefenseRequests(room, state, requests, reaction);
+
       var desiredJrWorkers = config.CREEPS.jrWorkers;
       var currentBootJrWorkers = roleCounts.jrworker || 0;
       var queuedBootJrWorkers = this.countQueued(room, "jrworker");
@@ -144,6 +150,8 @@ module.exports = {
 
       return requests;
     }
+
+    this.addDefenseRequests(room, state, requests, reaction);
 
     var desiredWorkers = config.CREEPS.workers;
     var currentWorkers = roleCounts.worker || 0;
@@ -272,6 +280,46 @@ module.exports = {
     });
 
     return requests;
+  },
+
+  addDefenseRequests(room, state, requests, reaction) {
+    if (!reaction.ENABLED) return;
+
+    var defenseState =
+      state && state.defense ? state.defense : defenseManager.collect(room, state);
+    var threats = defenseState.activeThreats || [];
+
+    for (var i = 0; i < threats.length; i++) {
+      var threat = threats[i];
+      var existingDefenders = _.filter(
+        this.getRoleTargetRoomCreeps(state, "defender", threat.roomName),
+        function (creep) {
+          return (
+            creep.memory.role === "defender" &&
+            (creep.ticksToLive === undefined ||
+              creep.ticksToLive > reaction.REPLACE_TTL)
+          );
+        },
+      ).length;
+      var queuedDefenders = this.countQueuedForTargetRoom(
+        room,
+        "defender",
+        threat.roomName,
+      );
+
+      for (
+        var defenderIndex = existingDefenders + queuedDefenders;
+        defenderIndex < (threat.desiredDefenders || 0);
+        defenderIndex++
+      ) {
+        requests.push({
+          role: "defender",
+          priority: threat.priority,
+          targetRoom: threat.roomName,
+          homeRoom: room.name,
+        });
+      }
+    }
   },
 
   addRemoteReservationRequests(room, state, requests) {

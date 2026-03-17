@@ -171,6 +171,20 @@ module.exports = {
       5: 50000,
       6: 100000,
     },
+
+    // Developer note:
+    // Reactive defender spawning stays narrow in Phase 1:
+    // - owned rooms always defend when hostiles appear
+    // - configured remote rooms only escalate when active and threatened
+    REACTION: {
+      ENABLED: true,
+      REMOTE_ENABLED: true,
+      MAX_DEFENDERS_PER_ROOM: 2,
+      HOME_SPAWN_PRIORITY: 1100,
+      REMOTE_HOSTILE_PRIORITY: 95,
+      REMOTE_RESERVATION_PRIORITY: 85,
+      REPLACE_TTL: 90,
+    },
   },
 
   BODIES: {
@@ -266,6 +280,26 @@ module.exports = {
         sourcesById: {},
       },
       E12N32: {
+        enabled: true,
+        homeRoom: "E12N33",
+        phase: 1,
+        jrWorkers: 2,
+        remoteWorkers: 1,
+
+        reservation: {
+          enabled: true,
+          reservers: 1,
+          renewBelow: 2000,
+        },
+
+        sourceDefaults: {
+          miners: 1,
+          haulers: 1,
+        },
+
+        sourcesById: {},
+      },
+      E11N32: {
         enabled: true,
         homeRoom: "E12N33",
         phase: 1,

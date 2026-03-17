@@ -23,6 +23,7 @@ const roleMiner = require("role_miner");
 const roleHauler = require("role_hauler");
 const roleUpgrader = require("role_upgrader");
 const roleRepair = require("role_repair");
+const roleDefender = require("role_defender");
 
 module.exports = {
   run(room, state) {
@@ -74,6 +75,10 @@ module.exports = {
 
         case "repair":
           roleRepair.run(creep);
+          break;
+
+        case "defender":
+          roleDefender.run(creep, state);
           break;
       }
     }

@@ -222,12 +222,7 @@ module.exports = {
 
     const lines = [
       "vCORP // REMOTE // " + remoteRoom.name,
-      "PHASE " +
-        site.phase +
-        "   STATUS " +
-        summary.status +
-        "   " +
-        summary.threat,
+      "PHASE " + site.phase + "   STATUS " + summary.status + "   " + summary.threat,
       "RJ " +
         summary.remoteJrWorkers +
         "/" +
@@ -581,7 +576,9 @@ module.exports = {
       } else {
         // Stack each remote site's block so the mirrored home-room panel stays
         // readable without widening beyond the existing HUD footprint.
-        lines.push("ROOM:" + targetRoom);
+        lines.push(
+          "ROOM:" + targetRoom,
+        );
         lines.push(
           "   PHASE: " +
             String(site.phase || "").toUpperCase() +

@@ -24,6 +24,7 @@ Important Notes:
 
 const config = require("config");
 const constructionStatus = require("construction_status");
+const defenseManager = require("defense_manager");
 const logisticsManager = require("logistics_manager");
 const remoteManager = require("remote_manager");
 
@@ -125,6 +126,7 @@ module.exports = {
       finalState,
       finalState.remoteSites,
     );
+    finalState.defense = defenseManager.collect(room, finalState);
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
     finalState.buildStatus = constructionStatus.getStatus(room, finalState);
 

@@ -479,6 +479,23 @@ module.exports = {
     return getRuntimeCache(room).hostileCreeps.length > 0;
   },
 
+  isDefenseHostile(creep) {
+    if (!creep || !creep.owner || !creep.owner.username) return false;
+    return creep.owner.username !== "Source Keeper";
+  },
+
+  getDefenseHostiles(room, hostiles) {
+    var candidates = hostiles;
+
+    if (!candidates) {
+      candidates = room ? getRuntimeCache(room).hostileCreeps : [];
+    }
+
+    return _.filter(candidates, function (creep) {
+      return module.exports.isDefenseHostile(creep);
+    });
+  },
+
   getDefenseMaintenanceTargets(room) {
     return getDefenseMaintenanceTargets(room);
   },

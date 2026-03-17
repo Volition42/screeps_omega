@@ -24,7 +24,6 @@
     "recommendations": [
       "github.copilot-chat",
       "dbaeumer.vscode-eslint",
-      "rust-lang.rust-analyzer",
       "tamasfe.even-better-toml",
     ],
   },
