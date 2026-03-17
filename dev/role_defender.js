@@ -84,9 +84,18 @@ module.exports = {
   },
 
   getPriorityHostile(creep) {
-    var hostiles = utils.getDefenseHostiles(creep.room);
+    var hostiles = utils.getDefenseHostiles(
+      creep.room,
+      creep.room.find(FIND_HOSTILE_CREEPS),
+    );
 
     if (hostiles.length === 0) return null;
+
+    var controllerHostile = this.getControllerHostile(creep, hostiles);
+
+    if (controllerHostile) {
+      return controllerHostile;
+    }
 
     hostiles.sort(function (a, b) {
       var aClaim = a.getActiveBodyparts(CLAIM);
@@ -107,6 +116,42 @@ module.exports = {
     });
 
     return hostiles[0];
+  },
+
+  getControllerHostile(creep, hostiles) {
+    if (!creep.room.controller) return null;
+
+    var controller = creep.room.controller;
+    var hostileReservation = controller.reservation;
+    var hostileReservationUser = null;
+
+    if (hostileReservation && hostileReservation.username) {
+      hostileReservationUser = hostileReservation.username;
+    }
+
+    var claimers = _.filter(hostiles, function (hostile) {
+      if (hostile.getActiveBodyparts(CLAIM) <= 0) return false;
+      if (hostile.pos.getRangeTo(controller) > 3) return false;
+
+      if (hostileReservationUser) {
+        return hostile.owner && hostile.owner.username === hostileReservationUser;
+      }
+
+      return true;
+    });
+
+    if (claimers.length === 0) return null;
+
+    claimers.sort(function (a, b) {
+      var aRange = creep.pos.getRangeTo(a);
+      var bRange = creep.pos.getRangeTo(b);
+
+      if (aRange !== bRange) return aRange - bRange;
+
+      return a.hits - b.hits;
+    });
+
+    return claimers[0];
   },
 
   rally(creep, homeRoomName) {
