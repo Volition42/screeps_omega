@@ -46,13 +46,13 @@ module.exports = {
       return;
     }
 
-    var hostile = this.getPriorityHostile(creep);
+    var hostile = this.getPriorityHostile(creep, threat);
 
     if (hostile) {
       var attackResult = creep.attack(hostile);
 
       if (attackResult === ERR_NOT_IN_RANGE) {
-        creep.moveTo(hostile, MOVE_OPTIONS);
+        this.moveToTarget(creep, hostile);
       }
 
       return;
@@ -83,7 +83,7 @@ module.exports = {
     return cache && cache.state ? cache.state.defense || null : null;
   },
 
-  getPriorityHostile(creep) {
+  getPriorityHostile(creep, threat) {
     var hostiles = utils.getDefenseHostiles(
       creep.room,
       creep.room.find(FIND_HOSTILE_CREEPS),
@@ -91,7 +91,7 @@ module.exports = {
 
     if (hostiles.length === 0) return null;
 
-    var controllerHostile = this.getControllerHostile(creep, hostiles);
+    var controllerHostile = this.getControllerHostile(creep, hostiles, threat);
 
     if (controllerHostile) {
       return controllerHostile;
@@ -118,7 +118,7 @@ module.exports = {
     return hostiles[0];
   },
 
-  getControllerHostile(creep, hostiles) {
+  getControllerHostile(creep, hostiles, threat) {
     if (!creep.room.controller) return null;
 
     var controller = creep.room.controller;
@@ -129,15 +129,26 @@ module.exports = {
       hostileReservationUser = hostileReservation.username;
     }
 
+    var controllerThreatActive =
+      hostileReservationUser ||
+      (threat && threat.hostileReservation) ||
+      (threat && threat.claimParts > 0);
+
     var claimers = _.filter(hostiles, function (hostile) {
-      if (hostile.getActiveBodyparts(CLAIM) <= 0) return false;
-      if (hostile.pos.getRangeTo(controller) > 3) return false;
+      var nearController = hostile.pos.getRangeTo(controller) <= 4;
+      var hasClaim = hostile.getActiveBodyparts(CLAIM) > 0;
+
+      if (!nearController && !hasClaim) return false;
+
+      if (!controllerThreatActive) {
+        return nearController && hasClaim;
+      }
 
       if (hostileReservationUser) {
         return hostile.owner && hostile.owner.username === hostileReservationUser;
       }
 
-      return true;
+      return nearController || hasClaim;
     });
 
     if (claimers.length === 0) return null;
@@ -152,6 +163,14 @@ module.exports = {
     });
 
     return claimers[0];
+  },
+
+  moveToTarget(creep, target) {
+    creep.moveTo(target, {
+      reusePath: 0,
+      range: 1,
+      visualizePathStyle: { stroke: "#ff6b6b" },
+    });
   },
 
   rally(creep, homeRoomName) {

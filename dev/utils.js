@@ -480,8 +480,15 @@ module.exports = {
   },
 
   isDefenseHostile(creep) {
-    if (!creep || !creep.owner || !creep.owner.username) return false;
-    return creep.owner.username !== "Source Keeper";
+    if (!creep) return false;
+    if (creep.my) return false;
+
+    var username =
+      creep.owner && creep.owner.username ? creep.owner.username : null;
+
+    if (username === "Source Keeper") return false;
+
+    return true;
   },
 
   getDefenseHostiles(room, hostiles) {
