@@ -45,10 +45,15 @@ module.exports = {
       return;
     }
 
-    var hostile = this.getPriorityHostile(creep);
+    var hostile = this.getPriorityHostile(creep, threat);
 
     if (hostile) {
+      this.rememberTarget(creep, hostile);
       this.engageTarget(creep, hostile);
+      return;
+    }
+
+    if (this.holdLastThreatPosition(creep, threat)) {
       return;
     }
 
@@ -72,7 +77,13 @@ module.exports = {
     return cache && cache.state ? cache.state.defense || null : null;
   },
 
-  getPriorityHostile(creep) {
+  getPriorityHostile(creep, threat) {
+    var trackedTarget = this.getTrackedTarget(creep);
+
+    if (trackedTarget) {
+      return trackedTarget;
+    }
+
     var targets = utils.getDefenseIntruders(
       creep.room,
       creep.room.find(FIND_HOSTILE_CREEPS),
@@ -86,6 +97,23 @@ module.exports = {
 
     if (targets.length === 0) return null;
 
+    var structureTargets = _.filter(targets, function (target) {
+      return target && target.structureType === STRUCTURE_INVADER_CORE;
+    });
+    if (structureTargets.length > 0) {
+      return creep.pos.findClosestByRange(structureTargets);
+    }
+
+    if (threat && threat.claimPressure && creep.room.controller) {
+      var controllerTargets = _.filter(targets, function (target) {
+        return target && target.pos && target.pos.getRangeTo(creep.room.controller) <= 4;
+      });
+
+      if (controllerTargets.length > 0) {
+        return creep.pos.findClosestByRange(controllerTargets);
+      }
+    }
+
     var closestByPath = creep.pos.findClosestByPath(targets, {
       range: 3,
     });
@@ -97,6 +125,25 @@ module.exports = {
     });
 
     return targets[0];
+  },
+
+  getTrackedTarget(creep) {
+    var targetId = creep.memory.defenseTargetId;
+    if (!targetId) return null;
+
+    var target = Game.getObjectById(targetId);
+
+    if (
+      !target ||
+      !target.pos ||
+      target.pos.roomName !== creep.room.name ||
+      !this.isDefenseTarget(target)
+    ) {
+      this.clearTargetMemory(creep);
+      return null;
+    }
+
+    return target;
   },
 
   engageTarget(creep, target) {
@@ -130,6 +177,48 @@ module.exports = {
         visualizePathStyle: { stroke: "#ff9f43" },
       });
     }
+  },
+
+  holdLastThreatPosition(creep, threat) {
+    if (!threat || !threat.invasionActive) return false;
+
+    var lastPos = creep.memory.defenseTargetPos;
+    if (!lastPos || lastPos.roomName !== creep.room.name) return false;
+
+    var anchor = new RoomPosition(lastPos.x, lastPos.y, lastPos.roomName);
+    if (creep.pos.getRangeTo(anchor) > 3) {
+      creep.moveTo(anchor, {
+        reusePath: 0,
+        range: 3,
+        visualizePathStyle: { stroke: "#ff9f43" },
+      });
+    }
+
+    return true;
+  },
+
+  rememberTarget(creep, target) {
+    if (!target || !target.pos) return;
+
+    creep.memory.defenseTargetId = target.id || null;
+    creep.memory.defenseTargetPos = {
+      x: target.pos.x,
+      y: target.pos.y,
+      roomName: target.pos.roomName,
+    };
+  },
+
+  clearTargetMemory(creep) {
+    delete creep.memory.defenseTargetId;
+  },
+
+  isDefenseTarget(target) {
+    if (!target) return false;
+    if (target.structureType) {
+      return utils.isDefenseStructure(target);
+    }
+
+    return utils.isDefenseHostile(target);
   },
 
   isDangerousCreep(target) {

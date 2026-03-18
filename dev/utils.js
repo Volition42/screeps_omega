@@ -511,15 +511,38 @@ module.exports = {
   },
 
   getDefenseStructures(room, structures) {
-    var candidates = structures;
+    var groups = [];
+    var seen = {};
+    var results = [];
 
-    if (!candidates && room && typeof FIND_HOSTILE_STRUCTURES !== "undefined") {
-      candidates = room.find(FIND_HOSTILE_STRUCTURES);
+    if (structures && structures.length > 0) {
+      groups.push(structures);
     }
 
-    return _.filter(candidates || [], function (structure) {
-      return module.exports.isDefenseStructure(structure);
-    });
+    if (room) {
+      if (typeof FIND_HOSTILE_STRUCTURES !== "undefined") {
+        groups.push(room.find(FIND_HOSTILE_STRUCTURES));
+      }
+
+      groups.push(room.find(FIND_STRUCTURES));
+    }
+
+    for (var i = 0; i < groups.length; i++) {
+      var group = groups[i] || [];
+
+      for (var j = 0; j < group.length; j++) {
+        var structure = group[j];
+        var id = structure && structure.id ? structure.id : null;
+
+        if (!module.exports.isDefenseStructure(structure)) continue;
+        if (id && seen[id]) continue;
+        if (id) seen[id] = true;
+
+        results.push(structure);
+      }
+    }
+
+    return results;
   },
 
   getDefenseIntruders(room, hostiles, powerCreeps, structures) {

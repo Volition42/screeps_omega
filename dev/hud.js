@@ -157,6 +157,8 @@ module.exports = {
         (counts.reserver || 0) +
         " D:" +
         (counts.defender || 0) +
+        " RD:" +
+        (counts.rangeddefender || 0) +
         " W:" +
         (counts.worker || 0) +
         " M:" +
@@ -577,6 +579,8 @@ module.exports = {
             summary.remoteHaulers +
             " D " +
             summary.defenders +
+            " RD " +
+            summary.rangedDefenders +
             " " +
             summary.status,
         );
@@ -606,7 +610,9 @@ module.exports = {
             "/" +
             summary.desiredRemoteHaulers +
             " D: " +
-            summary.defenders,
+            summary.defenders +
+            " RD: " +
+            summary.rangedDefenders,
         );
         lines.push(
           "   BOX: " +
@@ -758,6 +764,8 @@ module.exports = {
         return "RV 🏳";
       case "defender":
         return "D ⚔";
+      case "rangeddefender":
+        return "RD 🏹";
       case "worker":
         return "W " + (creep.memory.working ? "🔧" : "⛏");
       case "miner":
@@ -789,6 +797,8 @@ module.exports = {
         return "#c77dff";
       case "defender":
         return "#ff6b6b";
+      case "rangeddefender":
+        return "#ff9f43";
       case "worker":
         return "#89ffb4";
       case "miner":
@@ -832,6 +842,8 @@ module.exports = {
         (counts.reserver || 0) +
         " D:" +
         (counts.defender || 0) +
+        " RD:" +
+        (counts.rangeddefender || 0) +
         " W:" +
         (counts.worker || 0) +
         " M:" +
@@ -879,6 +891,11 @@ module.exports = {
         remoteMiners: roleCounts.remoteminer || 0,
         remoteHaulers: roleCounts.remotehauler || 0,
         defenders: this.getRoleTargetRoomCount(state, "defender", targetRoom),
+        rangedDefenders: this.getRoleTargetRoomCount(
+          state,
+          "rangeddefender",
+          targetRoom,
+        ),
         desiredRemoteMiners: desiredRemoteMiners,
         desiredRemoteHaulers: desiredRemoteHaulers,
         reservers: roleCounts.reserver || 0,
