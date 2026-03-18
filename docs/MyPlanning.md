@@ -1,13 +1,12 @@
 ToDo:
 
-1. Build the logic needed for RCL:5-6
-2. Defense escalation system
-4. Automatic expansion layout planner for controlling more rooms
-5. Empire manager (multi-room)
-6. Start looking into Market stuff
-
-
-
+1. Build the logic needed for RCL:5
+2. Build the logic needed for RCL:6
+3. Build the logic needed for RCL:7
+4. Build the logic needed for RCL:8
+5. Automatic expansion layout planner for controlling more rooms
+6. Empire manager (multi-room)
+7. Start looking into Market stuff
 
 New project packet:
 
@@ -18,17 +17,18 @@ Branch: main
 Automation Level: 4
 
 Human Approval Gates:
+
 - Planning approval required before edits: no
 - Human review required before commit: no
 - Human review required before push: yes
 
-
 Task Type: feature expansion
-Task Title: Defense escalation system
+Task Title: Build the logic needed for RCL:5-6
 
-Objective: Invaders are coming and we need to be prepared. Devise a plan to update our creeps for defence and attack. These new creeps need to defend home and remote rooms. If an invader is reserving/claiming one of our rooms we should attack it to defend the room. Defence creeps should scale with energy just like other creeps, but appropriatly for this function. I'm not interested in driving new attacks, but reacting to invaders as they come into my rooms.
+Objective: Discover what constructuion, utility, creep parts, advancements, etc we get in RCL:5-6 and plan the integration of those into our current logic. Review the former RCL's and validate our code still aligns with our goals and trim extras that are not needed. Keep a close eye on cpu costs and ensure we are not bloating the usage per tick, room management is the largest consumer of cpu per tick.
 
 Constraints:
+
 - Approval-friendly scope only
 - No unrelated refactors
 - No broad architecture rewrite
@@ -37,6 +37,7 @@ Constraints:
 - Add concise developer notes where logic materially changes
 
 Relevant Architecture Notes:
+
 - dev/\* is for devdelopment
 - release/\* is for syncing changes from dev/ and live testing
 - docs/\* is for reference documentation
