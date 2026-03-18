@@ -392,9 +392,9 @@ module.exports = {
         },
 
         sourcesById: {},
-      } /*
+      },
       E13N32: {
-        enabled: true,
+        enabled: false,
         homeRoom: "E12N33",
         phase: 1,
         jrWorkers: 2,
@@ -414,7 +414,7 @@ module.exports = {
         sourcesById: {},
       },
       E11N32: {
-        enabled: true,
+        enabled: false,
         homeRoom: "E12N33",
         phase: 1,
         jrWorkers: 2,
@@ -433,7 +433,6 @@ module.exports = {
 
         sourcesById: {},
       },
-      */,
     },
   },
 };
