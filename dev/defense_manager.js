@@ -71,6 +71,10 @@ module.exports = {
         return b.hostileCount - a.hostileCount;
       }
 
+      if (a.threatScore !== b.threatScore) {
+        return b.threatScore - a.threatScore;
+      }
+
       return a.roomName.localeCompare(b.roomName);
     });
 
@@ -95,11 +99,21 @@ module.exports = {
     var defaults = {
       ENABLED: true,
       REMOTE_ENABLED: true,
-      MAX_DEFENDERS_PER_ROOM: 2,
+      MAX_DEFENDERS_PER_ROOM: 4,
       HOME_SPAWN_PRIORITY: 1100,
       REMOTE_HOSTILE_PRIORITY: 95,
+      REMOTE_STRUCTURE_PRIORITY: 100,
       REMOTE_RESERVATION_PRIORITY: 85,
       REPLACE_TTL: 90,
+      SCORE_PER_DEFENDER: 5,
+      HOSTILE_CREEP_BASE_SCORE: 1,
+      ATTACK_PART_SCORE: 1,
+      RANGED_PART_SCORE: 1,
+      HEAL_PART_SCORE: 2,
+      CLAIM_PART_SCORE: 2,
+      INVADER_CORE_BASE_SCORE: 4,
+      INVADER_CORE_LEVEL_SCORE: 2,
+      INVADER_CORE_HITS_STEP: 100000,
     };
 
     return Object.assign(defaults, config.DEFENSE && config.DEFENSE.REACTION);
@@ -180,9 +194,12 @@ module.exports = {
       : [];
     var hostileReservation = this.hasHostileReservation(site, remoteRoom, homeRoom);
     var claimPressure = this.hasClaimPressure(hostiles);
+    var structureThreat = this.hasStructureThreat(hostiles);
     var type = hostileReservation && hostiles.length === 0 ? "reservation" : "hostiles";
     var priority =
-      hostiles.length > 0 || claimPressure
+      structureThreat
+        ? reaction.REMOTE_STRUCTURE_PRIORITY
+        : hostiles.length > 0 || claimPressure
         ? reaction.REMOTE_HOSTILE_PRIORITY
         : reaction.REMOTE_RESERVATION_PRIORITY;
 
@@ -193,13 +210,24 @@ module.exports = {
       priority: priority,
       hostiles: hostiles,
       hostileReservation: hostileReservation,
+      reaction: reaction,
       desiredDefenders: this.getDesiredDefenderCount(
         hostiles,
         hostileReservation,
-        reaction.MAX_DEFENDERS_PER_ROOM,
+        reaction,
       ),
       visible: !!remoteRoom,
     });
+  },
+
+  hasStructureThreat(hostiles) {
+    for (var i = 0; i < hostiles.length; i++) {
+      if (hostiles[i] && hostiles[i].structureType) {
+        return true;
+      }
+    }
+
+    return false;
   },
 
   hasHostileReservation(site, remoteRoom, homeRoom) {
@@ -227,45 +255,82 @@ module.exports = {
     return false;
   },
 
-  getDesiredDefenderCount(hostiles, hostileReservation, maxDefenders) {
+  getDesiredDefenderCount(hostiles, hostileReservation, reaction) {
     if (!hostiles || hostiles.length === 0) {
       return hostileReservation ? 1 : 0;
     }
 
-    var combatParts = 0;
-    var healParts = 0;
-    var claimParts = 0;
+    var threatScore = this.getThreatScore(hostiles, hostileReservation, reaction);
+    var scorePerDefender = Math.max(1, reaction.SCORE_PER_DEFENDER || 5);
+    var desired = Math.ceil(threatScore / scorePerDefender);
+
+    return Math.min(reaction.MAX_DEFENDERS_PER_ROOM || 4, Math.max(1, desired));
+  },
+
+  getThreatScore(hostiles, hostileReservation, reaction) {
+    var score = hostileReservation ? 2 : 0;
 
     for (var i = 0; i < hostiles.length; i++) {
-      combatParts += getActiveBodyparts(hostiles[i], ATTACK);
-      combatParts += getActiveBodyparts(hostiles[i], RANGED_ATTACK);
-      healParts += getActiveBodyparts(hostiles[i], HEAL);
-      claimParts += getActiveBodyparts(hostiles[i], CLAIM);
+      score += this.getTargetThreatScore(hostiles[i], reaction);
     }
 
-    var desired = 1;
+    return Math.max(score, hostiles.length > 0 ? 1 : 0);
+  },
 
-    if (
-      hostiles.length >= 3 ||
-      combatParts >= 6 ||
-      healParts >= 2 ||
-      claimParts >= 2
-    ) {
-      desired++;
+  getTargetThreatScore(target, reaction) {
+    if (!target) return 0;
+
+    if (target.structureType === STRUCTURE_INVADER_CORE) {
+      return this.getInvaderCoreThreatScore(target, reaction);
     }
 
-    return Math.min(maxDefenders || 2, desired);
+    if (typeof target.getActiveBodyparts === "function") {
+      return (
+        (reaction.HOSTILE_CREEP_BASE_SCORE || 1) +
+        getActiveBodyparts(target, ATTACK) * (reaction.ATTACK_PART_SCORE || 1) +
+        getActiveBodyparts(target, RANGED_ATTACK) *
+          (reaction.RANGED_PART_SCORE || 1) +
+        getActiveBodyparts(target, HEAL) * (reaction.HEAL_PART_SCORE || 2) +
+        getActiveBodyparts(target, CLAIM) * (reaction.CLAIM_PART_SCORE || 2)
+      );
+    }
+
+    return 1;
+  },
+
+  getInvaderCoreThreatScore(target, reaction) {
+    var score = reaction.INVADER_CORE_BASE_SCORE || 4;
+    var level = typeof target.level === "number" ? target.level : 0;
+    var hitsStep = Math.max(1, reaction.INVADER_CORE_HITS_STEP || 100000);
+    var hitsScore =
+      typeof target.hits === "number" && target.hits > 0
+        ? Math.max(0, Math.ceil(target.hits / hitsStep) - 1)
+        : 0;
+
+    score += level * (reaction.INVADER_CORE_LEVEL_SCORE || 2);
+    score += hitsScore;
+
+    return score;
   },
 
   createThreatDescriptor(details) {
     var hostiles = details.hostiles || [];
     var combatParts = 0;
     var claimParts = 0;
+    var structureCount = 0;
+    var threatScore = this.getThreatScore(
+      hostiles,
+      details.hostileReservation === true,
+      details.reaction || this.getReactionConfig(),
+    );
 
     for (var i = 0; i < hostiles.length; i++) {
       combatParts += getActiveBodyparts(hostiles[i], ATTACK);
       combatParts += getActiveBodyparts(hostiles[i], RANGED_ATTACK);
       claimParts += getActiveBodyparts(hostiles[i], CLAIM);
+      if (hostiles[i] && hostiles[i].structureType) {
+        structureCount++;
+      }
     }
 
     var active =
@@ -282,8 +347,14 @@ module.exports = {
       visible: details.visible === true,
       hostiles: hostiles,
       hostileCount: hostiles.length,
+      structureCount: structureCount,
       combatParts: combatParts,
       claimParts: claimParts,
+      threatScore: threatScore,
+      threatLevel: Math.min(
+        4,
+        Math.max(1, details.desiredDefenders || 0, Math.ceil(threatScore / 5)),
+      ),
       hostileReservation: details.hostileReservation === true,
       desiredDefenders: active ? details.desiredDefenders || 1 : 0,
       label: this.getThreatLabel(details.scope, hostiles.length, details.hostileReservation),
