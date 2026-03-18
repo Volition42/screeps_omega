@@ -72,7 +72,7 @@ function deserializePos(pos) {
 }
 
 module.exports = {
-  getHomeRoomSites(homeRoomName, state) {
+  getHomeRoomSites(homeRoomName, state, profiler, labelPrefix) {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return [];
 
     const sites = config.REMOTE_MINING.SITES || {};
@@ -85,7 +85,21 @@ module.exports = {
       if (!site || !site.enabled) continue;
       if (site.homeRoom !== homeRoomName) continue;
 
-      results.push(this.enrichSite(this.normalizeSite(targetRoom, site), state));
+      var normalized = this.normalizeSite(targetRoom, site);
+
+      if (profiler && labelPrefix) {
+        results.push(
+          profiler.wrap(
+            `${labelPrefix}.remote.${targetRoom}`,
+            this.enrichSite,
+            this,
+            normalized,
+            state,
+          ),
+        );
+      } else {
+        results.push(this.enrichSite(normalized, state));
+      }
     }
 
     results.sort(function (a, b) {

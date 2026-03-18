@@ -29,7 +29,7 @@ const logisticsManager = require("logistics_manager");
 const remoteManager = require("remote_manager");
 
 module.exports = {
-  collect(room) {
+  collect(room, profiler, roomLabelPrefix) {
     var creeps = room.find(FIND_MY_CREEPS);
     var homeCreeps = this.getHomeCreeps(room.name);
     var spawns = room.find(FIND_MY_SPAWNS);
@@ -120,7 +120,18 @@ module.exports = {
 
     var finalState = this.createState(sharedState, phase);
 
-    finalState.remoteSites = remoteManager.getHomeRoomSites(room.name, finalState);
+    finalState.remoteSites =
+      profiler && roomLabelPrefix
+        ? profiler.wrap(
+            roomLabelPrefix + ".state.remoteSites",
+            remoteManager.getHomeRoomSites,
+            remoteManager,
+            room.name,
+            finalState,
+            profiler,
+            roomLabelPrefix + ".state",
+          )
+        : remoteManager.getHomeRoomSites(room.name, finalState);
     finalState.remotePlan = remoteManager.getHomeRoomPlan(
       room,
       finalState,

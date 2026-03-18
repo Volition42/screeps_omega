@@ -25,7 +25,7 @@ const roadmap = require("construction_roadmap");
 const stamps = require("stamp_library");
 
 module.exports = {
-  plan(room, state) {
+  plan(room, state, profiler, roomLabelPrefix) {
     var mem = this.getRoomConstructionMemory(room);
     if (!mem.lastPlan) mem.lastPlan = 0;
 
@@ -84,7 +84,7 @@ module.exports = {
       }
     }
 
-    this.planRemoteSites(room, state);
+    this.planRemoteSites(room, state, profiler, roomLabelPrefix);
   },
 
   getRoomConstructionMemory(room) {
@@ -862,7 +862,7 @@ module.exports = {
     }
   },
 
-  planRemoteSites(homeRoom, state) {
+  planRemoteSites(homeRoom, state, profiler, roomLabelPrefix) {
     var remoteSites = state.remoteSites || [];
     if (remoteSites.length === 0) return;
 
@@ -893,9 +893,21 @@ module.exports = {
 
       remoteMemory.lastPlan = Game.time;
 
-      var context = this.createRemotePlanContext(homeRoom, state, site);
-      this.placeRemoteSourceContainers(context);
-      this.placeRemoteRoads(context);
+      var runRemotePlan = function () {
+        var context = this.createRemotePlanContext(homeRoom, state, site);
+        this.placeRemoteSourceContainers(context);
+        this.placeRemoteRoads(context);
+      };
+
+      if (profiler && roomLabelPrefix) {
+        profiler.wrap(
+          `${roomLabelPrefix}.construction.remote.${site.targetRoom}`,
+          runRemotePlan,
+          this,
+        );
+      } else {
+        runRemotePlan.call(this);
+      }
     }
   },
 

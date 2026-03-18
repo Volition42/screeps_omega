@@ -216,6 +216,16 @@ module.exports = {
     maxTierEnergy: 800,
   },
 
+  STATS: {
+    // Developer note:
+    // CPU console reporting modes:
+    // - off: no CPU console output
+    // - overview: top-level sections only
+    // - detail: top-level sections plus per-room and per-remote breakdowns
+    CPU_CONSOLE_MODE: "overview",
+    CPU_PRINT_INTERVAL: 25,
+  },
+
   DIRECTIVES: {
     // Developer note:
     // Controls how often the corporate directive system logs updates.

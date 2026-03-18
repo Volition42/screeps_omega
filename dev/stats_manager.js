@@ -1,3 +1,5 @@
+const config = require("config");
+
 /*
 Developer Note:
 Rolling CPU / colony stats recorder.
@@ -42,7 +44,9 @@ module.exports = {
   },
 
   print(snapshot) {
-    if (Game.time % 25 !== 0) return;
+    var mode = this.getCpuConsoleMode();
+    if (mode === "off") return;
+    if (Game.time % this.getCpuPrintInterval() !== 0) return;
 
     const avgCpu =
       Memory.stats &&
@@ -56,17 +60,145 @@ module.exports = {
         `avg=${avgCpu.toFixed(3)} bucket=${snapshot.cpu.bucket} creeps=${Object.keys(Game.creeps).length}`,
     );
 
-    const sectionParts = [];
     const sections = snapshot.sections || {};
+    const overviewSections = this.getOverviewSections(sections);
+    const sectionParts = [];
 
-    for (const label in sections) {
-      const section = sections[label];
+    for (const label in overviewSections) {
+      const section = overviewSections[label];
       sectionParts.push(`${label}:${section.total}`);
     }
 
     if (sectionParts.length > 0) {
       console.log(`[CPU:sections] ${sectionParts.join(" | ")}`);
     }
+
+    if (mode !== "detail") return;
+
+    this.printDetailedSections(sections);
+  },
+
+  getCpuConsoleMode() {
+    return config.STATS && config.STATS.CPU_CONSOLE_MODE
+      ? config.STATS.CPU_CONSOLE_MODE
+      : "overview";
+  },
+
+  getCpuPrintInterval() {
+    return config.STATS && config.STATS.CPU_PRINT_INTERVAL
+      ? config.STATS.CPU_PRINT_INTERVAL
+      : 25;
+  },
+
+  getOverviewSections(sections) {
+    const overview = {};
+
+    for (const label in sections) {
+      if (!Object.prototype.hasOwnProperty.call(sections, label)) continue;
+
+      const parts = label.split(".");
+      if (
+        parts.length <= 2 ||
+        (parts.length === 2 && parts[0] === "room")
+      ) {
+        overview[label] = sections[label];
+      }
+    }
+
+    return overview;
+  },
+
+  printDetailedSections(sections) {
+    const grouped = this.groupDetailedSections(sections);
+
+    for (const roomName in grouped) {
+      if (!Object.prototype.hasOwnProperty.call(grouped, roomName)) continue;
+
+      const roomGroup = grouped[roomName];
+      const parts = [];
+
+      if (roomGroup.total) {
+        parts.push(`total:${roomGroup.total.toFixed(3)}`);
+      }
+
+      for (let i = 0; i < roomGroup.steps.length; i++) {
+        parts.push(`${roomGroup.steps[i].label}:${roomGroup.steps[i].total.toFixed(3)}`);
+      }
+
+      if (parts.length > 0) {
+        console.log(`[CPU:room ${roomName}] ${parts.join(" | ")}`);
+      }
+
+      if (roomGroup.remotes.length > 0) {
+        const remoteParts = [];
+
+        for (let i = 0; i < roomGroup.remotes.length; i++) {
+          remoteParts.push(
+            `${roomGroup.remotes[i].label}:${roomGroup.remotes[i].total.toFixed(3)}`,
+          );
+        }
+
+        console.log(`[CPU:remotes ${roomName}] ${remoteParts.join(" | ")}`);
+      }
+    }
+  },
+
+  groupDetailedSections(sections) {
+    const grouped = {};
+
+    for (const label in sections) {
+      if (!Object.prototype.hasOwnProperty.call(sections, label)) continue;
+      if (label.indexOf("room.") !== 0) continue;
+
+      const parts = label.split(".");
+      const roomName = parts[1];
+
+      if (!grouped[roomName]) {
+        grouped[roomName] = {
+          total: null,
+          steps: [],
+          remotes: [],
+        };
+      }
+
+      if (parts.length === 2) {
+        grouped[roomName].total = sections[label].total;
+        continue;
+      }
+
+      const detailLabel = parts.slice(2).join(".");
+      const row = {
+        label: detailLabel,
+        total: sections[label].total,
+      };
+
+      if (parts[2] === "state" && parts[3] === "remote") {
+        row.label = parts[4];
+        grouped[roomName].remotes.push(row);
+        continue;
+      }
+
+      if (parts[2] === "construction" && parts[3] === "remote") {
+        row.label = `plan.${parts[4]}`;
+        grouped[roomName].remotes.push(row);
+        continue;
+      }
+
+      grouped[roomName].steps.push(row);
+    }
+
+    for (const roomName in grouped) {
+      if (!Object.prototype.hasOwnProperty.call(grouped, roomName)) continue;
+
+      grouped[roomName].steps.sort(function (a, b) {
+        return b.total - a.total;
+      });
+      grouped[roomName].remotes.sort(function (a, b) {
+        return b.total - a.total;
+      });
+    }
+
+    return grouped;
   },
 
   getOwnedRoomCount() {
