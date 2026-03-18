@@ -202,7 +202,12 @@ module.exports = {
             : [],
         )
       : [];
-    var hostileReservation = this.hasHostileReservation(site, remoteRoom, homeRoom);
+    var hostileReservation = this.hasHostileReservation(
+      site,
+      remoteRoom,
+      homeRoom,
+      hostiles,
+    );
     var classification = this.classifyThreat(
       "remote",
       hostiles,
@@ -280,12 +285,16 @@ module.exports = {
     return false;
   },
 
-  hasHostileReservation(site, remoteRoom, homeRoom) {
+  hasHostileReservation(site, remoteRoom, homeRoom, hostiles) {
     if (remoteRoom && remoteRoom.controller && remoteRoom.controller.reservation) {
       var reservation = remoteRoom.controller.reservation;
       var myUsername = this.getMyUsername(homeRoom);
 
-      return !!myUsername && reservation.username !== myUsername;
+      if (!myUsername || reservation.username === myUsername) {
+        return false;
+      }
+
+      return this.hasClaimPressure(hostiles || []);
     }
 
     return !!(

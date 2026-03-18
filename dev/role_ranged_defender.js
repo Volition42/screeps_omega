@@ -31,6 +31,7 @@ module.exports = {
     );
 
     if (!threat || threat.scope !== "remote") {
+      this.clearTargetMemory(creep);
       creep.memory.targetRoom = homeRoomName;
       creep.memory.defenseType = "clear";
       this.rallyHome(creep, homeRoomName);
@@ -210,6 +211,7 @@ module.exports = {
 
   clearTargetMemory(creep) {
     delete creep.memory.defenseTargetId;
+    delete creep.memory.defenseTargetPos;
   },
 
   isDefenseTarget(target) {

@@ -236,7 +236,16 @@ module.exports = {
     var sources = room.find(FIND_SOURCES);
     var structures = room.find(FIND_STRUCTURES);
     var sites = room.find(FIND_CONSTRUCTION_SITES);
-    var hostiles = room.find(FIND_HOSTILE_CREEPS);
+    var hostiles = utils.getDefenseIntruders(
+      room,
+      room.find(FIND_HOSTILE_CREEPS),
+      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+        ? room.find(FIND_HOSTILE_POWER_CREEPS)
+        : [],
+      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+        ? room.find(FIND_HOSTILE_STRUCTURES)
+        : [],
+    );
     var structuresByType = groupObjectsByType(structures);
     var sitesByType = groupObjectsByType(sites);
     var sourceContainers = _.filter(
