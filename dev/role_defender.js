@@ -145,7 +145,10 @@ module.exports = {
       (threat && threat.hostileReservation) ||
       (threat && threat.claimParts > 0);
 
-    var claimers = _.filter(hostiles, function (hostile) {
+    var controllerIntruders = this.getControllerIntruders(creep.room, controller);
+    var candidates = this.mergeTargets(hostiles, controllerIntruders);
+
+    var claimers = _.filter(candidates, function (hostile) {
       var nearController = hostile.pos.getRangeTo(controller) <= 4;
       var hasClaim = this.getActiveBodyparts(hostile, CLAIM) > 0;
 
@@ -180,6 +183,50 @@ module.exports = {
     });
 
     return claimers[0];
+  },
+
+  getControllerIntruders(room, controller) {
+    var hostileCreeps = _.filter(room.find(FIND_CREEPS), function (candidate) {
+      if (!candidate || !candidate.pos) return false;
+      if (candidate.pos.getRangeTo(controller) > 4) return false;
+
+      return utils.isDefenseHostile(candidate);
+    });
+    var hostilePowerCreeps = [];
+
+    if (typeof FIND_POWER_CREEPS !== "undefined") {
+      hostilePowerCreeps = _.filter(
+        room.find(FIND_POWER_CREEPS),
+        function (candidate) {
+          if (!candidate || !candidate.pos) return false;
+          if (candidate.pos.getRangeTo(controller) > 4) return false;
+
+          return utils.isDefenseHostile(candidate);
+        },
+      );
+    }
+
+    return hostileCreeps.concat(hostilePowerCreeps);
+  },
+
+  mergeTargets(primary, secondary) {
+    var byId = {};
+    var merged = [];
+    var groups = [primary || [], secondary || []];
+
+    for (var i = 0; i < groups.length; i++) {
+      for (var j = 0; j < groups[i].length; j++) {
+        var target = groups[i][j];
+        var id = target && target.id ? target.id : null;
+
+        if (id && byId[id]) continue;
+        if (id) byId[id] = true;
+
+        merged.push(target);
+      }
+    }
+
+    return merged;
   },
 
   moveToTarget(creep, target) {
