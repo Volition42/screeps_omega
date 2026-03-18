@@ -59,6 +59,9 @@ module.exports = {
       case "defender":
         return this.getDefenderBody(energyCapacity, threatLevel);
 
+      case "rangeddefender":
+        return this.getRangedDefenderBody(energyCapacity, threatLevel);
+
       default:
         return [WORK, CARRY, MOVE];
     }
@@ -185,11 +188,14 @@ module.exports = {
         TOUGH,
         TOUGH,
         TOUGH,
+        TOUGH,
         ATTACK,
         ATTACK,
         ATTACK,
         ATTACK,
         ATTACK,
+        ATTACK,
+        MOVE,
         MOVE,
         MOVE,
         MOVE,
@@ -207,6 +213,8 @@ module.exports = {
         ATTACK,
         ATTACK,
         ATTACK,
+        ATTACK,
+        MOVE,
         MOVE,
         MOVE,
         MOVE,
@@ -216,7 +224,7 @@ module.exports = {
     }
 
     if (energyCapacity >= 590) {
-      return [TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE];
+      return [TOUGH, ATTACK, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE];
     }
 
     if (energyCapacity >= 430) {
@@ -224,5 +232,43 @@ module.exports = {
     }
 
     return [ATTACK, MOVE, MOVE];
+  },
+
+  getRangedDefenderBody(energyCapacity, threatLevel) {
+    if (energyCapacity >= 950 && threatLevel >= 3) {
+      return [
+        TOUGH,
+        TOUGH,
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ];
+    }
+
+    if (energyCapacity >= 760 && threatLevel >= 2) {
+      return [
+        TOUGH,
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ];
+    }
+
+    if (energyCapacity >= 560) {
+      return [RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE, MOVE];
+    }
+
+    return [RANGED_ATTACK, MOVE, MOVE];
   },
 };

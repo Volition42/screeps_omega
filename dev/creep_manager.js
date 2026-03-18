@@ -10,7 +10,7 @@ Purpose:
 Important Notes:
 - Remote creeps still use memory.room as their home room
 - That allows the home room manager to continue owning their logic
-- Non-defender creeps now yield to the room defense state and retreat before
+- Non-defense creeps now yield to the room defense state and retreat before
   their normal role logic runs
 */
 
@@ -27,6 +27,7 @@ const roleHauler = require("role_hauler");
 const roleUpgrader = require("role_upgrader");
 const roleRepair = require("role_repair");
 const roleDefender = require("role_defender");
+const roleRangedDefender = require("role_ranged_defender");
 const utils = require("utils");
 
 const RETREAT_MOVE_OPTIONS = {
@@ -92,13 +93,22 @@ module.exports = {
         case "defender":
           roleDefender.run(creep, state);
           break;
+
+        case "rangeddefender":
+          roleRangedDefender.run(creep, state);
+          break;
       }
     }
   },
 
   runDefenseRetreat(creep, state) {
     if (!state || !state.defense || !state.defense.hasThreats) return false;
-    if (creep.memory.role === "defender") return false;
+    if (
+      creep.memory.role === "defender" ||
+      creep.memory.role === "rangeddefender"
+    ) {
+      return false;
+    }
 
     const homeRoomName = creep.memory.homeRoom || creep.memory.room || state.roomName;
     const currentThreat = defenseManager.getThreatByRoom(

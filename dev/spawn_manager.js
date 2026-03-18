@@ -106,7 +106,9 @@ module.exports = {
     var reaction = defenseManager.getReactionConfig();
 
     if (this.needsRecovery(state)) {
-      this.addDefenseRequests(room, state, requests, reaction);
+      this.addDefenseRequests(room, state, requests, reaction, {
+        homeOnly: true,
+      });
 
       var recoveryTarget = this.getRecoveryJrWorkerTarget(room, state);
       var currentJrWorkers = roleCounts.jrworker || 0;
@@ -131,7 +133,9 @@ module.exports = {
     }
 
     if (state.phase === "bootstrap_jr") {
-      this.addDefenseRequests(room, state, requests, reaction);
+      this.addDefenseRequests(room, state, requests, reaction, {
+        homeOnly: true,
+      });
 
       var desiredJrWorkers = config.CREEPS.jrWorkers;
       var currentBootJrWorkers = roleCounts.jrworker || 0;
@@ -155,7 +159,9 @@ module.exports = {
       return requests;
     }
 
-    this.addDefenseRequests(room, state, requests, reaction);
+    this.addDefenseRequests(room, state, requests, reaction, {
+      homeOnly: false,
+    });
 
     var desiredWorkers = config.CREEPS.workers;
     var currentWorkers = roleCounts.worker || 0;
@@ -286,20 +292,33 @@ module.exports = {
     return requests;
   },
 
-  addDefenseRequests(room, state, requests, reaction) {
+  addDefenseRequests(room, state, requests, reaction, options) {
     if (!reaction.ENABLED) return;
 
     var defenseState =
       state && state.defense ? state.defense : defenseManager.collect(room, state);
     var threats = defenseState.activeThreats || [];
+    var settings = options || {};
+    var defenseMemory = this.getDefenseSpawnMemory(room);
+
+    this.pruneStaleDefenseLocks(defenseMemory, reaction);
 
     for (var i = 0; i < threats.length; i++) {
       var threat = threats[i];
+      var role = threat.responseRole || "defender";
+      var cooldown = threat.spawnCooldown || 0;
+      var requestKey = this.getDefenseRequestKey(role, threat.roomName);
+      var activeLock = defenseMemory.spawnLocks[requestKey] || null;
+
+      if (settings.homeOnly && threat.scope !== "home") {
+        continue;
+      }
+
       var existingDefenders = _.filter(
-        this.getRoleTargetRoomCreeps(state, "defender", threat.roomName),
+        this.getRoleTargetRoomCreeps(state, role, threat.roomName),
         function (creep) {
           return (
-            creep.memory.role === "defender" &&
+            creep.memory.role === role &&
             (creep.ticksToLive === undefined ||
               creep.ticksToLive > reaction.REPLACE_TTL)
           );
@@ -307,23 +326,44 @@ module.exports = {
       ).length;
       var queuedDefenders = this.countQueuedForTargetRoom(
         room,
-        "defender",
+        role,
         threat.roomName,
       );
+      var plannedDefenders = 0;
+
+      if (
+        activeLock &&
+        Game.time - activeLock.lastSeen <= (reaction.THREAT_MEMORY_TTL || 25)
+      ) {
+        activeLock.lastSeen = Game.time;
+      }
 
       for (
         var defenderIndex = existingDefenders + queuedDefenders;
         defenderIndex < (threat.desiredDefenders || 0);
         defenderIndex++
       ) {
+        if (
+          plannedDefenders > 0 ||
+          !this.canQueueDefenseSpawn(defenseMemory, requestKey, cooldown)
+        ) {
+          break;
+        }
+
         requests.push({
-          role: "defender",
+          role: role,
           priority: threat.priority,
           threatLevel: threat.threatLevel || 1,
           threatScore: threat.threatScore || 0,
           targetRoom: threat.roomName,
           homeRoom: room.name,
         });
+
+        plannedDefenders++;
+        defenseMemory.spawnLocks[requestKey] = {
+          lastQueued: Game.time,
+          lastSeen: Game.time,
+        };
       }
     }
   },
@@ -764,5 +804,50 @@ module.exports = {
     return _.filter(queue, function (item) {
       return item.role === role && item.targetRoom === targetRoom;
     }).length;
+  },
+
+  getDefenseSpawnMemory(room) {
+    if (!Memory.rooms) Memory.rooms = {};
+    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+    if (!Memory.rooms[room.name].defense) {
+      Memory.rooms[room.name].defense = {};
+    }
+    if (!Memory.rooms[room.name].defense.spawnLocks) {
+      Memory.rooms[room.name].defense.spawnLocks = {};
+    }
+
+    return Memory.rooms[room.name].defense;
+  },
+
+  getDefenseRequestKey(role, targetRoom) {
+    return role + ":" + targetRoom;
+  },
+
+  canQueueDefenseSpawn(defenseMemory, requestKey, cooldown) {
+    if (!cooldown || cooldown <= 0) return true;
+
+    var lock = defenseMemory.spawnLocks[requestKey];
+    if (!lock || typeof lock.lastQueued !== "number") return true;
+
+    return Game.time - lock.lastQueued >= cooldown;
+  },
+
+  pruneStaleDefenseLocks(defenseMemory, reaction) {
+    var locks = defenseMemory.spawnLocks || {};
+    var ttl = Math.max(reaction.THREAT_MEMORY_TTL || 25, reaction.REPLACE_TTL || 90);
+
+    for (var key in locks) {
+      if (!Object.prototype.hasOwnProperty.call(locks, key)) continue;
+
+      var lock = locks[key];
+      var lastSeen = lock && typeof lock.lastSeen === "number" ? lock.lastSeen : 0;
+      var lastQueued =
+        lock && typeof lock.lastQueued === "number" ? lock.lastQueued : 0;
+      var anchor = Math.max(lastSeen, lastQueued);
+
+      if (Game.time - anchor > ttl) {
+        delete locks[key];
+      }
+    }
   },
 };
