@@ -16,6 +16,9 @@ module.exports = {
       typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
         ? room.find(FIND_HOSTILE_POWER_CREEPS)
         : [],
+      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+        ? room.find(FIND_HOSTILE_STRUCTURES)
+        : [],
     );
     const roomCreeps = state && state.creeps ? state.creeps : cache.creeps;
     const injured = _.filter(roomCreeps, function (creep) {

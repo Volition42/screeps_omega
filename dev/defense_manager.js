@@ -18,6 +18,14 @@ const config = require("config");
 const remoteManager = require("remote_manager");
 const utils = require("utils");
 
+function getActiveBodyparts(target, partType) {
+  if (!target || typeof target.getActiveBodyparts !== "function") {
+    return 0;
+  }
+
+  return target.getActiveBodyparts(partType);
+}
+
 module.exports = {
   collect(room, state) {
     var reaction = this.getReactionConfig();
@@ -104,6 +112,9 @@ module.exports = {
       typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
         ? room.find(FIND_HOSTILE_POWER_CREEPS)
         : [],
+      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+        ? room.find(FIND_HOSTILE_STRUCTURES)
+        : [],
     );
 
     return this.createThreatDescriptor({
@@ -162,6 +173,9 @@ module.exports = {
           typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
             ? remoteRoom.find(FIND_HOSTILE_POWER_CREEPS)
             : [],
+          typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+            ? remoteRoom.find(FIND_HOSTILE_STRUCTURES)
+            : [],
         )
       : [];
     var hostileReservation = this.hasHostileReservation(site, remoteRoom, homeRoom);
@@ -205,7 +219,7 @@ module.exports = {
 
   hasClaimPressure(hostiles) {
     for (var i = 0; i < hostiles.length; i++) {
-      if (hostiles[i].getActiveBodyparts(CLAIM) > 0) {
+      if (getActiveBodyparts(hostiles[i], CLAIM) > 0) {
         return true;
       }
     }
@@ -223,10 +237,10 @@ module.exports = {
     var claimParts = 0;
 
     for (var i = 0; i < hostiles.length; i++) {
-      combatParts += hostiles[i].getActiveBodyparts(ATTACK);
-      combatParts += hostiles[i].getActiveBodyparts(RANGED_ATTACK);
-      healParts += hostiles[i].getActiveBodyparts(HEAL);
-      claimParts += hostiles[i].getActiveBodyparts(CLAIM);
+      combatParts += getActiveBodyparts(hostiles[i], ATTACK);
+      combatParts += getActiveBodyparts(hostiles[i], RANGED_ATTACK);
+      healParts += getActiveBodyparts(hostiles[i], HEAL);
+      claimParts += getActiveBodyparts(hostiles[i], CLAIM);
     }
 
     var desired = 1;
@@ -249,9 +263,9 @@ module.exports = {
     var claimParts = 0;
 
     for (var i = 0; i < hostiles.length; i++) {
-      combatParts += hostiles[i].getActiveBodyparts(ATTACK);
-      combatParts += hostiles[i].getActiveBodyparts(RANGED_ATTACK);
-      claimParts += hostiles[i].getActiveBodyparts(CLAIM);
+      combatParts += getActiveBodyparts(hostiles[i], ATTACK);
+      combatParts += getActiveBodyparts(hostiles[i], RANGED_ATTACK);
+      claimParts += getActiveBodyparts(hostiles[i], CLAIM);
     }
 
     var active =

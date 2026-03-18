@@ -491,6 +491,13 @@ module.exports = {
     return true;
   },
 
+  isDefenseStructure(structure) {
+    if (!structure) return false;
+    if (structure.my) return false;
+
+    return structure.structureType === STRUCTURE_INVADER_CORE;
+  },
+
   getDefenseHostiles(room, hostiles) {
     var candidates = hostiles;
 
@@ -503,7 +510,19 @@ module.exports = {
     });
   },
 
-  getDefenseIntruders(room, hostiles, powerCreeps) {
+  getDefenseStructures(room, structures) {
+    var candidates = structures;
+
+    if (!candidates && room && typeof FIND_HOSTILE_STRUCTURES !== "undefined") {
+      candidates = room.find(FIND_HOSTILE_STRUCTURES);
+    }
+
+    return _.filter(candidates || [], function (structure) {
+      return module.exports.isDefenseStructure(structure);
+    });
+  },
+
+  getDefenseIntruders(room, hostiles, powerCreeps, structures) {
     var merged = [];
     var seen = {};
     var groups = [];
@@ -521,6 +540,8 @@ module.exports = {
       }),
     );
 
+    groups.push(this.getDefenseStructures(room, structures));
+
     if (room) {
       groups.push(
         _.filter(room.find(FIND_CREEPS), function (creep) {
@@ -534,6 +555,10 @@ module.exports = {
             return module.exports.isDefenseHostile(creep);
           }),
         );
+      }
+
+      if (typeof FIND_HOSTILE_STRUCTURES !== "undefined") {
+        groups.push(this.getDefenseStructures(room, room.find(FIND_HOSTILE_STRUCTURES)));
       }
     }
 

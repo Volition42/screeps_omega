@@ -90,6 +90,9 @@ module.exports = {
       typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
         ? creep.room.find(FIND_HOSTILE_POWER_CREEPS)
         : [],
+      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+        ? creep.room.find(FIND_HOSTILE_STRUCTURES)
+        : [],
     );
 
     if (hostiles.length === 0) return null;
