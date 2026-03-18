@@ -94,17 +94,20 @@ module.exports = {
     }
 
     var provisionalState = this.createState(sharedState, phase);
-
+    var desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
     var buildStatus = constructionStatus.getStatus(room, provisionalState);
 
     if (
       phase !== "bootstrap_jr" &&
-      this.shouldEnterDeveloping(room, provisionalState, buildStatus)
+      this.shouldEnterDeveloping(
+        room,
+        provisionalState,
+        buildStatus,
+        desiredTotalHaulers,
+      )
     ) {
       phase = "developing";
     }
-
-    var desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
 
     if (
       phase === "developing" &&
@@ -266,7 +269,11 @@ module.exports = {
     return bySourceId;
   },
 
-  shouldEnterDeveloping(room, state, buildStatus) {
+  shouldEnterDeveloping(room, state, buildStatus, desiredTotalHaulers) {
+    if (!this.hasDevelopingEconomyBackbone(state, desiredTotalHaulers)) {
+      return false;
+    }
+
     if (buildStatus.bootstrapComplete) return true;
 
     // Developer note:
@@ -283,6 +290,30 @@ module.exports = {
     }
 
     return false;
+  },
+
+  hasDevelopingEconomyBackbone(state, desiredTotalHaulers) {
+    var roleCounts = state.roleCounts || {};
+    var workers = roleCounts.worker || 0;
+    var jrWorkers = roleCounts.jrworker || 0;
+    var miners = roleCounts.miner || 0;
+    var haulers = roleCounts.hauler || 0;
+    var laborers = workers + jrWorkers;
+    var sourceCount = state.sources ? state.sources.length : 0;
+    var minimumEnergy = Math.min(300, state.energyCapacityAvailable || 300);
+    var requiresHaulers =
+      desiredTotalHaulers > 0 && (state.sourceContainers || []).length > 0;
+
+    if (laborers <= 0) return false;
+    if (sourceCount > 0 && miners <= 0) return false;
+    if (requiresHaulers && haulers <= 0) {
+      return false;
+    }
+    if (state.energyAvailable < minimumEnergy && laborers < 2) {
+      return false;
+    }
+
+    return true;
   },
 
   shouldEnterStable(room, state, buildStatus, desiredTotalHaulers) {

@@ -32,7 +32,7 @@ module.exports = {
   HUD: {
     ENABLED: true,
     CREEP_LABELS: true,
-    LABEL_INTERVAL: 1,
+    LABEL_INTERVAL: 5,
     CONSOLE_INTERVAL: 25,
 
     // Developer note:
@@ -56,7 +56,7 @@ module.exports = {
     "detailed" = one fuller line per remote site
     */
     SHOW_REMOTE_SITES: true,
-    REMOTE_SITE_MODE: "detailed",
+    REMOTE_SITE_MODE: "compact",
   },
 
   CREEPS: {
@@ -67,9 +67,9 @@ module.exports = {
     // Developer note:
     // These are the target counts once the room transitions into the
     // normal colony phases.
-    workers: 4,
+    workers: 2,
     upgraders: 1,
-    repairs: 2,
+    repairs: 1,
 
     /*
     Developer note:
@@ -145,8 +145,8 @@ module.exports = {
     spawnExtensionThreshold: 0.9,
     roadThreshold: 0.35,
 
-    rampartMinHits: 5000,
-    wallMinHits: 5000,
+    rampartMinHits: 1000,
+    wallMinHits: 1000,
   },
 
   /*
@@ -165,7 +165,7 @@ module.exports = {
   below this reserve level.
   */
   LOGISTICS: {
-    controllerContainerReserve: 1000,
+    controllerContainerReserve: 1500,
     towerEmergencyThreshold: 400,
     towerReserveThreshold: 700,
   },
@@ -227,7 +227,7 @@ module.exports = {
   BODIES: {
     // Developer note:
     // These tiers are keyed off room.energyCapacityAvailable, not current energy.
-    maxTierEnergy: 800,
+    maxTierEnergy: 1300,
   },
 
   STATS: {
@@ -236,7 +236,7 @@ module.exports = {
     // - off: no CPU console output
     // - overview: top-level sections only
     // - detail: top-level sections plus per-room and per-remote breakdowns
-    CPU_CONSOLE_MODE: "overview",
+    CPU_CONSOLE_MODE: "detail",
     CPU_PRINT_INTERVAL: 25,
     RUNTIME_POLICY: {
       TIGHT_CPU_RATIO: 0.8,
@@ -267,7 +267,7 @@ module.exports = {
   DIRECTIVES: {
     // Developer note:
     // Controls how often the corporate directive system logs updates.
-    ENABLED: true,
+    ENABLED: false,
     INTERVAL: 25,
 
     // Developer note:
@@ -356,14 +356,34 @@ module.exports = {
       E11N33: {
         enabled: true,
         homeRoom: "E12N33",
-        phase: 2,
+        phase: 1,
         jrWorkers: 2,
-        remoteWorkers: 2,
+        remoteWorkers: 1,
 
         reservation: {
           enabled: true,
-          reservers: 2,
-          renewBelow: 5000,
+          reservers: 1,
+          renewBelow: 3000,
+        },
+
+        sourceDefaults: {
+          miners: 1,
+          haulers: 1,
+        },
+
+        sourcesById: {},
+      },
+      E12N32: {
+        enabled: true,
+        homeRoom: "E12N33",
+        phase: 1,
+        jrWorkers: 2,
+        remoteWorkers: 1,
+
+        reservation: {
+          enabled: true,
+          reservers: 1,
+          renewBelow: 3000,
         },
 
         sourceDefaults: {
@@ -384,26 +404,6 @@ module.exports = {
           enabled: true,
           reservers: 1,
           renewBelow: 2000,
-        },
-
-        sourceDefaults: {
-          miners: 1,
-          haulers: 1,
-        },
-
-        sourcesById: {},
-      },
-      E12N32: {
-        enabled: true,
-        homeRoom: "E12N33",
-        phase: 1,
-        jrWorkers: 2,
-        remoteWorkers: 1,
-
-        reservation: {
-          enabled: true,
-          reservers: 2,
-          renewBelow: 5000,
         },
 
         sourceDefaults: {
