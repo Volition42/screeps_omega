@@ -110,19 +110,21 @@ module.exports = {
         homeOnly: true,
       });
 
-      var recoveryTarget = this.getRecoveryJrWorkerTarget(room, state);
-      var currentJrWorkers = roleCounts.jrworker || 0;
-      var queuedJrWorkers = this.countQueued(room, "jrworker");
+      if (this.isBootstrapPhase(state.phase)) {
+        var recoveryTarget = this.getRecoveryJrWorkerTarget(room, state);
+        var currentJrWorkers = roleCounts.jrworker || 0;
+        var queuedJrWorkers = this.countQueued(room, "jrworker");
 
-      while (
-        currentJrWorkers +
-          queuedJrWorkers +
-          requests.filter(function (r) {
-            return r.role === "jrworker";
-          }).length <
-        recoveryTarget
-      ) {
-        requests.push({ role: "jrworker", priority: 1000 });
+        while (
+          currentJrWorkers +
+            queuedJrWorkers +
+            requests.filter(function (r) {
+              return r.role === "jrworker";
+            }).length <
+          recoveryTarget
+        ) {
+          requests.push({ role: "jrworker", priority: 1000 });
+        }
       }
 
       requests.sort(function (a, b) {
@@ -132,7 +134,7 @@ module.exports = {
       return requests;
     }
 
-    if (state.phase === "bootstrap_jr") {
+    if (this.isBootstrapPhase(state.phase)) {
       this.addDefenseRequests(room, state, requests, reaction, {
         homeOnly: true,
       });
@@ -290,6 +292,10 @@ module.exports = {
     });
 
     return requests;
+  },
+
+  isBootstrapPhase(phase) {
+    return phase === "bootstrap_jr" || phase === "bootstrap";
   },
 
   addDefenseRequests(room, state, requests, reaction, options) {

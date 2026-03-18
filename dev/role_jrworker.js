@@ -3,16 +3,17 @@ Developer Summary:
 Bootstrap JrWorker
 
 Purpose:
-- Recover a home room when the local economy is degraded
-- Harvest directly from sources
-- Feed essential room energy targets before doing controller work
+- Recover a home room during bootstrap phases
+- Pull energy from stable local buffers before harvesting
+- Feed the room's core infrastructure in a strict bootstrap order
 
 Important Notes:
-- This role stays intentionally simple and self-sufficient
-- Target caching keeps bootstrap creeps from oscillating between valid targets
+- Withdrawal priority:
+  storage -> non-controller containers -> harvest
+- Delivery priority:
+  spawn -> extensions -> towers -> controller
 */
 
-const config = require("config");
 const logisticsManager = require("logistics_manager");
 
 const MOVE_OPTIONS = {
@@ -24,14 +25,37 @@ module.exports = {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;
       this.clearDeliveryTarget(creep);
+      this.clearWithdrawalTarget(creep);
     }
 
     if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
       creep.memory.working = true;
       this.clearHarvestSource(creep);
+      this.clearWithdrawalTarget(creep);
     }
 
     if (!creep.memory.working) {
+      var withdrawalTarget = this.getWithdrawalTarget(creep);
+
+      if (withdrawalTarget) {
+        var withdrawalResult = creep.withdraw(
+          withdrawalTarget,
+          RESOURCE_ENERGY,
+        );
+
+        if (withdrawalResult === ERR_NOT_IN_RANGE) {
+          creep.moveTo(withdrawalTarget, MOVE_OPTIONS);
+        } else if (
+          withdrawalResult === ERR_FULL ||
+          withdrawalResult === ERR_INVALID_TARGET ||
+          withdrawalResult === ERR_NOT_ENOUGH_RESOURCES
+        ) {
+          this.clearWithdrawalTarget(creep);
+        }
+
+        return;
+      }
+
       var source = this.getHarvestSource(creep);
       if (!source) return;
 
@@ -59,14 +83,6 @@ module.exports = {
         this.clearDeliveryTarget(creep);
       }
 
-      return;
-    }
-
-    var site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
-    if (site) {
-      if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site, MOVE_OPTIONS);
-      }
       return;
     }
 
@@ -108,6 +124,35 @@ module.exports = {
     return source;
   },
 
+  getWithdrawalTarget(creep) {
+    var cached = this.getCachedWithdrawalTarget(creep);
+    if (cached) return cached;
+
+    var target = logisticsManager.getStorageEnergyTarget(creep.room);
+
+    if (!target) {
+      target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function (structure) {
+          return (
+            structure.structureType === STRUCTURE_CONTAINER &&
+            (!creep.room.controller ||
+              structure.pos.getRangeTo(creep.room.controller) > 4) &&
+            structure.store &&
+            (structure.store[RESOURCE_ENERGY] || 0) > 0
+          );
+        },
+      });
+    }
+
+    if (target && target.id) {
+      creep.memory.withdrawTargetId = target.id;
+    } else {
+      this.clearWithdrawalTarget(creep);
+    }
+
+    return target;
+  },
+
   getDeliveryTarget(creep) {
     var cached = this.getCachedDeliveryTarget(creep);
     if (cached) return cached;
@@ -121,39 +166,42 @@ module.exports = {
     if (!target) {
       target = logisticsManager.getLowTowerTarget(
         creep.room,
-        config.LOGISTICS.towerEmergencyThreshold,
+        Infinity,
         creep,
       );
-    }
-
-    if (!target) {
-      target = logisticsManager.getControllerContainerDeliveryTarget(
-        creep.room,
-        creep,
-        config.LOGISTICS.controllerContainerReserve,
-      );
-    }
-
-    if (!target) {
-      target = logisticsManager.getStorageDeliveryTarget(creep.room);
-    }
-
-    if (!target) {
-      target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-        filter: function (structure) {
-          return (
-            structure.structureType === STRUCTURE_CONTAINER &&
-            structure.store &&
-            structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-          );
-        },
-      });
     }
 
     if (target && target.id) {
       creep.memory.deliveryTargetId = target.id;
     } else {
       this.clearDeliveryTarget(creep);
+    }
+
+    return target;
+  },
+
+  getCachedWithdrawalTarget(creep) {
+    if (!creep.memory.withdrawTargetId) return null;
+
+    var target = Game.getObjectById(creep.memory.withdrawTargetId);
+    if (
+      !target ||
+      !target.pos ||
+      target.pos.roomName !== creep.room.name ||
+      !target.store ||
+      (target.store[RESOURCE_ENERGY] || 0) <= 0
+    ) {
+      this.clearWithdrawalTarget(creep);
+      return null;
+    }
+
+    if (
+      target.structureType === STRUCTURE_CONTAINER &&
+      creep.room.controller &&
+      target.pos.getRangeTo(creep.room.controller) <= 4
+    ) {
+      this.clearWithdrawalTarget(creep);
+      return null;
     }
 
     return target;
@@ -179,6 +227,10 @@ module.exports = {
 
   clearHarvestSource(creep) {
     delete creep.memory.harvestSourceId;
+  },
+
+  clearWithdrawalTarget(creep) {
+    delete creep.memory.withdrawTargetId;
   },
 
   clearDeliveryTarget(creep) {
