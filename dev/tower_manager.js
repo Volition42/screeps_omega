@@ -10,8 +10,13 @@ module.exports = {
 
     if (!towers.length) return;
 
-    const hostiles =
-      state && state.hostileCreeps ? state.hostileCreeps : cache.hostileCreeps;
+    const hostiles = utils.getDefenseIntruders(
+      room,
+      state && state.hostileCreeps ? state.hostileCreeps : cache.hostileCreeps,
+      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+        ? room.find(FIND_HOSTILE_POWER_CREEPS)
+        : [],
+    );
     const roomCreeps = state && state.creeps ? state.creeps : cache.creeps;
     const injured = _.filter(roomCreeps, function (creep) {
       return creep.hits < creep.hitsMax;

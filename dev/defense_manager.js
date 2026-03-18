@@ -98,9 +98,12 @@ module.exports = {
   },
 
   getOwnedRoomThreat(room, state, reaction) {
-    var hostiles = utils.getDefenseHostiles(
+    var hostiles = utils.getDefenseIntruders(
       room,
       state && state.hostileCreeps ? state.hostileCreeps : null,
+      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+        ? room.find(FIND_HOSTILE_POWER_CREEPS)
+        : [],
     );
 
     return this.createThreatDescriptor({
@@ -152,7 +155,15 @@ module.exports = {
 
   getRemoteThreat(homeRoom, state, site, reaction) {
     var remoteRoom = site.remoteRoom || Game.rooms[site.targetRoom] || null;
-    var hostiles = remoteRoom ? utils.getDefenseHostiles(remoteRoom) : [];
+    var hostiles = remoteRoom
+      ? utils.getDefenseIntruders(
+          remoteRoom,
+          remoteRoom.find(FIND_HOSTILE_CREEPS),
+          typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+            ? remoteRoom.find(FIND_HOSTILE_POWER_CREEPS)
+            : [],
+        )
+      : [];
     var hostileReservation = this.hasHostileReservation(site, remoteRoom, homeRoom);
     var claimPressure = this.hasClaimPressure(hostiles);
     var type = hostileReservation && hostiles.length === 0 ? "reservation" : "hostiles";

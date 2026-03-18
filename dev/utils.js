@@ -504,18 +504,54 @@ module.exports = {
   },
 
   getDefenseIntruders(room, hostiles, powerCreeps) {
-    var hostileCreeps = this.getDefenseHostiles(room, hostiles);
+    var merged = [];
+    var seen = {};
+    var groups = [];
     var hostilePowerCreeps = powerCreeps;
+
+    groups.push(this.getDefenseHostiles(room, hostiles));
 
     if (!hostilePowerCreeps && room && typeof FIND_HOSTILE_POWER_CREEPS !== "undefined") {
       hostilePowerCreeps = room.find(FIND_HOSTILE_POWER_CREEPS);
     }
 
-    hostilePowerCreeps = _.filter(hostilePowerCreeps || [], function (creep) {
-      return module.exports.isDefenseHostile(creep);
-    });
+    groups.push(
+      _.filter(hostilePowerCreeps || [], function (creep) {
+        return module.exports.isDefenseHostile(creep);
+      }),
+    );
 
-    return hostileCreeps.concat(hostilePowerCreeps);
+    if (room) {
+      groups.push(
+        _.filter(room.find(FIND_CREEPS), function (creep) {
+          return module.exports.isDefenseHostile(creep);
+        }),
+      );
+
+      if (typeof FIND_POWER_CREEPS !== "undefined") {
+        groups.push(
+          _.filter(room.find(FIND_POWER_CREEPS), function (creep) {
+            return module.exports.isDefenseHostile(creep);
+          }),
+        );
+      }
+    }
+
+    for (var i = 0; i < groups.length; i++) {
+      var group = groups[i] || [];
+
+      for (var j = 0; j < group.length; j++) {
+        var creep = group[j];
+        var id = creep && creep.id ? creep.id : null;
+
+        if (id && seen[id]) continue;
+        if (id) seen[id] = true;
+
+        merged.push(creep);
+      }
+    }
+
+    return merged;
   },
 
   getDefenseMaintenanceTargets(room) {
