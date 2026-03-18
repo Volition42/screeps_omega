@@ -14,9 +14,13 @@ Important Notes:
 */
 
 module.exports = {
-  get(role, room) {
+  get(role, room, request) {
     const energyCapacity = room ? room.energyCapacityAvailable : 300;
     const tier = this.getTier(energyCapacity);
+    const threatLevel =
+      request && typeof request.threatLevel === "number"
+        ? request.threatLevel
+        : 1;
 
     switch (role) {
       case "jrworker":
@@ -53,7 +57,7 @@ module.exports = {
         return this.getRepairBody(tier);
 
       case "defender":
-        return this.getDefenderBody(energyCapacity);
+        return this.getDefenderBody(energyCapacity, threatLevel);
 
       default:
         return [WORK, CARRY, MOVE];
@@ -175,8 +179,27 @@ module.exports = {
     }
   },
 
-  getDefenderBody(energyCapacity) {
-    if (energyCapacity >= 760) {
+  getDefenderBody(energyCapacity, threatLevel) {
+    if (energyCapacity >= 1000 && threatLevel >= 3) {
+      return [
+        TOUGH,
+        TOUGH,
+        TOUGH,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ];
+    }
+
+    if (energyCapacity >= 760 && threatLevel >= 2) {
       return [
         TOUGH,
         TOUGH,

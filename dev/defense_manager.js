@@ -141,8 +141,9 @@ module.exports = {
       desiredDefenders: this.getDesiredDefenderCount(
         hostiles,
         false,
-        reaction.MAX_DEFENDERS_PER_ROOM,
+        reaction,
       ),
+      reaction: reaction,
       visible: true,
     });
   },
@@ -351,10 +352,23 @@ module.exports = {
       combatParts: combatParts,
       claimParts: claimParts,
       threatScore: threatScore,
-      threatLevel: Math.min(
-        4,
-        Math.max(1, details.desiredDefenders || 0, Math.ceil(threatScore / 5)),
-      ),
+      threatLevel: active
+        ? Math.min(
+            4,
+            Math.max(
+              1,
+              details.desiredDefenders || 0,
+              Math.ceil(
+                threatScore /
+                  Math.max(
+                    1,
+                    (details.reaction || this.getReactionConfig()).SCORE_PER_DEFENDER ||
+                      5,
+                  ),
+              ),
+            ),
+          )
+        : 0,
       hostileReservation: details.hostileReservation === true,
       desiredDefenders: active ? details.desiredDefenders || 1 : 0,
       label: this.getThreatLabel(details.scope, hostiles.length, details.hostileReservation),

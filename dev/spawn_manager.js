@@ -54,6 +54,8 @@ module.exports = {
       return {
         role: request.role,
         priority: request.priority,
+        threatLevel: request.threatLevel || null,
+        threatScore: request.threatScore || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
@@ -64,7 +66,7 @@ module.exports = {
     if (spawn.spawning || requests.length === 0) return;
 
     var request = requests[0];
-    var body = bodies.get(request.role, room);
+    var body = bodies.get(request.role, room, request);
     var name = request.role + "_" + Game.time;
 
     var result = spawn.spawnCreep(body, name, {
@@ -74,6 +76,8 @@ module.exports = {
         homeRoom: request.homeRoom || room.name,
         working: false,
         delivering: false,
+        threatLevel: request.threatLevel || null,
+        threatScore: request.threatScore || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
@@ -315,6 +319,8 @@ module.exports = {
         requests.push({
           role: "defender",
           priority: threat.priority,
+          threatLevel: threat.threatLevel || 1,
+          threatScore: threat.threatScore || 0,
           targetRoom: threat.roomName,
           homeRoom: room.name,
         });
