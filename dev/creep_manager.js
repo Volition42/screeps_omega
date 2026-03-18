@@ -14,6 +14,7 @@ Important Notes:
   their normal role logic runs
 */
 
+const config = require("config");
 const defenseManager = require("defense_manager");
 const roleJrWorker = require("role_jrworker");
 const roleRemoteJrWorker = require("role_remote_jrworker");
@@ -35,8 +36,14 @@ const RETREAT_MOVE_OPTIONS = {
 };
 
 module.exports = {
-  run(room, state) {
+  run(room, state, profiler, roomLabelPrefix, runtimeMode) {
     const creeps = state && state.homeCreeps ? state.homeCreeps : [];
+    const roleLabelPrefix =
+      profiler && roomLabelPrefix ? `${roomLabelPrefix}.creeps.role.` : null;
+    const thinkMultiplier =
+      runtimeMode && runtimeMode.thinkIntervalMultiplier
+        ? runtimeMode.thinkIntervalMultiplier
+        : 1;
 
     for (let i = 0; i < creeps.length; i++) {
       const creep = creeps[i];
@@ -45,60 +52,138 @@ module.exports = {
         continue;
       }
 
+      const runRole = (roleName, fn, ...args) => {
+        if (profiler && roleLabelPrefix) {
+          return profiler.wrap(
+            roleLabelPrefix + roleName,
+            fn,
+            null,
+            ...args,
+          );
+        }
+
+        return fn.apply(null, args);
+      };
+      const thinkInterval = this.getRoleThinkInterval(
+        creep.memory.role,
+        thinkMultiplier,
+      );
+      const roleOptions = {
+        thinkInterval: thinkInterval,
+      };
+
       switch (creep.memory.role) {
         case "jrworker":
-          roleJrWorker.run(creep);
+          runRole("jrworker", roleJrWorker.run.bind(roleJrWorker), creep);
           break;
 
         case "remotejrworker":
-          roleRemoteJrWorker.run(creep);
+          runRole(
+            "remotejrworker",
+            roleRemoteJrWorker.run.bind(roleRemoteJrWorker),
+            creep,
+            roleOptions,
+          );
           break;
 
         case "remoteworker":
-          roleRemoteWorker.run(creep);
+          runRole(
+            "remoteworker",
+            roleRemoteWorker.run.bind(roleRemoteWorker),
+            creep,
+            roleOptions,
+          );
           break;
 
         case "remoteminer":
-          roleRemoteMiner.run(creep);
+          runRole(
+            "remoteminer",
+            roleRemoteMiner.run.bind(roleRemoteMiner),
+            creep,
+          );
           break;
 
         case "remotehauler":
-          roleRemoteHauler.run(creep);
+          runRole(
+            "remotehauler",
+            roleRemoteHauler.run.bind(roleRemoteHauler),
+            creep,
+            roleOptions,
+          );
           break;
 
         case "reserver":
-          roleReserver.run(creep);
+          runRole("reserver", roleReserver.run.bind(roleReserver), creep);
           break;
 
         case "worker":
-          roleWorker.run(creep);
+          runRole(
+            "worker",
+            roleWorker.run.bind(roleWorker),
+            creep,
+            roleOptions,
+          );
           break;
 
         case "miner":
-          roleMiner.run(creep);
+          runRole("miner", roleMiner.run.bind(roleMiner), creep);
           break;
 
         case "hauler":
-          roleHauler.run(creep);
+          runRole(
+            "hauler",
+            roleHauler.run.bind(roleHauler),
+            creep,
+            roleOptions,
+          );
           break;
 
         case "upgrader":
-          roleUpgrader.run(creep);
+          runRole(
+            "upgrader",
+            roleUpgrader.run.bind(roleUpgrader),
+            creep,
+          );
           break;
 
         case "repair":
-          roleRepair.run(creep);
+          runRole(
+            "repair",
+            roleRepair.run.bind(roleRepair),
+            creep,
+          );
           break;
 
         case "defender":
-          roleDefender.run(creep, state);
+          runRole(
+            "defender",
+            roleDefender.run.bind(roleDefender),
+            creep,
+            state,
+          );
           break;
 
         case "rangeddefender":
-          roleRangedDefender.run(creep, state);
+          runRole(
+            "rangeddefender",
+            roleRangedDefender.run.bind(roleRangedDefender),
+            creep,
+            state,
+          );
           break;
       }
     }
+  },
+
+  getRoleThinkInterval(role, multiplier) {
+    const configured =
+      config.CREEPS &&
+      config.CREEPS.THINK_INTERVALS &&
+      Object.prototype.hasOwnProperty.call(config.CREEPS.THINK_INTERVALS, role)
+        ? config.CREEPS.THINK_INTERVALS[role]
+        : 1;
+
+    return Math.max(1, configured * Math.max(1, multiplier || 1));
   },
 
   runDefenseRetreat(creep, state) {

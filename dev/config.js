@@ -91,6 +91,20 @@ module.exports = {
     //   "5bbcab1c9099fc012e632dbd": 1
     // }
     haulersPerSourceBySourceId: {},
+
+    // Developer note:
+    // These are target-selection think intervals, not full action skips.
+    // Roles still act every tick, but they only recompute expensive targets on
+    // these cadences unless their cached target becomes invalid.
+    THINK_INTERVALS: {
+      worker: 2,
+      hauler: 2,
+      remotejrworker: 2,
+      remoteworker: 3,
+      remotehauler: 2,
+      repair: 2,
+      upgrader: 2,
+    },
   },
 
   /*
@@ -224,6 +238,30 @@ module.exports = {
     // - detail: top-level sections plus per-room and per-remote breakdowns
     CPU_CONSOLE_MODE: "overview",
     CPU_PRINT_INTERVAL: 25,
+    RUNTIME_POLICY: {
+      TIGHT_CPU_RATIO: 0.8,
+      CRITICAL_CPU_RATIO: 0.92,
+      TIGHT_BUCKET: 8000,
+      CRITICAL_BUCKET: 4000,
+      DETAIL_DOWNGRADE_AT_TIGHT: true,
+      REMOTE_SCAN_BUDGET: {
+        normal: 1,
+        tight: 1,
+        critical: 0,
+      },
+      THINK_INTERVAL_MULTIPLIER: {
+        normal: 1,
+        tight: 2,
+        critical: 3,
+      },
+      CONSTRUCTION_INTERVAL_MULTIPLIER: {
+        normal: 1,
+        tight: 2,
+        critical: 3,
+      },
+      SKIP_DIRECTIVES_AT: "tight",
+      SKIP_HUD_AT: "critical",
+    },
   },
 
   DIRECTIVES: {
@@ -290,6 +328,13 @@ module.exports = {
   REMOTE_MINING: {
     ENABLED: true,
     phase2WorkersDefault: 1,
+    SCHEDULER: {
+      ENABLED: true,
+      THREAT_SCAN_INTERVAL: 1,
+      ACTIVE_SCAN_INTERVAL: 5,
+      IDLE_SCAN_INTERVAL: 15,
+      CACHE_TTL: 50,
+    },
     SCALING: {
       ENABLED: true,
       recommendedSitesByControllerLevel: {
@@ -313,12 +358,12 @@ module.exports = {
         homeRoom: "E12N33",
         phase: 2,
         jrWorkers: 2,
-        remoteWorkers: 1,
+        remoteWorkers: 2,
 
         reservation: {
           enabled: true,
-          reservers: 1,
-          renewBelow: 2000,
+          reservers: 2,
+          renewBelow: 5000,
         },
 
         sourceDefaults: {
@@ -327,7 +372,7 @@ module.exports = {
         },
 
         sourcesById: {},
-      },
+      } /*
       E13N32: {
         enabled: true,
         homeRoom: "E12N33",
@@ -357,8 +402,8 @@ module.exports = {
 
         reservation: {
           enabled: true,
-          reservers: 1,
-          renewBelow: 2000,
+          reservers: 2,
+          renewBelow: 5000,
         },
 
         sourceDefaults: {
@@ -388,6 +433,7 @@ module.exports = {
 
         sourcesById: {},
       },
+      */,
     },
   },
 };

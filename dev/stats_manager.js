@@ -41,6 +41,10 @@ module.exports = {
     Memory.stats.last = snapshot;
     Memory.stats.averages = this.computeAverages(history);
     Memory.stats.max = this.computeMax(history);
+    Memory.stats.runtime = this.computeRuntimeMode(
+      snapshot,
+      Memory.stats.averages,
+    );
   },
 
   print(snapshot) {
@@ -79,9 +83,20 @@ module.exports = {
   },
 
   getCpuConsoleMode() {
-    return config.STATS && config.STATS.CPU_CONSOLE_MODE
+    var configured = config.STATS && config.STATS.CPU_CONSOLE_MODE
       ? config.STATS.CPU_CONSOLE_MODE
       : "overview";
+    var runtime = this.getRuntimeMode();
+
+    if (
+      configured === "detail" &&
+      runtime &&
+      runtime.forceOverview === true
+    ) {
+      return "overview";
+    }
+
+    return configured;
   },
 
   getCpuPrintInterval() {
@@ -140,6 +155,18 @@ module.exports = {
 
         console.log(`[CPU:remotes ${roomName}] ${remoteParts.join(" | ")}`);
       }
+
+      if (roomGroup.roles && roomGroup.roles.length > 0) {
+        const roleParts = [];
+
+        for (let i = 0; i < roomGroup.roles.length; i++) {
+          roleParts.push(
+            `${roomGroup.roles[i].label}:${roomGroup.roles[i].total.toFixed(3)}`,
+          );
+        }
+
+        console.log(`[CPU:roles ${roomName}] ${roleParts.join(" | ")}`);
+      }
     }
   },
 
@@ -163,6 +190,18 @@ module.exports = {
 
       if (parts.length === 2) {
         grouped[roomName].total = sections[label].total;
+        continue;
+      }
+
+      if (parts[2] === "creeps" && parts[3] === "role") {
+        if (!grouped[roomName].roles) {
+          grouped[roomName].roles = [];
+        }
+
+        grouped[roomName].roles.push({
+          label: parts[4],
+          total: sections[label].total,
+        });
         continue;
       }
 
@@ -196,9 +235,109 @@ module.exports = {
       grouped[roomName].remotes.sort(function (a, b) {
         return b.total - a.total;
       });
+      grouped[roomName].roles = grouped[roomName].roles || [];
+      grouped[roomName].roles.sort(function (a, b) {
+        return b.total - a.total;
+      });
     }
 
     return grouped;
+  },
+
+  getRuntimeMode() {
+    if (Memory.stats && Memory.stats.runtime) {
+      return Memory.stats.runtime;
+    }
+
+    return this.getDefaultRuntimeMode();
+  },
+
+  getDefaultRuntimeMode() {
+    return {
+      pressure: "normal",
+      forceOverview: false,
+      remoteScanBudget: 1,
+      thinkIntervalMultiplier: 1,
+      constructionIntervalMultiplier: 1,
+      skipDirectives: false,
+      skipHud: false,
+    };
+  },
+
+  computeRuntimeMode(snapshot, averages) {
+    const policy =
+      config.STATS && config.STATS.RUNTIME_POLICY
+        ? config.STATS.RUNTIME_POLICY
+        : {};
+    const limit = snapshot && snapshot.cpu && snapshot.cpu.limit
+      ? snapshot.cpu.limit
+      : 20;
+    const used = snapshot && snapshot.cpu ? snapshot.cpu.used : 0;
+    const avg = averages && typeof averages.cpuUsed === "number"
+      ? averages.cpuUsed
+      : used;
+    const bucket = snapshot && snapshot.cpu ? snapshot.cpu.bucket : 10000;
+
+    let pressure = "normal";
+
+    if (
+      used >= limit * (policy.CRITICAL_CPU_RATIO || 0.92) ||
+      avg >= limit * (policy.CRITICAL_CPU_RATIO || 0.92) ||
+      bucket <= (policy.CRITICAL_BUCKET || 4000)
+    ) {
+      pressure = "critical";
+    } else if (
+      used >= limit * (policy.TIGHT_CPU_RATIO || 0.8) ||
+      avg >= limit * (policy.TIGHT_CPU_RATIO || 0.8) ||
+      bucket <= (policy.TIGHT_BUCKET || 8000)
+    ) {
+      pressure = "tight";
+    }
+
+    const pressureKey = pressure;
+    const scanBudget = policy.REMOTE_SCAN_BUDGET || {};
+    const thinkMultiplier = policy.THINK_INTERVAL_MULTIPLIER || {};
+    const constructionMultiplier = policy.CONSTRUCTION_INTERVAL_MULTIPLIER || {};
+
+    return {
+      pressure: pressure,
+      forceOverview:
+        pressure !== "normal" &&
+        policy.DETAIL_DOWNGRADE_AT_TIGHT === true,
+      remoteScanBudget:
+        Object.prototype.hasOwnProperty.call(scanBudget, pressureKey)
+          ? scanBudget[pressureKey]
+          : 1,
+      thinkIntervalMultiplier:
+        Object.prototype.hasOwnProperty.call(thinkMultiplier, pressureKey)
+          ? thinkMultiplier[pressureKey]
+          : 1,
+      constructionIntervalMultiplier:
+        Object.prototype.hasOwnProperty.call(constructionMultiplier, pressureKey)
+          ? constructionMultiplier[pressureKey]
+          : 1,
+      skipDirectives: this.shouldSkipAtPressure(
+        pressure,
+        policy.SKIP_DIRECTIVES_AT,
+      ),
+      skipHud: this.shouldSkipAtPressure(
+        pressure,
+        policy.SKIP_HUD_AT,
+      ),
+    };
+  },
+
+  shouldSkipAtPressure(pressure, threshold) {
+    if (!threshold) return false;
+    if (threshold === "tight") {
+      return pressure === "tight" || pressure === "critical";
+    }
+
+    if (threshold === "critical") {
+      return pressure === "critical";
+    }
+
+    return false;
   },
 
   getOwnedRoomCount() {

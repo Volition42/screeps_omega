@@ -20,6 +20,7 @@ Important Notes:
 */
 
 const config = require("config");
+const statsManager = require("stats_manager");
 const utils = require("utils");
 
 var scanCacheTick = null;
@@ -76,7 +77,11 @@ module.exports = {
     if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return [];
 
     const sites = config.REMOTE_MINING.SITES || {};
+    const runtimeMode = statsManager.getRuntimeMode();
+    const scheduler = this.getSchedulerConfig();
+    const scanBudget = this.getAvailableScanBudget(runtimeMode, scheduler);
     const results = [];
+    const candidates = [];
 
     for (const targetRoom in sites) {
       if (!Object.prototype.hasOwnProperty.call(sites, targetRoom)) continue;
@@ -86,19 +91,51 @@ module.exports = {
       if (site.homeRoom !== homeRoomName) continue;
 
       var normalized = this.normalizeSite(targetRoom, site);
+      var assignedRoleCounts = this.getAssignedRoleCounts(state, targetRoom);
+      var cachedSummary = this.getCachedScanSummary(targetRoom);
+      var refreshPolicy = this.getRefreshPolicy(
+        normalized,
+        assignedRoleCounts,
+        cachedSummary,
+        scheduler,
+      );
+
+      candidates.push({
+        site: normalized,
+        assignedRoleCounts: assignedRoleCounts,
+        cachedSummary: cachedSummary,
+        refreshPolicy: refreshPolicy,
+      });
+    }
+
+    const scheduledRefreshes = this.selectScheduledRefreshes(
+      candidates,
+      scanBudget,
+    );
+
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      const targetRoom = candidate.site.targetRoom;
+      const shouldRefresh =
+        candidate.refreshPolicy.forceRefresh ||
+        scheduledRefreshes[targetRoom] === true;
+      const readSite = shouldRefresh
+        ? this.enrichSite
+        : this.getCachedSiteView;
 
       if (profiler && labelPrefix) {
         results.push(
           profiler.wrap(
             `${labelPrefix}.remote.${targetRoom}`,
-            this.enrichSite,
+            readSite,
             this,
-            normalized,
+            candidate.site,
             state,
+            candidate.assignedRoleCounts,
           ),
         );
       } else {
-        results.push(this.enrichSite(normalized, state));
+        results.push(readSite.call(this, candidate.site, state, candidate.assignedRoleCounts));
       }
     }
 
@@ -189,16 +226,23 @@ module.exports = {
   },
 
   enrichSite(site, state) {
-    var scan = this.getVisibleRoomScan(site.targetRoom);
     var assignedRoleCounts = this.getAssignedRoleCounts(state, site.targetRoom);
+    var scan = this.getVisibleRoomScan(site.targetRoom);
     var sourceDetails = this.getSourceDetails(site, state, scan);
     var progress = this.getProgress(site, scan, sourceDetails);
     var reservationStatus = scan
       ? scan.reservationStatus
       : this.getCachedReservationStatus(site.targetRoom);
+    var statusLabel = this.getStatusLabel(site, progress, assignedRoleCounts);
 
     if (scan) {
-      this.storeSiteIntel(site, sourceDetails, reservationStatus);
+      this.storeSiteIntel(
+        site,
+        sourceDetails,
+        reservationStatus,
+        progress,
+        statusLabel,
+      );
     }
 
     return Object.assign({}, site, {
@@ -232,7 +276,41 @@ module.exports = {
             ? site.remoteWorkers
             : 0,
       },
-      statusLabel: this.getStatusLabel(site, progress, assignedRoleCounts),
+      statusLabel: statusLabel,
+      scanFresh: !!scan,
+      scanAge: 0,
+    });
+  },
+
+  getCachedSiteView(site, state, assignedRoleCounts) {
+    var sourceDetails = this.getSourceDetails(site, state, null);
+    var progress = this.getCachedProgress(site.targetRoom, sourceDetails);
+    var reservationStatus = this.getCachedReservationStatus(site.targetRoom);
+    var cachedSummary = this.getCachedScanSummary(site.targetRoom);
+    var statusLabel = this.getStatusLabel(site, progress, assignedRoleCounts);
+
+    return Object.assign({}, site, {
+      visible: false,
+      remoteRoom: null,
+      remoteState: null,
+      sourceDetails: sourceDetails,
+      progress: progress,
+      assignedRoleCounts: assignedRoleCounts,
+      reservationStatus: reservationStatus,
+      phaseTargets: {
+        remoteWorkers:
+          site.phase >= 2 &&
+          (progress.activeConstructionSites > 0 ||
+            progress.damagedInfrastructure > 0 ||
+            progress.sourceContainersBuilt + progress.sourceContainersPlanned <
+              progress.sourceCount ||
+            progress.roadsBuilt + progress.roadsPlanned < progress.roadsTarget)
+            ? site.remoteWorkers
+            : 0,
+      },
+      statusLabel: statusLabel,
+      scanFresh: false,
+      scanAge: Math.max(0, Game.time - (cachedSummary.lastScan || 0)),
     });
   },
 
@@ -492,6 +570,11 @@ module.exports = {
       remoteminer: this.getRoleTargetRoomCount(state, "remoteminer", targetRoom),
       remotehauler: this.getRoleTargetRoomCount(state, "remotehauler", targetRoom),
       reserver: this.getRoleTargetRoomCount(state, "reserver", targetRoom),
+      rangeddefender: this.getRoleTargetRoomCount(
+        state,
+        "rangeddefender",
+        targetRoom,
+      ),
     };
   },
 
@@ -567,13 +650,27 @@ module.exports = {
           username: null,
           label: "UNKNOWN",
         },
+        progress: {
+          sourceCount: 0,
+          visibleSourceCount: 0,
+          sourceContainersBuilt: 0,
+          sourceContainersPlanned: 0,
+          roadsTarget: 0,
+          roadsBuilt: 0,
+          roadsPlanned: 0,
+          activeConstructionSites: 0,
+          damagedInfrastructure: 0,
+          hostiles: 0,
+        },
+        statusLabel: "IDLE",
+        lastScan: 0,
       };
     }
 
     return Memory.rooms[targetRoom].remoteIntel;
   },
 
-  storeSiteIntel(site, sourceDetails, reservationStatus) {
+  storeSiteIntel(site, sourceDetails, reservationStatus, progress, statusLabel) {
     var siteMemory = this.getSiteMemory(site.targetRoom);
     var sourceIds = [];
     var sourcesById = {};
@@ -598,6 +695,141 @@ module.exports = {
     siteMemory.sourceIds = sourceIds;
     siteMemory.sourcesById = sourcesById;
     siteMemory.reservationStatus = reservationStatus;
+    siteMemory.progress = progress || siteMemory.progress;
+    siteMemory.statusLabel = statusLabel || siteMemory.statusLabel;
+    siteMemory.lastScan = Game.time;
+  },
+
+  getCachedScanSummary(targetRoom) {
+    var siteMemory = this.getSiteMemory(targetRoom);
+
+    return {
+      progress: siteMemory.progress || null,
+      statusLabel: siteMemory.statusLabel || "IDLE",
+      lastScan: siteMemory.lastScan || 0,
+    };
+  },
+
+  getCachedProgress(targetRoom, sourceDetails) {
+    var siteMemory = this.getSiteMemory(targetRoom);
+    var summary = siteMemory.progress || {};
+
+    return {
+      sourceCount:
+        sourceDetails.length > 0
+          ? sourceDetails.length
+          : summary.sourceCount || 0,
+      visibleSourceCount: summary.visibleSourceCount || 0,
+      sourceContainersBuilt: _.filter(sourceDetails, function (detail) {
+        return detail.containerBuilt;
+      }).length || summary.sourceContainersBuilt || 0,
+      sourceContainersPlanned: _.filter(sourceDetails, function (detail) {
+        return detail.containerPlanned;
+      }).length || summary.sourceContainersPlanned || 0,
+      roadsTarget:
+        _.sum(_.map(sourceDetails, function (detail) {
+          return detail.roadTarget || 0;
+        })) || summary.roadsTarget || 0,
+      roadsBuilt:
+        _.sum(_.map(sourceDetails, function (detail) {
+          return detail.roadBuilt || 0;
+        })) || summary.roadsBuilt || 0,
+      roadsPlanned:
+        _.sum(_.map(sourceDetails, function (detail) {
+          return detail.roadPlanned || 0;
+        })) || summary.roadsPlanned || 0,
+      activeConstructionSites: summary.activeConstructionSites || 0,
+      damagedInfrastructure: summary.damagedInfrastructure || 0,
+      hostiles: summary.hostiles || 0,
+    };
+  },
+
+  getSchedulerConfig() {
+    return Object.assign(
+      {
+        ENABLED: true,
+        THREAT_SCAN_INTERVAL: 1,
+        ACTIVE_SCAN_INTERVAL: 5,
+        IDLE_SCAN_INTERVAL: 15,
+        CACHE_TTL: 50,
+      },
+      config.REMOTE_MINING && config.REMOTE_MINING.SCHEDULER,
+    );
+  },
+
+  getAvailableScanBudget(runtimeMode, scheduler) {
+    if (scheduler.ENABLED === false) return Infinity;
+    if (!runtimeMode || typeof runtimeMode.remoteScanBudget !== "number") {
+      return 1;
+    }
+
+    return runtimeMode.remoteScanBudget;
+  },
+
+  getRefreshPolicy(site, assignedRoleCounts, cachedSummary, scheduler) {
+    var hostileCount =
+      cachedSummary &&
+      cachedSummary.progress &&
+      typeof cachedSummary.progress.hostiles === "number"
+        ? cachedSummary.progress.hostiles
+        : 0;
+    var activeWorkers =
+      (assignedRoleCounts.remotejrworker || 0) +
+      (assignedRoleCounts.remoteworker || 0) +
+      (assignedRoleCounts.remoteminer || 0) +
+      (assignedRoleCounts.remotehauler || 0) +
+      (assignedRoleCounts.reserver || 0);
+    var activeDefenders = assignedRoleCounts.rangeddefender || 0;
+    var lastScan = cachedSummary && cachedSummary.lastScan
+      ? cachedSummary.lastScan
+      : 0;
+    var interval = scheduler.IDLE_SCAN_INTERVAL || 15;
+
+    if (hostileCount > 0 || activeDefenders > 0) {
+      interval = scheduler.THREAT_SCAN_INTERVAL || 1;
+    } else if (site.phase >= 2 || activeWorkers > 0) {
+      interval = scheduler.ACTIVE_SCAN_INTERVAL || 5;
+    }
+
+    return {
+      forceRefresh:
+        (hostileCount > 0 || activeDefenders > 0) &&
+        !!Game.rooms[site.targetRoom],
+      interval: interval,
+      due:
+        lastScan === 0 ||
+        Game.time - lastScan >= interval ||
+        Game.time - lastScan >= (scheduler.CACHE_TTL || 50),
+      priority:
+        hostileCount > 0 || activeDefenders > 0
+          ? 3
+          : site.phase >= 2 || activeWorkers > 0
+            ? 2
+            : 1,
+      lastScan: lastScan,
+    };
+  },
+
+  selectScheduledRefreshes(candidates, budget) {
+    var selected = {};
+    var due = _.filter(candidates, function (candidate) {
+      return candidate.refreshPolicy && candidate.refreshPolicy.due === true;
+    });
+
+    due.sort(function (a, b) {
+      if (a.refreshPolicy.priority !== b.refreshPolicy.priority) {
+        return b.refreshPolicy.priority - a.refreshPolicy.priority;
+      }
+
+      return a.refreshPolicy.lastScan - b.refreshPolicy.lastScan;
+    });
+
+    for (var i = 0; i < due.length && i < budget; i++) {
+      if (!Game.rooms[due[i].site.targetRoom]) continue;
+      selected[due[i].site.targetRoom] = true;
+    }
+
+    return selected;
   },
 
   getCachedSourceIds(targetRoom) {

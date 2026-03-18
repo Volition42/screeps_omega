@@ -8,14 +8,16 @@ const towerManager = require("tower_manager");
 const controllerSigner = require("controller_signer");
 const directiveManager = require("directive_manager");
 const hud = require("hud");
+const statsManager = require("stats_manager");
 
 module.exports = {
   run(room, profiler) {
     const roomLabel = `room.${room.name}`;
     const detailCpu =
       profiler &&
-      config.STATS &&
-      config.STATS.CPU_CONSOLE_MODE === "detail";
+      statsManager.getCpuConsoleMode &&
+      statsManager.getCpuConsoleMode() === "detail";
+    const runtimeMode = statsManager.getRuntimeMode();
     const runStep = function (suffix, fn, context, ...args) {
       if (!detailCpu) {
         return fn.apply(context, args);
@@ -45,9 +47,22 @@ module.exports = {
     );
     runStep("towers", towerManager.run, towerManager, room, state);
     runStep("spawn", spawnManager.run, spawnManager, room, state);
-    runStep("creeps", creepManager.run, creepManager, room, state);
+    runStep(
+      "creeps",
+      creepManager.run,
+      creepManager,
+      room,
+      state,
+      detailCpu ? profiler : null,
+      detailCpu ? roomLabel : null,
+      runtimeMode,
+    );
     runStep("sign", controllerSigner.run, controllerSigner, room);
-    runStep("directives", directiveManager.run, directiveManager, room, state);
-    runStep("hud", hud.run, hud, room, state);
+    if (!runtimeMode.skipDirectives) {
+      runStep("directives", directiveManager.run, directiveManager, room, state);
+    }
+    if (!runtimeMode.skipHud) {
+      runStep("hud", hud.run, hud, room, state);
+    }
   },
 };

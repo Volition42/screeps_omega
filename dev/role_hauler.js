@@ -46,17 +46,22 @@ const MOVE_OPTIONS = {
 };
 
 module.exports = {
-  run(creep) {
+  run(creep, options) {
+    const thinkInterval =
+      options && options.thinkInterval ? options.thinkInterval : 1;
+
     if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.delivering = false;
       delete creep.memory.pickupTargetId;
       delete creep.memory.pickupTargetKind;
+      delete creep.memory.deliveryTargetId;
     }
 
     if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
       creep.memory.delivering = true;
       delete creep.memory.pickupTargetId;
       delete creep.memory.pickupTargetKind;
+      delete creep.memory.deliveryTargetId;
     }
 
     if (!creep.memory.delivering) {
@@ -79,7 +84,7 @@ module.exports = {
       return;
     }
 
-    const deliveryTarget = utils.getHaulerDeliveryTarget(creep.room, creep);
+    const deliveryTarget = this.getDeliveryTarget(creep, thinkInterval);
 
     if (deliveryTarget) {
       if (
@@ -209,5 +214,51 @@ module.exports = {
         target.structureType === STRUCTURE_STORAGE) &&
       (target.store[RESOURCE_ENERGY] || 0) > 0
     );
+  },
+
+  getDeliveryTarget(creep, thinkInterval) {
+    const cached = this.getCachedDeliveryTarget(creep);
+
+    if (cached && !this.shouldThink(creep, thinkInterval, "haulerDelivery")) {
+      return cached;
+    }
+
+    const target = utils.getHaulerDeliveryTarget(creep.room, creep);
+
+    if (target && target.id) {
+      creep.memory.deliveryTargetId = target.id;
+    } else {
+      delete creep.memory.deliveryTargetId;
+    }
+
+    return target;
+  },
+
+  getCachedDeliveryTarget(creep) {
+    if (!creep.memory.deliveryTargetId) return null;
+
+    const target = Game.getObjectById(creep.memory.deliveryTargetId);
+    if (
+      !target ||
+      !target.store ||
+      target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+    ) {
+      delete creep.memory.deliveryTargetId;
+      return null;
+    }
+
+    return target;
+  },
+
+  shouldThink(creep, interval, key) {
+    if (interval <= 1) return true;
+
+    const memoryKey = key + "ThinkAt";
+    if (!creep.memory[memoryKey] || Game.time >= creep.memory[memoryKey]) {
+      creep.memory[memoryKey] = Game.time + interval;
+      return true;
+    }
+
+    return false;
   },
 };

@@ -22,14 +22,24 @@ const config = require("config");
 const utils = require("utils");
 const constructionStatus = require("construction_status");
 const roadmap = require("construction_roadmap");
+const statsManager = require("stats_manager");
 const stamps = require("stamp_library");
 
 module.exports = {
   plan(room, state, profiler, roomLabelPrefix) {
     var mem = this.getRoomConstructionMemory(room);
     if (!mem.lastPlan) mem.lastPlan = 0;
+    var runtimeMode = statsManager.getRuntimeMode();
+    var intervalMultiplier =
+      runtimeMode && runtimeMode.constructionIntervalMultiplier
+        ? runtimeMode.constructionIntervalMultiplier
+        : 1;
+    var planInterval = Math.max(
+      1,
+      (config.CONSTRUCTION.PLAN_INTERVAL || 50) * intervalMultiplier,
+    );
 
-    if (Game.time - mem.lastPlan < config.CONSTRUCTION.PLAN_INTERVAL) return;
+    if (Game.time - mem.lastPlan < planInterval) return;
     mem.lastPlan = Game.time;
 
     var context = this.createPlanContext(room, state);
@@ -84,7 +94,13 @@ module.exports = {
       }
     }
 
-    this.planRemoteSites(room, state, profiler, roomLabelPrefix);
+    this.planRemoteSites(
+      room,
+      state,
+      profiler,
+      roomLabelPrefix,
+      runtimeMode,
+    );
   },
 
   getRoomConstructionMemory(room) {
@@ -862,7 +878,7 @@ module.exports = {
     }
   },
 
-  planRemoteSites(homeRoom, state, profiler, roomLabelPrefix) {
+  planRemoteSites(homeRoom, state, profiler, roomLabelPrefix, runtimeMode) {
     var remoteSites = state.remoteSites || [];
     if (remoteSites.length === 0) return;
 
@@ -886,7 +902,10 @@ module.exports = {
 
       if (
         Game.time - remoteMemory.lastPlan <
-        (config.CONSTRUCTION.REMOTE_PLAN_INTERVAL || config.CONSTRUCTION.PLAN_INTERVAL)
+        (config.CONSTRUCTION.REMOTE_PLAN_INTERVAL || config.CONSTRUCTION.PLAN_INTERVAL) *
+          (runtimeMode && runtimeMode.constructionIntervalMultiplier
+            ? runtimeMode.constructionIntervalMultiplier
+            : 1)
       ) {
         continue;
       }

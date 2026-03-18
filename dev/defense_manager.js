@@ -190,6 +190,7 @@ module.exports = {
 
   getRemoteThreat(homeRoom, state, site, reaction) {
     var remoteRoom = site.remoteRoom || Game.rooms[site.targetRoom] || null;
+    var cachedHostileCount = this.getCachedHostileCount(site);
     var hostiles = remoteRoom
       ? utils.getDefenseIntruders(
           remoteRoom,
@@ -212,6 +213,7 @@ module.exports = {
       "remote",
       hostiles,
       hostileReservation,
+      cachedHostileCount,
     );
 
     return this.createThreatDescriptor({
@@ -221,6 +223,7 @@ module.exports = {
       type: classification,
       priority: this.getThreatPriority(classification, reaction),
       hostiles: hostiles,
+      cachedHostileCount: cachedHostileCount,
       hostileReservation: hostileReservation,
       reaction: reaction,
       desiredDefenders: this.getDesiredDefenderCount(
@@ -228,6 +231,7 @@ module.exports = {
         hostiles,
         hostileReservation,
         reaction,
+        cachedHostileCount,
       ),
       responseRole: "rangeddefender",
       spawnCooldown: reaction.REMOTE_SPAWN_COOLDOWN,
@@ -235,8 +239,8 @@ module.exports = {
     });
   },
 
-  classifyThreat(scope, hostiles, hostileReservation) {
-    var invasionActive = this.hasInvasionThreat(hostiles);
+  classifyThreat(scope, hostiles, hostileReservation, cachedHostileCount) {
+    var invasionActive = this.hasInvasionThreat(hostiles, cachedHostileCount);
     var claimPressure = hostileReservation || this.hasClaimPressure(hostiles);
 
     if (scope === "home" && invasionActive) {
@@ -267,8 +271,10 @@ module.exports = {
     }
   },
 
-  hasInvasionThreat(hostiles) {
-    if (!hostiles || hostiles.length === 0) return false;
+  hasInvasionThreat(hostiles, cachedHostileCount) {
+    if (!hostiles || hostiles.length === 0) {
+      return (cachedHostileCount || 0) > 0;
+    }
 
     for (var i = 0; i < hostiles.length; i++) {
       var hostile = hostiles[i];
@@ -282,7 +288,7 @@ module.exports = {
       }
     }
 
-    return false;
+    return (cachedHostileCount || 0) > 0;
   },
 
   hasHostileReservation(site, remoteRoom, homeRoom, hostiles) {
@@ -314,12 +320,32 @@ module.exports = {
     return false;
   },
 
-  getDesiredDefenderCount(scope, hostiles, hostileReservation, reaction) {
+  getDesiredDefenderCount(
+    scope,
+    hostiles,
+    hostileReservation,
+    reaction,
+    cachedHostileCount,
+  ) {
     if (!hostiles || hostiles.length === 0) {
+      if ((cachedHostileCount || 0) > 0) {
+        return Math.min(
+          scope === "home"
+            ? reaction.MAX_HOME_DEFENDERS || 3
+            : reaction.MAX_REMOTE_DEFENDERS || 3,
+          Math.max(1, cachedHostileCount || 1),
+        );
+      }
+
       return hostileReservation ? 1 : 0;
     }
 
-    var threatScore = this.getThreatScore(hostiles, hostileReservation, reaction);
+    var threatScore = this.getThreatScore(
+      hostiles,
+      hostileReservation,
+      reaction,
+      cachedHostileCount,
+    );
     var scorePerDefender = Math.max(
       1,
       scope === "home"
@@ -336,8 +362,15 @@ module.exports = {
     );
   },
 
-  getThreatScore(hostiles, hostileReservation, reaction) {
+  getThreatScore(hostiles, hostileReservation, reaction, cachedHostileCount) {
     var score = hostileReservation ? 2 : 0;
+
+    if ((!hostiles || hostiles.length === 0) && (cachedHostileCount || 0) > 0) {
+      return Math.max(
+        score,
+        (cachedHostileCount || 0) * (reaction.HOSTILE_CREEP_BASE_SCORE || 1),
+      );
+    }
 
     for (var i = 0; i < hostiles.length; i++) {
       score += this.getTargetThreatScore(hostiles[i], reaction);
@@ -384,6 +417,7 @@ module.exports = {
 
   createThreatDescriptor(details) {
     var hostiles = details.hostiles || [];
+    var cachedHostileCount = details.cachedHostileCount || 0;
     var combatParts = 0;
     var claimParts = 0;
     var structureCount = 0;
@@ -391,6 +425,7 @@ module.exports = {
       hostiles,
       details.hostileReservation === true,
       details.reaction || this.getReactionConfig(),
+      cachedHostileCount,
     );
 
     for (var i = 0; i < hostiles.length; i++) {
@@ -416,7 +451,7 @@ module.exports = {
       active: active,
       visible: details.visible === true,
       hostiles: hostiles,
-      hostileCount: hostiles.length,
+      hostileCount: Math.max(hostiles.length, cachedHostileCount),
       structureCount: structureCount,
       combatParts: combatParts,
       claimParts: claimParts,
@@ -450,6 +485,13 @@ module.exports = {
       desiredDefenders: active ? details.desiredDefenders || 1 : 0,
       label: this.getThreatLabel(details.classification || "clear"),
     };
+  },
+
+  getCachedHostileCount(site) {
+    if (!site || !site.progress) return 0;
+    if (typeof site.progress.hostiles !== "number") return 0;
+
+    return Math.max(0, site.progress.hostiles);
   },
 
   getThreatLabel(classification) {

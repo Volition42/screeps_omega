@@ -22,9 +22,11 @@ const MOVE_OPTIONS = {
 };
 
 module.exports = {
-  run(creep) {
+  run(creep, options) {
     var targetRoom = creep.memory.targetRoom;
     var homeRoom = creep.memory.homeRoom || creep.memory.room;
+    var thinkInterval =
+      options && options.thinkInterval ? options.thinkInterval : 1;
     if (!targetRoom || !homeRoom) return;
 
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
@@ -36,16 +38,16 @@ module.exports = {
     }
 
     if (!creep.memory.working) {
-      this.runGather(creep, targetRoom, homeRoom);
+      this.runGather(creep, targetRoom, homeRoom, thinkInterval);
       return;
     }
 
-    this.runWork(creep, targetRoom);
+    this.runWork(creep, targetRoom, thinkInterval);
   },
 
-  runGather(creep, targetRoom, homeRoom) {
+  runGather(creep, targetRoom, homeRoom, thinkInterval) {
     if (creep.room.name === homeRoom) {
-      var target = this.getHomeEnergyTarget(creep);
+      var target = this.getHomeEnergyTarget(creep, thinkInterval);
 
       if (!target) {
         if (targetRoom !== homeRoom) {
@@ -75,68 +77,35 @@ module.exports = {
       return;
     }
 
-    var pickup = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-      filter: function (resource) {
-        return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
-      },
-    });
+    var pickup = this.getRemoteGatherTarget(creep, thinkInterval);
 
     if (pickup) {
-      if (creep.pickup(pickup) === ERR_NOT_IN_RANGE) {
+      if (pickup.resourceType === RESOURCE_ENERGY) {
+        if (creep.pickup(pickup) === ERR_NOT_IN_RANGE) {
+          creep.moveTo(pickup, MOVE_OPTIONS);
+        }
+      } else if (creep.harvest(pickup) === ERR_NOT_IN_RANGE) {
         creep.moveTo(pickup, MOVE_OPTIONS);
       }
       return;
     }
-
-    var source = this.getHarvestSource(creep);
-    if (!source) return;
-
-    if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(source, MOVE_OPTIONS);
-    }
   },
 
-  runWork(creep, targetRoom) {
+  runWork(creep, targetRoom, thinkInterval) {
     if (creep.room.name !== targetRoom) {
       this.moveToRoom(creep, targetRoom, "#7befff");
       return;
     }
 
-    var site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES, {
-      filter: function (constructionSite) {
-        return (
-          constructionSite.structureType === STRUCTURE_CONTAINER ||
-          constructionSite.structureType === STRUCTURE_ROAD
-        );
-      },
-    });
+    var target = this.getWorkTarget(creep, thinkInterval);
 
-    if (site) {
-      if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site, MOVE_OPTIONS);
-      }
-      return;
-    }
-
-    var repairTarget = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (structure) {
-        if (structure.structureType === STRUCTURE_CONTAINER) {
-          return (
-            structure.hits <
-            structure.hitsMax * config.REPAIR.importantThreshold
-          );
+    if (target) {
+      if (target.progressTotal !== undefined) {
+        if (creep.build(target) === ERR_NOT_IN_RANGE) {
+          creep.moveTo(target, MOVE_OPTIONS);
         }
-
-        return (
-          structure.structureType === STRUCTURE_ROAD &&
-          structure.hits < structure.hitsMax * config.REPAIR.roadThreshold
-        );
-      },
-    });
-
-    if (repairTarget) {
-      if (creep.repair(repairTarget) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(repairTarget, MOVE_OPTIONS);
+      } else if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target, MOVE_OPTIONS);
       }
       return;
     }
@@ -150,26 +119,39 @@ module.exports = {
     }
   },
 
-  getHomeEnergyTarget(creep) {
+  getHomeEnergyTarget(creep, thinkInterval) {
+    var cached = this.getCachedTarget(creep, "remoteWorkerHomeTargetId");
+
+    if (cached && !this.shouldThink(creep, thinkInterval, "remoteWorkerHome")) {
+      return cached;
+    }
+
+    var target = null;
+
     if (
       creep.room.storage &&
       (creep.room.storage.store[RESOURCE_ENERGY] || 0) > 0
     ) {
-      return creep.room.storage;
+      target = creep.room.storage;
     }
 
-    var container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (structure) {
-        return (
-          structure.structureType === STRUCTURE_CONTAINER &&
-          (structure.store[RESOURCE_ENERGY] || 0) > 0
-        );
-      },
-    });
+    if (!target) {
+      target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function (structure) {
+          return (
+            structure.structureType === STRUCTURE_CONTAINER &&
+            (structure.store[RESOURCE_ENERGY] || 0) > 0
+          );
+        },
+      });
+    }
 
-    if (container) return container;
+    if (!target) {
+      target = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+    }
 
-    return creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+    this.storeCachedTarget(creep, "remoteWorkerHomeTargetId", target);
+    return target;
   },
 
   getHarvestSource(creep) {
@@ -195,6 +177,124 @@ module.exports = {
     }
 
     return source;
+  },
+
+  getRemoteGatherTarget(creep, thinkInterval) {
+    var cached = this.getCachedTarget(creep, "remoteWorkerGatherTargetId");
+
+    if (cached && !this.shouldThink(creep, thinkInterval, "remoteWorkerGather")) {
+      return cached;
+    }
+
+    var target = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+      filter: function (resource) {
+        return resource.resourceType === RESOURCE_ENERGY && resource.amount > 0;
+      },
+    });
+
+    if (!target) {
+      target = this.getHarvestSource(creep);
+    }
+
+    this.storeCachedTarget(creep, "remoteWorkerGatherTargetId", target);
+    return target;
+  },
+
+  getWorkTarget(creep, thinkInterval) {
+    var cached = this.getCachedTarget(creep, "remoteWorkerWorkTargetId");
+
+    if (cached && !this.shouldThink(creep, thinkInterval, "remoteWorkerWork")) {
+      return cached;
+    }
+
+    var target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES, {
+      filter: function (constructionSite) {
+        return (
+          constructionSite.structureType === STRUCTURE_CONTAINER ||
+          constructionSite.structureType === STRUCTURE_ROAD
+        );
+      },
+    });
+
+    if (!target) {
+      target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function (structure) {
+          if (structure.structureType === STRUCTURE_CONTAINER) {
+            return (
+              structure.hits <
+              structure.hitsMax * config.REPAIR.importantThreshold
+            );
+          }
+
+          return (
+            structure.structureType === STRUCTURE_ROAD &&
+            structure.hits < structure.hitsMax * config.REPAIR.roadThreshold
+          );
+        },
+      });
+    }
+
+    this.storeCachedTarget(creep, "remoteWorkerWorkTargetId", target);
+    return target;
+  },
+
+  getCachedTarget(creep, memoryKey) {
+    if (!creep.memory[memoryKey]) return null;
+
+    var target = Game.getObjectById(creep.memory[memoryKey]);
+    if (!target) {
+      delete creep.memory[memoryKey];
+      return null;
+    }
+
+    if (target.resourceType === RESOURCE_ENERGY && target.amount <= 0) {
+      delete creep.memory[memoryKey];
+      return null;
+    }
+
+    if (typeof target.energy === "number" && target.energy <= 0) {
+      delete creep.memory[memoryKey];
+      return null;
+    }
+
+    if (target.store && target.store[RESOURCE_ENERGY] !== undefined) {
+      if ((target.store[RESOURCE_ENERGY] || 0) <= 0) {
+        delete creep.memory[memoryKey];
+        return null;
+      }
+    }
+
+    if (
+      target.hits !== undefined &&
+      target.hitsMax !== undefined &&
+      target.hits >= target.hitsMax
+    ) {
+      delete creep.memory[memoryKey];
+      return null;
+    }
+
+    return target;
+  },
+
+  storeCachedTarget(creep, memoryKey, target) {
+    if (target && target.id) {
+      creep.memory[memoryKey] = target.id;
+      return;
+    }
+
+    delete creep.memory[memoryKey];
+  },
+
+  shouldThink(creep, interval, key) {
+    if (interval <= 1) return true;
+
+    var memoryKey = key + "ThinkAt";
+    if (!creep.memory[memoryKey] || Game.time >= creep.memory[memoryKey]) {
+      creep.memory[memoryKey] = Game.time + interval;
+      return true;
+    }
+
+    return false;
   },
 
   moveToRoom(creep, roomName, stroke) {

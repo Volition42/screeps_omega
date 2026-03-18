@@ -21,10 +21,12 @@ const MOVE_OPTIONS = {
 };
 
 module.exports = {
-  run(creep) {
+  run(creep, options) {
     var targetRoom = creep.memory.targetRoom;
     var homeRoom = creep.memory.homeRoom || creep.memory.room;
     var sourceId = creep.memory.sourceId;
+    var thinkInterval =
+      options && options.thinkInterval ? options.thinkInterval : 1;
     if (!targetRoom || !homeRoom || !sourceId) return;
 
     if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
@@ -40,7 +42,7 @@ module.exports = {
       return;
     }
 
-    this.runDelivery(creep, homeRoom);
+    this.runDelivery(creep, homeRoom, thinkInterval);
   },
 
   runPickup(creep, targetRoom, sourceId) {
@@ -83,13 +85,13 @@ module.exports = {
     }
   },
 
-  runDelivery(creep, homeRoom) {
+  runDelivery(creep, homeRoom, thinkInterval) {
     if (creep.room.name !== homeRoom) {
       this.moveToRoom(creep, homeRoom, "#66ccff");
       return;
     }
 
-    var target = utils.getHaulerDeliveryTarget(creep.room, creep);
+    var target = this.getDeliveryTarget(creep, thinkInterval);
     if (target) {
       if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         creep.moveTo(target, MOVE_OPTIONS);
@@ -100,6 +102,52 @@ module.exports = {
     if (creep.room.storage && creep.pos.getRangeTo(creep.room.storage) > 1) {
       creep.moveTo(creep.room.storage, MOVE_OPTIONS);
     }
+  },
+
+  getDeliveryTarget(creep, thinkInterval) {
+    var cached = this.getCachedDeliveryTarget(creep);
+
+    if (cached && !this.shouldThink(creep, thinkInterval, "remoteHaulerDelivery")) {
+      return cached;
+    }
+
+    var target = utils.getHaulerDeliveryTarget(creep.room, creep);
+
+    if (target && target.id) {
+      creep.memory.deliveryTargetId = target.id;
+    } else {
+      delete creep.memory.deliveryTargetId;
+    }
+
+    return target;
+  },
+
+  getCachedDeliveryTarget(creep) {
+    if (!creep.memory.deliveryTargetId) return null;
+
+    var target = Game.getObjectById(creep.memory.deliveryTargetId);
+    if (
+      !target ||
+      !target.store ||
+      target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+    ) {
+      delete creep.memory.deliveryTargetId;
+      return null;
+    }
+
+    return target;
+  },
+
+  shouldThink(creep, interval, key) {
+    if (interval <= 1) return true;
+
+    var memoryKey = key + "ThinkAt";
+    if (!creep.memory[memoryKey] || Game.time >= creep.memory[memoryKey]) {
+      creep.memory[memoryKey] = Game.time + interval;
+      return true;
+    }
+
+    return false;
   },
 
   moveToRoom(creep, roomName, stroke) {
