@@ -26,13 +26,7 @@ const stamps = require("stamp_library");
 
 module.exports = {
   plan(room, state) {
-    if (!Memory.rooms) Memory.rooms = {};
-    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
-    if (!Memory.rooms[room.name].construction) {
-      Memory.rooms[room.name].construction = {};
-    }
-
-    var mem = Memory.rooms[room.name].construction;
+    var mem = this.getRoomConstructionMemory(room);
     if (!mem.lastPlan) mem.lastPlan = 0;
 
     if (Game.time - mem.lastPlan < config.CONSTRUCTION.PLAN_INTERVAL) return;
@@ -44,6 +38,8 @@ module.exports = {
       room.controller ? room.controller.level : 0,
     );
     if (!plan || !plan.buildList) return;
+
+    this.refreshFuturePlan(context, plan, mem);
 
     for (var i = 0; i < plan.buildList.length; i++) {
       if (this.isSiteCapReached(context)) break;
@@ -91,6 +87,16 @@ module.exports = {
     this.planRemoteSites(room, state);
   },
 
+  getRoomConstructionMemory(room) {
+    if (!Memory.rooms) Memory.rooms = {};
+    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+    if (!Memory.rooms[room.name].construction) {
+      Memory.rooms[room.name].construction = {};
+    }
+
+    return Memory.rooms[room.name].construction;
+  },
+
   createPlanContext(room, state) {
     return {
       room: room,
@@ -121,6 +127,498 @@ module.exports = {
     }
 
     return context.anchorOrigin;
+  },
+
+  refreshFuturePlan(context, plan, memory) {
+    if (!context.room.controller) return;
+
+    // Developer note:
+    // RCL5+ planning is cached on a slower interval so status/HUD/directives can
+    // read future structure intent without adding new every-tick room scans.
+    var interval = Math.max(
+      config.CONSTRUCTION.ADVANCED_PLAN_INTERVAL || 250,
+      config.CONSTRUCTION.PLAN_INTERVAL || 50,
+    );
+
+    if (
+      memory.futurePlan &&
+      memory.lastAdvancedPlan &&
+      Game.time - memory.lastAdvancedPlan < interval &&
+      memory.futurePlan.roadmapPhase === plan.roadmapPhase
+    ) {
+      return;
+    }
+
+    memory.lastAdvancedPlan = Game.time;
+    memory.futurePlan = this.buildFuturePlan(context, plan);
+  },
+
+  buildFuturePlan(context, plan) {
+    var room = context.room;
+    var storagePos = this.getStoragePlanningPosition(context);
+    var linkPlan = this.buildLinkPlan(context, plan, storagePos);
+    var terminalPlan = this.buildTerminalPlan(context, plan, storagePos, linkPlan);
+    var extractorPlan = this.buildExtractorPlan(context, plan);
+    var labPlan = this.buildLabPlan(context, plan, storagePos, terminalPlan);
+    var remoteScaling = this.buildRemoteScalingPlan(context, plan, {
+      linkPlan: linkPlan,
+      terminalPlan: terminalPlan,
+    });
+
+    return {
+      tick: Game.time,
+      roadmapPhase: plan.roadmapPhase,
+      storagePos: this.serializePos(storagePos),
+      linkPlanReady: !!linkPlan.ready,
+      terminalPlanReady: !!terminalPlan.ready,
+      extractorPlanReady: !!extractorPlan.ready,
+      labPlanReady: !!labPlan.ready,
+      links: linkPlan,
+      terminal: terminalPlan,
+      extractor: extractorPlan,
+      labs: labPlan,
+      remoteScaling: remoteScaling,
+    };
+  },
+
+  buildLinkPlan(context, plan, storagePos) {
+    var room = context.room;
+    var linkGoals = plan.goals && plan.goals.linkPlanning ? plan.goals.linkPlanning : {};
+    var totalLinks = roadmap.getDesiredLinkCount(
+      room.controller ? room.controller.level : 0,
+    );
+    var used = {};
+    var sourceLinks = [];
+    var controllerLinkPos = null;
+    var storageLinkPos = null;
+
+    if (!linkGoals.enabled || totalLinks <= 0) {
+      return {
+        enabled: false,
+        ready: false,
+        totalTarget: 0,
+        controller: null,
+        sources: [],
+        storage: null,
+      };
+    }
+
+    controllerLinkPos = room.controller
+      ? this.pickOpenPositionNear(
+          context,
+          room.controller.pos,
+          1,
+          config.CONSTRUCTION.FUTURE_INFRA.LINK_CONTROLLER_RANGE || 2,
+          used,
+        )
+      : null;
+
+    var sourceTarget = Math.min(
+      linkGoals.sourceLinks || 0,
+      context.state.sources ? context.state.sources.length : 0,
+      Math.max(0, totalLinks - (controllerLinkPos ? 1 : 0)),
+    );
+
+    for (
+      var i = 0;
+      context.state.sources && i < context.state.sources.length && sourceLinks.length < sourceTarget;
+      i++
+    ) {
+      var source = context.state.sources[i];
+      var container = context.state.sourceContainersBySourceId
+        ? context.state.sourceContainersBySourceId[source.id]
+        : null;
+      var anchorPos = container ? container.pos : source.pos;
+      var linkPos = this.pickOpenPositionNear(
+        context,
+        anchorPos,
+        1,
+        config.CONSTRUCTION.FUTURE_INFRA.LINK_SOURCE_RANGE || 2,
+        used,
+      );
+
+      if (linkPos) {
+        sourceLinks.push({
+          sourceId: source.id,
+          pos: this.serializePos(linkPos),
+        });
+      }
+    }
+
+    if (
+      storagePos &&
+      linkGoals.storageLink &&
+      controllerLinkPos &&
+      sourceLinks.length + 1 < totalLinks
+    ) {
+      storageLinkPos = this.pickPreferredAnchorSlot(
+        context,
+        storagePos,
+        used,
+        "utility_slot",
+      );
+
+      if (!storageLinkPos) {
+        storageLinkPos = this.pickOpenPositionNear(
+          context,
+          storagePos,
+          1,
+          config.CONSTRUCTION.FUTURE_INFRA.STORAGE_LINK_RANGE || 2,
+          used,
+        );
+      }
+    }
+
+    var ready =
+      (!linkGoals.controllerLink || !!controllerLinkPos) &&
+      sourceLinks.length >= sourceTarget &&
+      (!linkGoals.storageLink || !!storageLinkPos);
+
+    return {
+      enabled: true,
+      ready: ready,
+      totalTarget: totalLinks,
+      controller: this.serializePos(controllerLinkPos),
+      sources: sourceLinks,
+      storage: this.serializePos(storageLinkPos),
+    };
+  },
+
+  buildTerminalPlan(context, plan, storagePos, linkPlan) {
+    var advancedGoals =
+      plan.goals && plan.goals.advancedStructures
+        ? plan.goals.advancedStructures
+        : {};
+
+    if (!advancedGoals.terminal) {
+      return {
+        enabled: false,
+        ready: false,
+        pos: null,
+      };
+    }
+
+    var used = {};
+    this.markSerializedPosUsed(used, linkPlan && linkPlan.controller);
+    this.markSerializedPosUsed(used, linkPlan && linkPlan.storage);
+    if (linkPlan && linkPlan.sources) {
+      for (var i = 0; i < linkPlan.sources.length; i++) {
+        this.markSerializedPosUsed(used, linkPlan.sources[i].pos);
+      }
+    }
+
+    var terminalPos =
+      this.pickPreferredAnchorSlot(
+        context,
+        storagePos,
+        used,
+        "hub_slot",
+      ) ||
+      this.pickOpenPositionNear(
+        context,
+        storagePos,
+        1,
+        config.CONSTRUCTION.FUTURE_INFRA.TERMINAL_RANGE_FROM_STORAGE || 2,
+        used,
+      );
+
+    return {
+      enabled: true,
+      ready: !!terminalPos,
+      pos: this.serializePos(terminalPos),
+    };
+  },
+
+  buildExtractorPlan(context, plan) {
+    if (!this.hasPlanAction(plan, "extractor")) {
+      return {
+        enabled: false,
+        ready: false,
+        mineralId: null,
+        pos: null,
+      };
+    }
+
+    var minerals = context.room.find(FIND_MINERALS);
+    var mineral = minerals && minerals.length > 0 ? minerals[0] : null;
+
+    return {
+      enabled: !!mineral,
+      ready: !!mineral,
+      mineralId: mineral ? mineral.id : null,
+      pos: this.serializePos(mineral ? mineral.pos : null),
+    };
+  },
+
+  buildLabPlan(context, plan, storagePos, terminalPlan) {
+    var advancedGoals =
+      plan.goals && plan.goals.advancedStructures
+        ? plan.goals.advancedStructures
+        : {};
+    var targetCount = Math.min(
+      config.CONSTRUCTION.FUTURE_INFRA.LAB_CLUSTER_SIZE_AT_RCL6 ||
+        roadmap.getDesiredLabCount(
+          context.room.controller ? context.room.controller.level : 0,
+        ),
+      advancedGoals.labs || 0,
+      roadmap.getDesiredLabCount(
+        context.room.controller ? context.room.controller.level : 0,
+      ),
+    );
+
+    if (targetCount <= 0) {
+      return {
+        enabled: false,
+        ready: false,
+        targetCount: 0,
+        positions: [],
+      };
+    }
+
+    var used = {};
+    this.markSerializedPosUsed(used, terminalPlan && terminalPlan.pos);
+
+    var centerPos = storagePos || (context.state.spawns && context.state.spawns[0]
+      ? context.state.spawns[0].pos
+      : null);
+    var positions = this.pickClusterPositions(
+      context,
+      centerPos,
+      targetCount,
+      config.CONSTRUCTION.FUTURE_INFRA.LAB_RANGE_FROM_STORAGE || 4,
+      used,
+    );
+
+    return {
+      enabled: true,
+      ready: positions.length >= targetCount,
+      targetCount: targetCount,
+      positions: _.map(positions, this.serializePos, this),
+    };
+  },
+
+  buildRemoteScalingPlan(context, plan, futureFlags) {
+    var scaling = config.REMOTE_MINING && config.REMOTE_MINING.SCALING
+      ? config.REMOTE_MINING.SCALING
+      : {};
+    var controllerLevel = context.room.controller ? context.room.controller.level : 0;
+    var capMap = scaling.recommendedSitesByControllerLevel || {};
+    var profileKey =
+      plan.goals && plan.goals.remoteScaling
+        ? plan.goals.remoteScaling.profile
+        : "baseline";
+
+    return {
+      enabled: scaling.ENABLED === true,
+      profile: scaling.profiles && scaling.profiles[profileKey]
+        ? scaling.profiles[profileKey]
+        : profileKey,
+      recommendedSiteCap:
+        Object.prototype.hasOwnProperty.call(capMap, controllerLevel)
+          ? capMap[controllerLevel]
+          : controllerLevel >= 4
+            ? 3
+            : 2,
+      throughputReady: !!(futureFlags && futureFlags.linkPlan && futureFlags.linkPlan.ready),
+      advancedLogisticsReady: !!(
+        futureFlags &&
+        futureFlags.terminalPlan &&
+        futureFlags.terminalPlan.ready
+      ),
+    };
+  },
+
+  getStoragePlanningPosition(context) {
+    var storage = context.state.structuresByType[STRUCTURE_STORAGE];
+    if (storage && storage.length > 0) {
+      return storage[0].pos;
+    }
+
+    var storageSites = this.getSitesByType(context, STRUCTURE_STORAGE);
+    if (storageSites.length > 0) {
+      return storageSites[0].pos;
+    }
+
+    var spawn = context.state.spawns[0];
+    if (!spawn) return null;
+
+    var candidates = [
+      new RoomPosition(spawn.pos.x + 2, spawn.pos.y, context.room.name),
+      new RoomPosition(spawn.pos.x - 2, spawn.pos.y, context.room.name),
+      new RoomPosition(spawn.pos.x, spawn.pos.y + 2, context.room.name),
+      new RoomPosition(spawn.pos.x, spawn.pos.y - 2, context.room.name),
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (this.isPlanningPositionOpen(context, candidates[i], {})) {
+        return candidates[i];
+      }
+    }
+
+    return null;
+  },
+
+  pickPreferredAnchorSlot(context, fallbackCenterPos, used, tag) {
+    var anchor = this.getAnchorOrigin(context);
+    if (!anchor) return null;
+
+    var reserved = stamps.getReservedPositions(anchor, "anchor_v1", tag);
+    if (!fallbackCenterPos) fallbackCenterPos = new RoomPosition(anchor.x, anchor.y, anchor.roomName);
+
+    reserved.sort(function (a, b) {
+      return a.getRangeTo(fallbackCenterPos) - b.getRangeTo(fallbackCenterPos);
+    });
+
+    for (var i = 0; i < reserved.length; i++) {
+      if (this.isPlanningPositionOpen(context, reserved[i], used)) {
+        this.markPosUsed(used, reserved[i]);
+        return reserved[i];
+      }
+    }
+
+    return null;
+  },
+
+  pickOpenPositionNear(context, centerPos, minRange, maxRange, used) {
+    if (!centerPos) return null;
+
+    var positions = this.getNearbyPositions(centerPos, minRange, maxRange);
+
+    for (var i = 0; i < positions.length; i++) {
+      if (this.isPlanningPositionOpen(context, positions[i], used)) {
+        this.markPosUsed(used, positions[i]);
+        return positions[i];
+      }
+    }
+
+    return null;
+  },
+
+  pickClusterPositions(context, centerPos, count, maxRange, used) {
+    if (!centerPos || count <= 0) return [];
+
+    var candidates = this.getNearbyPositions(centerPos, 1, maxRange);
+    var open = [];
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (this.isPlanningPositionOpen(context, candidates[i], used)) {
+        open.push(candidates[i]);
+      }
+    }
+
+    for (var a = 0; a < open.length; a++) {
+      for (var b = a + 1; b < open.length; b++) {
+        for (var c = b + 1; c < open.length; c++) {
+          var cluster = [open[a], open[b], open[c]];
+
+          if (count < 3) {
+            cluster = cluster.slice(0, count);
+          }
+
+          if (this.isTightCluster(cluster)) {
+            for (var j = 0; j < cluster.length; j++) {
+              this.markPosUsed(used, cluster[j]);
+            }
+            return cluster;
+          }
+        }
+      }
+    }
+
+    var fallback = [];
+    for (var k = 0; k < open.length && fallback.length < count; k++) {
+      this.markPosUsed(used, open[k]);
+      fallback.push(open[k]);
+    }
+
+    return fallback;
+  },
+
+  isTightCluster(positions) {
+    for (var i = 0; i < positions.length; i++) {
+      for (var j = i + 1; j < positions.length; j++) {
+        if (positions[i].getRangeTo(positions[j]) > 2) {
+          return false;
+        }
+      }
+    }
+
+    return positions.length > 0;
+  },
+
+  getNearbyPositions(centerPos, minRange, maxRange) {
+    var positions = [];
+
+    for (var dx = -maxRange; dx <= maxRange; dx++) {
+      for (var dy = -maxRange; dy <= maxRange; dy++) {
+        if (dx === 0 && dy === 0) continue;
+
+        var x = centerPos.x + dx;
+        var y = centerPos.y + dy;
+        var range = Math.max(Math.abs(dx), Math.abs(dy));
+
+        if (range < minRange || range > maxRange) continue;
+        if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+
+        positions.push(new RoomPosition(x, y, centerPos.roomName));
+      }
+    }
+
+    positions.sort(function (a, b) {
+      return centerPos.getRangeTo(a) - centerPos.getRangeTo(b);
+    });
+
+    return positions;
+  },
+
+  isPlanningPositionOpen(context, pos, used) {
+    if (!pos) return false;
+    if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) return false;
+    if (this.isPosUsed(used, pos)) return false;
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    var sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+    if (sites.length > 0) return false;
+
+    return !_.some(structures, function (structure) {
+      return (
+        structure.structureType !== STRUCTURE_ROAD &&
+        structure.structureType !== STRUCTURE_RAMPART
+      );
+    });
+  },
+
+  isPosUsed(used, pos) {
+    return !!used[this.toPosKey(pos)];
+  },
+
+  markPosUsed(used, pos) {
+    if (!pos) return;
+    used[this.toPosKey(pos)] = true;
+  },
+
+  markSerializedPosUsed(used, pos) {
+    if (!pos) return;
+    used[pos.x + ":" + pos.y] = true;
+  },
+
+  toPosKey(pos) {
+    return pos.x + ":" + pos.y;
+  },
+
+  serializePos(pos) {
+    if (!pos) return null;
+
+    return {
+      x: pos.x,
+      y: pos.y,
+      roomName: pos.roomName,
+    };
+  },
+
+  hasPlanAction(plan, action) {
+    return !!plan && !!plan.buildList && plan.buildList.indexOf(action) !== -1;
   },
 
   getSitesByType(context, structureType) {

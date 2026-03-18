@@ -110,6 +110,15 @@ module.exports = {
     PLAN_INTERVAL: 50,
     REMOTE_MAX_SITES: 4,
     REMOTE_PLAN_INTERVAL: 75,
+    ADVANCED_PLAN_INTERVAL: 250,
+    FUTURE_INFRA: {
+      LINK_CONTROLLER_RANGE: 2,
+      LINK_SOURCE_RANGE: 2,
+      STORAGE_LINK_RANGE: 2,
+      TERMINAL_RANGE_FROM_STORAGE: 2,
+      LAB_RANGE_FROM_STORAGE: 4,
+      LAB_CLUSTER_SIZE_AT_RCL6: 3,
+    },
   },
 
   /*
@@ -271,9 +280,45 @@ module.exports = {
   REMOTE_MINING: {
     ENABLED: true,
     phase2WorkersDefault: 1,
+    SCALING: {
+      ENABLED: true,
+      recommendedSitesByControllerLevel: {
+        1: 0,
+        2: 0,
+        3: 1,
+        4: 3,
+        5: 4,
+        6: 4,
+      },
+      profiles: {
+        baseline: "manual_phase_two",
+        throughput_prep: "storage_backed",
+        advanced_prep: "terminal_ready",
+      },
+    },
 
     SITES: {
       E11N33: {
+        enabled: true,
+        homeRoom: "E12N33",
+        phase: 2,
+        jrWorkers: 2,
+        remoteWorkers: 1,
+
+        reservation: {
+          enabled: true,
+          reservers: 1,
+          renewBelow: 2000,
+        },
+
+        sourceDefaults: {
+          miners: 1,
+          haulers: 1,
+        },
+
+        sourcesById: {},
+      },
+      E13N32: {
         enabled: true,
         homeRoom: "E12N33",
         phase: 1,

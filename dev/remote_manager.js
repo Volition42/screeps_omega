@@ -99,7 +99,8 @@ module.exports = {
   getHomeRoomPlan(room, state, remoteSites) {
     const sites = remoteSites || [];
     const controllerLevel = room.controller ? room.controller.level : 0;
-    const recommendedSiteCap = controllerLevel >= 4 ? 3 : 2;
+    const scalingHooks = this.getFutureScalingHooks(room, controllerLevel);
+    const recommendedSiteCap = scalingHooks.recommendedSiteCap;
     const activeSites = _.filter(sites, function (site) {
       return site.enabled;
     }).length;
@@ -126,6 +127,7 @@ module.exports = {
       phases: _.map(sites, function (site) {
         return site.phaseLabel;
       }),
+      scalingHooks: scalingHooks,
     };
   },
 
@@ -665,5 +667,47 @@ module.exports = {
       default:
         return "phase1_jrworker";
     }
+  },
+
+  getFutureScalingHooks(room, controllerLevel) {
+    var scaling = config.REMOTE_MINING && config.REMOTE_MINING.SCALING
+      ? config.REMOTE_MINING.SCALING
+      : {};
+    var capMap = scaling.recommendedSitesByControllerLevel || {};
+    var construction =
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].construction
+        ? Memory.rooms[room.name].construction
+        : null;
+    var futurePlan = construction && construction.futurePlan
+      ? construction.futurePlan
+      : null;
+
+    return {
+      enabled: scaling.ENABLED === true,
+      recommendedSiteCap:
+        Object.prototype.hasOwnProperty.call(capMap, controllerLevel)
+          ? capMap[controllerLevel]
+          : controllerLevel >= 4
+            ? 3
+            : 2,
+      profile:
+        futurePlan &&
+        futurePlan.remoteScaling &&
+        futurePlan.remoteScaling.profile
+          ? futurePlan.remoteScaling.profile
+          : "baseline",
+      throughputReady: !!(
+        futurePlan &&
+        futurePlan.remoteScaling &&
+        futurePlan.remoteScaling.throughputReady
+      ),
+      advancedLogisticsReady: !!(
+        futurePlan &&
+        futurePlan.remoteScaling &&
+        futurePlan.remoteScaling.advancedLogisticsReady
+      ),
+    };
   },
 };

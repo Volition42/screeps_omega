@@ -65,6 +65,23 @@ module.exports = {
         "internalRoads",
         "defense",
       ],
+      goals: {
+        logisticsTier: "storage_backbone",
+        linkPlanning: {
+          enabled: false,
+          controllerLink: false,
+          sourceLinks: 0,
+          storageLink: false,
+        },
+        advancedStructures: {
+          terminal: false,
+          extractor: false,
+          labs: 0,
+        },
+        remoteScaling: {
+          profile: "baseline",
+        },
+      },
     },
 
     rcl5: {
@@ -77,8 +94,25 @@ module.exports = {
         "storage",
         "internalRoads",
         "defense",
+        "links",
       ],
-      placeholders: ["links", "second_spawn_support", "remote_phase_two_rollout"],
+      goals: {
+        logisticsTier: "link_backbone",
+        linkPlanning: {
+          enabled: true,
+          controllerLink: true,
+          sourceLinks: 1,
+          storageLink: false,
+        },
+        advancedStructures: {
+          terminal: false,
+          extractor: false,
+          labs: 0,
+        },
+        remoteScaling: {
+          profile: "throughput_prep",
+        },
+      },
     },
 
     rcl6: {
@@ -91,8 +125,28 @@ module.exports = {
         "storage",
         "internalRoads",
         "defense",
+        "links",
+        "terminal",
+        "extractor",
+        "labs",
       ],
-      placeholders: ["labs", "terminal", "remote_scoring", "advanced_defense"],
+      goals: {
+        logisticsTier: "advanced_logistics",
+        linkPlanning: {
+          enabled: true,
+          controllerLink: true,
+          sourceLinks: 1,
+          storageLink: true,
+        },
+        advancedStructures: {
+          terminal: true,
+          extractor: true,
+          labs: 3,
+        },
+        remoteScaling: {
+          profile: "advanced_prep",
+        },
+      },
     },
   },
 
@@ -104,8 +158,7 @@ module.exports = {
       phase: phase,
       roadmapPhase: roadmapPhase,
       buildList: plan.buildList.slice(),
-      actions: plan.buildList.slice(),
-      placeholders: plan.placeholders ? plan.placeholders.slice() : [],
+      goals: this.cloneGoals(plan.goals || {}),
     };
   },
 
@@ -133,5 +186,22 @@ module.exports = {
 
   getDesiredTowerCount(controllerLevel) {
     return CONTROLLER_STRUCTURES[STRUCTURE_TOWER][controllerLevel] || 0;
+  },
+
+  getDesiredLinkCount(controllerLevel) {
+    return CONTROLLER_STRUCTURES[STRUCTURE_LINK][controllerLevel] || 0;
+  },
+
+  getDesiredLabCount(controllerLevel) {
+    return CONTROLLER_STRUCTURES[STRUCTURE_LAB][controllerLevel] || 0;
+  },
+
+  getDesiredStructureCount(controllerLevel, structureType) {
+    if (!CONTROLLER_STRUCTURES[structureType]) return 0;
+    return CONTROLLER_STRUCTURES[structureType][controllerLevel] || 0;
+  },
+
+  cloneGoals(goals) {
+    return JSON.parse(JSON.stringify(goals || {}));
   },
 };

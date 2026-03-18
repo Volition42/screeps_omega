@@ -202,4 +202,34 @@ module.exports = {
       );
     }
   },
+
+  forEachReservedPosition(origin, stampName, fn, context) {
+    var stamp = this.getStamp(stampName);
+    if (!stamp) return;
+
+    for (var i = 0; i < stamp.reserved.length; i++) {
+      var cell = stamp.reserved[i];
+      fn.call(
+        context,
+        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
+        cell,
+      );
+    }
+  },
+
+  getReservedPositions(origin, stampName, tag) {
+    var positions = [];
+
+    this.forEachReservedPosition(
+      origin,
+      stampName,
+      function (pos, cell) {
+        if (tag && cell.tag !== tag) return;
+        positions.push(pos);
+      },
+      this,
+    );
+
+    return positions;
+  },
 };
