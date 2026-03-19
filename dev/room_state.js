@@ -299,17 +299,12 @@ module.exports = {
     var miners = roleCounts.miner || 0;
     var haulers = roleCounts.hauler || 0;
     var laborers = workers + jrWorkers;
-    var sourceCount = state.sources ? state.sources.length : 0;
+    var totalEconomyCreeps = laborers + miners + haulers;
     var minimumEnergy = Math.min(300, state.energyCapacityAvailable || 300);
-    var requiresHaulers =
-      desiredTotalHaulers > 0 && (state.sourceContainers || []).length > 0;
 
     if (laborers <= 0) return false;
-    if (sourceCount > 0 && miners <= 0) return false;
-    if (requiresHaulers && haulers <= 0) {
-      return false;
-    }
-    if (state.energyAvailable < minimumEnergy && laborers < 2) {
+    if (totalEconomyCreeps <= 0) return false;
+    if (state.energyAvailable < minimumEnergy && totalEconomyCreeps <= 1) {
       return false;
     }
 
