@@ -12,13 +12,11 @@ Threat mode or low tower energy:
 - spawn
 - towers
 - extensions
-- controller container
 - storage
 
 Normal mode:
 - spawn
 - extensions
-- controller container
 - storage
 - towers below reserve threshold
 

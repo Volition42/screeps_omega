@@ -5,12 +5,11 @@ Dynamic body builder.
 Purpose:
 - Provide role bodies based on room energy capacity
 - Keep early game simple and scale through early controller levels
-- Support both local and remote workforce roles
+- Support the home-room workforce only
 
 Important Notes:
-- Remote JrWorkers scale with home room energy capacity
-- Remote phase 1 bodies favor extra carry and move for travel efficiency
-- Reservers scale separately because CLAIM parts have different cost breakpoints
+- Upgrader bodies now carry their own energy buffer because they no longer
+  stand on a dedicated controller container
 */
 
 module.exports = {
@@ -25,21 +24,6 @@ module.exports = {
     switch (role) {
       case "jrworker":
         return [WORK, CARRY, MOVE];
-
-      case "remotejrworker":
-        return this.getRemoteJrWorkerBody(tier);
-
-      case "remoteworker":
-        return this.getRemoteWorkerBody(tier);
-
-      case "remoteminer":
-        return this.getRemoteMinerBody(tier);
-
-      case "remotehauler":
-        return this.getRemoteHaulerBody(tier);
-
-      case "reserver":
-        return this.getReserverBody(energyCapacity);
 
       case "worker":
         return this.getWorkerBody(tier);
@@ -59,9 +43,6 @@ module.exports = {
       case "defender":
         return this.getDefenderBody(energyCapacity, threatLevel);
 
-      case "rangeddefender":
-        return this.getRangedDefenderBody(energyCapacity, threatLevel);
-
       default:
         return [WORK, CARRY, MOVE];
     }
@@ -71,60 +52,6 @@ module.exports = {
     if (energyCapacity >= 800) return 3;
     if (energyCapacity >= 550) return 2;
     return 1;
-  },
-
-  getRemoteJrWorkerBody(tier) {
-    switch (tier) {
-      case 3:
-        return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-      case 2:
-        return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
-      default:
-        return [WORK, CARRY, MOVE];
-    }
-  },
-
-  getRemoteWorkerBody(tier) {
-    switch (tier) {
-      case 3:
-        return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-      case 2:
-        return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
-      default:
-        return [WORK, CARRY, MOVE];
-    }
-  },
-
-  getRemoteMinerBody(tier) {
-    switch (tier) {
-      case 3:
-        return [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE];
-      case 2:
-        return [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE];
-      default:
-        return [WORK, WORK, CARRY, MOVE];
-    }
-  },
-
-  getRemoteHaulerBody(tier) {
-    switch (tier) {
-      case 3:
-        return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE];
-      case 2:
-        return [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-      default:
-        return [CARRY, CARRY, CARRY, MOVE, MOVE];
-    }
-  },
-
-  getReserverBody(energyCapacity) {
-    // Developer note:
-    // CLAIM parts cost 600 each, so use simple reservation tiers.
-    if (energyCapacity >= 1300) {
-      return [CLAIM, CLAIM, MOVE, MOVE];
-    }
-
-    return [CLAIM, MOVE];
   },
 
   getWorkerBody(tier) {
@@ -163,9 +90,9 @@ module.exports = {
   getUpgraderBody(tier) {
     switch (tier) {
       case 3:
-        return [WORK, WORK, WORK, WORK, CARRY, MOVE];
+        return [WORK, WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE];
       case 2:
-        return [WORK, WORK, WORK, CARRY, MOVE];
+        return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
       default:
         return [WORK, CARRY, MOVE];
     }
@@ -232,43 +159,5 @@ module.exports = {
     }
 
     return [ATTACK, MOVE, MOVE];
-  },
-
-  getRangedDefenderBody(energyCapacity, threatLevel) {
-    if (energyCapacity >= 950 && threatLevel >= 3) {
-      return [
-        TOUGH,
-        TOUGH,
-        RANGED_ATTACK,
-        RANGED_ATTACK,
-        RANGED_ATTACK,
-        RANGED_ATTACK,
-        MOVE,
-        MOVE,
-        MOVE,
-        MOVE,
-        MOVE,
-        MOVE,
-      ];
-    }
-
-    if (energyCapacity >= 760 && threatLevel >= 2) {
-      return [
-        TOUGH,
-        RANGED_ATTACK,
-        RANGED_ATTACK,
-        RANGED_ATTACK,
-        MOVE,
-        MOVE,
-        MOVE,
-        MOVE,
-      ];
-    }
-
-    if (energyCapacity >= 560) {
-      return [RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE, MOVE];
-    }
-
-    return [RANGED_ATTACK, MOVE, MOVE];
   },
 };

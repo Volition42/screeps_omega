@@ -10,7 +10,8 @@ Purpose:
 
 Important Notes:
 - Workers and repairers use storage first whenever it has energy
-- Hauler emergency ordering is unchanged; this module only formalizes it
+- Upgraders now self-supply, so haulers no longer reserve energy for a
+  controller-side container
 - All helpers consume room/state inputs and avoid extra global scans
 */
 
@@ -143,13 +144,6 @@ module.exports = {
       const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
       if (extensionTarget) return extensionTarget;
 
-      const controllerContainer = this.getControllerContainerDeliveryTarget(
-        room,
-        creep,
-        config.LOGISTICS.controllerContainerReserve,
-      );
-      if (controllerContainer) return controllerContainer;
-
       const storageTarget = this.getStorageDeliveryTarget(room);
       if (storageTarget) return storageTarget;
 
@@ -158,13 +152,6 @@ module.exports = {
 
     const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
     if (extensionTarget) return extensionTarget;
-
-    const controllerContainer = this.getControllerContainerDeliveryTarget(
-      room,
-      creep,
-      config.LOGISTICS.controllerContainerReserve,
-    );
-    if (controllerContainer) return controllerContainer;
 
     const storageTarget = this.getStorageDeliveryTarget(room);
     if (storageTarget) return storageTarget;
@@ -208,20 +195,6 @@ module.exports = {
         return (
           structure.structureType === STRUCTURE_EXTENSION &&
           structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-        );
-      },
-    });
-  },
-
-  getControllerContainerDeliveryTarget(room, creep, reserve) {
-    return creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (structure) {
-        return (
-          structure.structureType === STRUCTURE_CONTAINER &&
-          room.controller &&
-          structure.pos.getRangeTo(room.controller) <= 4 &&
-          structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-          (structure.store[RESOURCE_ENERGY] || 0) < reserve
         );
       },
     });

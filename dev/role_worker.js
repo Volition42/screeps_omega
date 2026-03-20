@@ -14,7 +14,7 @@ Withdrawal priority:
 - harvest source as fallback
 
 Important Notes:
-- Workers no longer prefer controller containers for withdrawal
+- Workers pull from the shared room energy buffers
 - Shared helper keeps worker energy logic aligned with repair creeps
 */
 

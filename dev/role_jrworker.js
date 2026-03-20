@@ -9,7 +9,7 @@ Purpose:
 
 Important Notes:
 - Withdrawal priority:
-  storage -> non-controller containers -> harvest
+  storage -> containers -> harvest
 - Delivery priority:
   spawn -> extensions -> towers -> controller
 */
@@ -135,8 +135,6 @@ module.exports = {
         filter: function (structure) {
           return (
             structure.structureType === STRUCTURE_CONTAINER &&
-            (!creep.room.controller ||
-              structure.pos.getRangeTo(creep.room.controller) > 4) &&
             structure.store &&
             (structure.store[RESOURCE_ENERGY] || 0) > 0
           );
@@ -190,15 +188,6 @@ module.exports = {
       target.pos.roomName !== creep.room.name ||
       !target.store ||
       (target.store[RESOURCE_ENERGY] || 0) <= 0
-    ) {
-      this.clearWithdrawalTarget(creep);
-      return null;
-    }
-
-    if (
-      target.structureType === STRUCTURE_CONTAINER &&
-      creep.room.controller &&
-      target.pos.getRangeTo(creep.room.controller) <= 4
     ) {
       this.clearWithdrawalTarget(creep);
       return null;

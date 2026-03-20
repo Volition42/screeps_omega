@@ -1,21 +1,19 @@
 /*
 Developer Summary:
-Reactive defense escalation planner.
+Reactive home-room defense escalation planner.
 
 Purpose:
 - Evaluate immediate hostile pressure in owned rooms
-- Evaluate immediate hostile pressure in active configured remote rooms
-- Translate visible threats into simple defender demand for spawning
+- Translate visible home threats into simple defender demand for spawning
+- Keep the first defense pass narrow, reactive, and CPU-cheap
 
 Important Notes:
-- This pass is intentionally narrow and defensive only
-- Remote escalation reacts to visible hostiles plus hostile reservation / claim
-  pressure on active remote rooms
+- This planner is home-room only
+- No proactive combat escalation is included
 - Defender demand stays capped to avoid broad combat overreach
 */
 
 const config = require("config");
-const remoteManager = require("remote_manager");
 const utils = require("utils");
 
 function getActiveBodyparts(target, partType) {
@@ -34,7 +32,6 @@ module.exports = {
       return {
         enabled: false,
         homeThreat: null,
-        remoteThreats: [],
         activeThreats: [],
         hasThreats: false,
         requiredDefenders: 0,
@@ -42,73 +39,27 @@ module.exports = {
       };
     }
 
-    var sites =
-      state && state.remoteSites
-        ? state.remoteSites
-        : remoteManager.getHomeRoomSites(room.name, state);
     var homeThreat = this.getOwnedRoomThreat(room, state, reaction);
-    var remoteThreats = reaction.REMOTE_ENABLED
-      ? this.getRemoteThreats(room, state, sites, reaction)
-      : [];
-    var activeThreats = [];
-
-    if (homeThreat.active) {
-      activeThreats.push(homeThreat);
-    }
-
-    for (var i = 0; i < remoteThreats.length; i++) {
-      if (remoteThreats[i].active) {
-        activeThreats.push(remoteThreats[i]);
-      }
-    }
-
-    activeThreats.sort(function (a, b) {
-      if (a.priority !== b.priority) {
-        return b.priority - a.priority;
-      }
-
-      if (a.threatScore !== b.threatScore) {
-        return b.threatScore - a.threatScore;
-      }
-
-      if (a.hostileCount !== b.hostileCount) {
-        return b.hostileCount - a.hostileCount;
-      }
-
-      return a.roomName.localeCompare(b.roomName);
-    });
+    var activeThreats = homeThreat.active ? [homeThreat] : [];
 
     return {
       enabled: reaction.ENABLED,
       homeThreat: homeThreat,
-      remoteThreats: remoteThreats,
       activeThreats: activeThreats,
       hasThreats: activeThreats.length > 0,
-      requiredDefenders: _.sum(
-        _.map(activeThreats, function (threat) {
-          return threat.desiredDefenders || 0;
-        }),
-      ),
-      threatenedRooms: _.map(activeThreats, function (threat) {
-        return threat.roomName;
-      }),
+      requiredDefenders: homeThreat.desiredDefenders || 0,
+      threatenedRooms: activeThreats.length > 0 ? [room.name] : [],
     };
   },
 
   getReactionConfig() {
     var defaults = {
       ENABLED: true,
-      REMOTE_ENABLED: true,
       MAX_HOME_DEFENDERS: 3,
-      MAX_REMOTE_DEFENDERS: 3,
       HOME_INVASION_PRIORITY: 1100,
-      REMOTE_INVASION_PRIORITY: 180,
-      REMOTE_CLAIM_PRIORITY: 130,
       HOME_SPAWN_COOLDOWN: 5,
-      REMOTE_SPAWN_COOLDOWN: 15,
       REPLACE_TTL: 90,
       SCORE_PER_HOME_DEFENDER: 6,
-      SCORE_PER_REMOTE_DEFENDER: 5,
       HOSTILE_CREEP_BASE_SCORE: 1,
       ATTACK_PART_SCORE: 1,
       RANGED_PART_SCORE: 1,
@@ -134,22 +85,19 @@ module.exports = {
         ? room.find(FIND_HOSTILE_STRUCTURES)
         : [],
     );
-    var classification = this.classifyThreat("home", hostiles, false);
+    var classification = hostiles.length > 0 ? "home_invasion" : "clear";
 
     return this.createThreatDescriptor({
       roomName: room.name,
       scope: "home",
       classification: classification,
-      type: classification,
-      priority: this.getThreatPriority(classification, reaction),
+      priority:
+        classification === "home_invasion"
+          ? reaction.HOME_INVASION_PRIORITY
+          : 0,
       hostiles: hostiles,
       hostileReservation: false,
-      desiredDefenders: this.getDesiredDefenderCount(
-        "home",
-        hostiles,
-        false,
-        reaction,
-      ),
+      desiredDefenders: this.getDesiredDefenderCount(hostiles, reaction),
       reaction: reaction,
       responseRole: "defender",
       spawnCooldown: reaction.HOME_SPAWN_COOLDOWN,
@@ -157,354 +105,74 @@ module.exports = {
     });
   },
 
-  getRemoteThreats(homeRoom, state, sites, reaction) {
-    var threats = [];
-
-    for (var i = 0; i < sites.length; i++) {
-      var site = sites[i];
-
-      if (!this.isActiveRemoteSite(site)) continue;
-
-      threats.push(this.getRemoteThreat(homeRoom, state, site, reaction));
-    }
-
-    return threats;
-  },
-
-  isActiveRemoteSite(site) {
-    if (!site || site.enabled === false) return false;
-    if (!site.phaseHooks || site.phaseHooks.phaseOneReady !== true) return false;
-
-    return (
-      (site.jrWorkers || 0) > 0 ||
-      (site.remoteWorkers || 0) > 0 ||
-      (site.reservation && site.reservation.enabled === true) ||
-      (site.assignedRoleCounts &&
-        (site.assignedRoleCounts.remotejrworker > 0 ||
-          site.assignedRoleCounts.remoteworker > 0 ||
-          site.assignedRoleCounts.remoteminer > 0 ||
-          site.assignedRoleCounts.remotehauler > 0 ||
-          site.assignedRoleCounts.reserver > 0))
-    );
-  },
-
-  getRemoteThreat(homeRoom, state, site, reaction) {
-    var remoteRoom = site.remoteRoom || Game.rooms[site.targetRoom] || null;
-    var cachedHostileCount = this.getCachedHostileCount(site);
-    var hostiles = remoteRoom
-      ? utils.getDefenseIntruders(
-          remoteRoom,
-          remoteRoom.find(FIND_HOSTILE_CREEPS),
-          typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
-            ? remoteRoom.find(FIND_HOSTILE_POWER_CREEPS)
-            : [],
-          typeof FIND_HOSTILE_STRUCTURES !== "undefined"
-            ? remoteRoom.find(FIND_HOSTILE_STRUCTURES)
-            : [],
-        )
-      : [];
-    var hostileReservation = this.hasHostileReservation(
-      site,
-      remoteRoom,
-      homeRoom,
-      hostiles,
-    );
-    var classification = this.classifyThreat(
-      "remote",
-      hostiles,
-      hostileReservation,
-      cachedHostileCount,
-    );
-
-    return this.createThreatDescriptor({
-      roomName: site.targetRoom,
-      scope: "remote",
-      classification: classification,
-      type: classification,
-      priority: this.getThreatPriority(classification, reaction),
-      hostiles: hostiles,
-      cachedHostileCount: cachedHostileCount,
-      hostileReservation: hostileReservation,
-      reaction: reaction,
-      desiredDefenders: this.getDesiredDefenderCount(
-        "remote",
-        hostiles,
-        hostileReservation,
-        reaction,
-        cachedHostileCount,
-      ),
-      responseRole: "rangeddefender",
-      spawnCooldown: reaction.REMOTE_SPAWN_COOLDOWN,
-      visible: !!remoteRoom,
-    });
-  },
-
-  classifyThreat(scope, hostiles, hostileReservation, cachedHostileCount) {
-    var invasionActive = this.hasInvasionThreat(hostiles, cachedHostileCount);
-    var claimPressure = hostileReservation || this.hasClaimPressure(hostiles);
-
-    if (scope === "home" && invasionActive) {
-      return "home_invasion";
-    }
-
-    if (scope === "remote" && invasionActive) {
-      return "remote_invasion";
-    }
-
-    if (scope === "remote" && claimPressure) {
-      return "remote_claim_pressure";
-    }
-
-    return "clear";
-  },
-
-  getThreatPriority(classification, reaction) {
-    switch (classification) {
-      case "home_invasion":
-        return reaction.HOME_INVASION_PRIORITY;
-      case "remote_invasion":
-        return reaction.REMOTE_INVASION_PRIORITY;
-      case "remote_claim_pressure":
-        return reaction.REMOTE_CLAIM_PRIORITY;
-      default:
-        return 0;
-    }
-  },
-
-  hasInvasionThreat(hostiles, cachedHostileCount) {
+  getDesiredDefenderCount(hostiles, reaction) {
     if (!hostiles || hostiles.length === 0) {
-      return (cachedHostileCount || 0) > 0;
+      return 0;
     }
+
+    var threatScore = this.getThreatScore(hostiles, reaction);
+    var scorePerDefender = Math.max(1, reaction.SCORE_PER_HOME_DEFENDER || 6);
+    var desired = Math.ceil(threatScore / scorePerDefender);
+
+    return Math.min(reaction.MAX_HOME_DEFENDERS || 3, Math.max(1, desired));
+  },
+
+  getThreatScore(hostiles, reaction) {
+    var score = 0;
 
     for (var i = 0; i < hostiles.length; i++) {
       var hostile = hostiles[i];
+      if (!hostile) continue;
 
-      if (hostile && hostile.structureType) {
-        return true;
-      }
-
-      if (hostile && hostile.pos) {
-        return true;
-      }
-    }
-
-    return (cachedHostileCount || 0) > 0;
-  },
-
-  hasHostileReservation(site, remoteRoom, homeRoom, hostiles) {
-    if (remoteRoom && remoteRoom.controller && remoteRoom.controller.reservation) {
-      var reservation = remoteRoom.controller.reservation;
-      var myUsername = this.getMyUsername(homeRoom);
-
-      if (!myUsername || reservation.username === myUsername) {
-        return false;
-      }
-
-      return this.hasClaimPressure(hostiles || []);
-    }
-
-    return !!(
-      site &&
-      site.reservationStatus &&
-      site.reservationStatus.status === "other"
-    );
-  },
-
-  hasClaimPressure(hostiles) {
-    for (var i = 0; i < hostiles.length; i++) {
-      if (getActiveBodyparts(hostiles[i], CLAIM) > 0) {
-        return true;
-      }
-    }
-
-    return false;
-  },
-
-  getDesiredDefenderCount(
-    scope,
-    hostiles,
-    hostileReservation,
-    reaction,
-    cachedHostileCount,
-  ) {
-    if (!hostiles || hostiles.length === 0) {
-      if ((cachedHostileCount || 0) > 0) {
-        return Math.min(
-          scope === "home"
-            ? reaction.MAX_HOME_DEFENDERS || 3
-            : reaction.MAX_REMOTE_DEFENDERS || 3,
-          Math.max(1, cachedHostileCount || 1),
+      if (hostile.structureType === STRUCTURE_INVADER_CORE) {
+        score += reaction.INVADER_CORE_BASE_SCORE || 4;
+        score +=
+          (typeof hostile.level === "number" ? hostile.level : 0) *
+          (reaction.INVADER_CORE_LEVEL_SCORE || 2);
+        score += Math.floor(
+          (hostile.hits || 0) / Math.max(1, reaction.INVADER_CORE_HITS_STEP || 100000),
         );
+        continue;
       }
 
-      return hostileReservation ? 1 : 0;
+      score += reaction.HOSTILE_CREEP_BASE_SCORE || 1;
+      score += getActiveBodyparts(hostile, ATTACK) * (reaction.ATTACK_PART_SCORE || 1);
+      score +=
+        getActiveBodyparts(hostile, RANGED_ATTACK) *
+        (reaction.RANGED_PART_SCORE || 1);
+      score += getActiveBodyparts(hostile, HEAL) * (reaction.HEAL_PART_SCORE || 2);
+      score += getActiveBodyparts(hostile, CLAIM) * (reaction.CLAIM_PART_SCORE || 2);
     }
 
-    var threatScore = this.getThreatScore(
-      hostiles,
-      hostileReservation,
-      reaction,
-      cachedHostileCount,
-    );
-    var scorePerDefender = Math.max(
-      1,
-      scope === "home"
-        ? reaction.SCORE_PER_HOME_DEFENDER || 6
-        : reaction.SCORE_PER_REMOTE_DEFENDER || 5,
-    );
-    var desired = Math.ceil(threatScore / scorePerDefender);
-
-    return Math.min(
-      scope === "home"
-        ? reaction.MAX_HOME_DEFENDERS || 3
-        : reaction.MAX_REMOTE_DEFENDERS || 3,
-      Math.max(1, desired),
-    );
+    return Math.max(score, hostiles.length);
   },
 
-  getThreatScore(hostiles, hostileReservation, reaction, cachedHostileCount) {
-    var score = hostileReservation ? 2 : 0;
+  createThreatDescriptor(options) {
+    var hostiles = options.hostiles || [];
+    var hostileCount = hostiles.length;
+    var threatScore = this.getThreatScore(hostiles, options.reaction || {});
+    var threatLevel = 1;
 
-    if ((!hostiles || hostiles.length === 0) && (cachedHostileCount || 0) > 0) {
-      return Math.max(
-        score,
-        (cachedHostileCount || 0) * (reaction.HOSTILE_CREEP_BASE_SCORE || 1),
-      );
-    }
-
-    for (var i = 0; i < hostiles.length; i++) {
-      score += this.getTargetThreatScore(hostiles[i], reaction);
-    }
-
-    return Math.max(score, hostiles.length > 0 ? 1 : 0);
-  },
-
-  getTargetThreatScore(target, reaction) {
-    if (!target) return 0;
-
-    if (target.structureType === STRUCTURE_INVADER_CORE) {
-      return this.getInvaderCoreThreatScore(target, reaction);
-    }
-
-    if (typeof target.getActiveBodyparts === "function") {
-      return (
-        (reaction.HOSTILE_CREEP_BASE_SCORE || 1) +
-        getActiveBodyparts(target, ATTACK) * (reaction.ATTACK_PART_SCORE || 1) +
-        getActiveBodyparts(target, RANGED_ATTACK) *
-          (reaction.RANGED_PART_SCORE || 1) +
-        getActiveBodyparts(target, HEAL) * (reaction.HEAL_PART_SCORE || 2) +
-        getActiveBodyparts(target, CLAIM) * (reaction.CLAIM_PART_SCORE || 2)
-      );
-    }
-
-    return 1;
-  },
-
-  getInvaderCoreThreatScore(target, reaction) {
-    var score = reaction.INVADER_CORE_BASE_SCORE || 4;
-    var level = typeof target.level === "number" ? target.level : 0;
-    var hitsStep = Math.max(1, reaction.INVADER_CORE_HITS_STEP || 100000);
-    var hitsScore =
-      typeof target.hits === "number" && target.hits > 0
-        ? Math.max(0, Math.ceil(target.hits / hitsStep) - 1)
-        : 0;
-
-    score += level * (reaction.INVADER_CORE_LEVEL_SCORE || 2);
-    score += hitsScore;
-
-    return score;
-  },
-
-  createThreatDescriptor(details) {
-    var hostiles = details.hostiles || [];
-    var cachedHostileCount = details.cachedHostileCount || 0;
-    var combatParts = 0;
-    var claimParts = 0;
-    var structureCount = 0;
-    var threatScore = this.getThreatScore(
-      hostiles,
-      details.hostileReservation === true,
-      details.reaction || this.getReactionConfig(),
-      cachedHostileCount,
-    );
-
-    for (var i = 0; i < hostiles.length; i++) {
-      combatParts += getActiveBodyparts(hostiles[i], ATTACK);
-      combatParts += getActiveBodyparts(hostiles[i], RANGED_ATTACK);
-      claimParts += getActiveBodyparts(hostiles[i], CLAIM);
-      if (hostiles[i] && hostiles[i].structureType) {
-        structureCount++;
-      }
-    }
-
-    var active =
-      details.classification && details.classification !== "clear";
+    if (threatScore >= 12) threatLevel = 3;
+    else if (threatScore >= 6) threatLevel = 2;
 
     return {
-      roomName: details.roomName,
-      scope: details.scope,
-      classification: details.classification || "clear",
-      type: details.type,
-      responseRole: details.responseRole || "defender",
-      priority: details.priority,
-      spawnCooldown: details.spawnCooldown || 0,
-      active: active,
-      visible: details.visible === true,
+      roomName: options.roomName,
+      scope: options.scope,
+      classification: options.classification,
+      type: options.classification,
+      priority: options.priority || 0,
       hostiles: hostiles,
-      hostileCount: Math.max(hostiles.length, cachedHostileCount),
-      structureCount: structureCount,
-      combatParts: combatParts,
-      claimParts: claimParts,
+      hostileCount: hostileCount,
+      hostileReservation: !!options.hostileReservation,
+      active: options.classification !== "clear",
+      desiredDefenders: options.desiredDefenders || 0,
       threatScore: threatScore,
-      threatLevel: active
-        ? Math.min(
-            4,
-            Math.max(
-              1,
-              details.desiredDefenders || 0,
-              Math.ceil(
-                threatScore /
-                  Math.max(
-                    1,
-                    details.scope === "home"
-                      ? (details.reaction || this.getReactionConfig())
-                          .SCORE_PER_HOME_DEFENDER || 6
-                      : (details.reaction || this.getReactionConfig())
-                          .SCORE_PER_REMOTE_DEFENDER || 5,
-                  ),
-              ),
-            ),
-          )
-        : 0,
-      invasionActive:
-        (details.classification || "clear") === "home_invasion" ||
-        (details.classification || "clear") === "remote_invasion",
-      claimPressure:
-        details.hostileReservation === true || claimParts > 0,
-      hostileReservation: details.hostileReservation === true,
-      desiredDefenders: active ? details.desiredDefenders || 1 : 0,
-      label: this.getThreatLabel(details.classification || "clear"),
+      threatLevel: threatLevel,
+      responseRole: options.responseRole || "defender",
+      spawnCooldown: options.spawnCooldown || 0,
+      visible: options.visible !== false,
     };
-  },
-
-  getCachedHostileCount(site) {
-    if (!site || !site.progress) return 0;
-    if (typeof site.progress.hostiles !== "number") return 0;
-
-    return Math.max(0, site.progress.hostiles);
-  },
-
-  getThreatLabel(classification) {
-    switch (classification) {
-      case "home_invasion":
-        return "HOME INVASION";
-      case "remote_invasion":
-        return "REMOTE INVASION";
-      case "remote_claim_pressure":
-        return "REMOTE CLAIM PRESSURE";
-      default:
-        return "CLEAR";
-    }
   },
 
   getThreatByRoom(defenseState, roomName) {
@@ -517,37 +185,5 @@ module.exports = {
     }
 
     return null;
-  },
-
-  getPreferredThreat(defenseState, preferredRoom) {
-    var preferredThreat = this.getThreatByRoom(defenseState, preferredRoom);
-
-    if (preferredThreat) {
-      return preferredThreat;
-    }
-
-    if (
-      !defenseState ||
-      !defenseState.activeThreats ||
-      defenseState.activeThreats.length === 0
-    ) {
-      return null;
-    }
-
-    return defenseState.activeThreats[0];
-  },
-
-  getMyUsername(room) {
-    if (
-      room &&
-      room.controller &&
-      room.controller.my &&
-      room.controller.owner &&
-      room.controller.owner.username
-    ) {
-      return room.controller.owner.username;
-    }
-
-    return remoteManager.getMyUsername();
   },
 };

@@ -33,9 +33,6 @@ module.exports = {
       : 0;
     var sourceContainersNeeded = state.sources ? state.sources.length : 0;
 
-    var controllerContainersBuilt = this.countControllerContainers(room, state);
-    var controllerContainersNeeded = 1;
-
     var extensionsNeeded = roadmap.getDesiredExtensionCount(
       room.controller.level,
     );
@@ -90,10 +87,6 @@ module.exports = {
 
       sourceContainersBuilt: sourceContainersBuilt,
       sourceContainersNeeded: sourceContainersNeeded,
-
-      controllerContainersBuilt: controllerContainersBuilt,
-      controllerContainersNeeded: controllerContainersNeeded,
-
       extensionsBuilt: extensionsBuilt,
       extensionsNeeded: extensionsNeeded,
 
@@ -135,7 +128,6 @@ module.exports = {
 
     status.bootstrapComplete =
       status.sourceContainersBuilt >= status.sourceContainersNeeded &&
-      status.controllerContainersBuilt >= status.controllerContainersNeeded &&
       this.hasEnoughRoadsForBootstrap(status, room);
 
     status.developingComplete =
@@ -172,10 +164,6 @@ module.exports = {
 
       sourceContainersBuilt: 0,
       sourceContainersNeeded: 0,
-
-      controllerContainersBuilt: 0,
-      controllerContainersNeeded: 0,
-
       extensionsBuilt: 0,
       extensionsNeeded: 0,
 
@@ -266,40 +254,6 @@ module.exports = {
     return built + sites;
   },
 
-  countControllerContainers(room, state) {
-    var built = state.controllerContainers
-      ? state.controllerContainers.length
-      : room.find(FIND_STRUCTURES, {
-          filter: function (s) {
-            return (
-              s.structureType === STRUCTURE_CONTAINER &&
-              room.controller &&
-              s.pos.getRangeTo(room.controller) <= 4
-            );
-          },
-        }).length;
-
-    var sites = state.sites
-      ? _.filter(state.sites, function (site) {
-          return (
-            site.structureType === STRUCTURE_CONTAINER &&
-            room.controller &&
-            site.pos.getRangeTo(room.controller) <= 4
-          );
-        }).length
-      : room.find(FIND_CONSTRUCTION_SITES, {
-          filter: function (s) {
-            return (
-              s.structureType === STRUCTURE_CONTAINER &&
-              room.controller &&
-              s.pos.getRangeTo(room.controller) <= 4
-            );
-          },
-        }).length;
-
-    return built + sites;
-  },
-
   getRoadGoal(room, state, plan, anchor, futurePlan) {
     var total = 0;
 
@@ -376,19 +330,14 @@ module.exports = {
 
     var estimate = 0;
     var sourceContainers = state.sourceContainers || [];
-    var controllerContainers = state.controllerContainers || [];
 
     for (var i = 0; i < sourceContainers.length; i++) {
       var sourceContainer = sourceContainers[i];
       estimate += Math.max(1, sourceContainer.pos.getRangeTo(spawn.pos));
+    }
 
-      for (var j = 0; j < controllerContainers.length; j++) {
-        var controllerContainer = controllerContainers[j];
-        estimate += Math.max(
-          1,
-          sourceContainer.pos.getRangeTo(controllerContainer.pos),
-        );
-      }
+    if (room.controller) {
+      estimate += Math.max(1, spawn.pos.getRangeTo(room.controller.pos) - 2);
     }
 
     return estimate;
@@ -574,7 +523,6 @@ module.exports = {
       terminal: null,
       extractor: null,
       labs: null,
-      remoteScaling: null,
     };
   },
 };

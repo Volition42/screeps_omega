@@ -26,7 +26,6 @@ const config = require("config");
 const constructionStatus = require("construction_status");
 const defenseManager = require("defense_manager");
 const logisticsManager = require("logistics_manager");
-const remoteManager = require("remote_manager");
 
 module.exports = {
   collect(room, profiler, roomLabelPrefix) {
@@ -43,16 +42,11 @@ module.exports = {
     var roleCounts = this.countRoleMap(roleMap);
     var sourceRoleMap = this.groupCreepsByKey(homeCreeps, "sourceId");
     var targetRoleMap = this.groupCreepsByKey(homeCreeps, "targetId");
-    var targetRoomRoleMap = this.groupCreepsByKey(homeCreeps, "targetRoom");
     var creepsByCurrentRoom = this.groupCreepsByCurrentRoom(homeCreeps);
     var sourceContainers = this.getSourceContainers(structures, sources);
     var sourceContainersBySourceId = this.getSourceContainersBySourceId(
       sourceContainers,
       sources,
-    );
-    var controllerContainers = this.getControllerContainers(
-      structures,
-      room.controller,
     );
     var extensions = structuresByType[STRUCTURE_EXTENSION] || [];
 
@@ -75,13 +69,11 @@ module.exports = {
       hostileCreeps: hostileCreeps,
       sourceContainers: sourceContainers,
       sourceContainersBySourceId: sourceContainersBySourceId,
-      controllerContainers: controllerContainers,
       extensions: extensions,
       roleMap: roleMap,
       roleCounts: roleCounts,
       sourceRoleMap: sourceRoleMap,
       targetRoleMap: targetRoleMap,
-      targetRoomRoleMap: targetRoomRoleMap,
       energyAvailable: room.energyAvailable,
       energyCapacityAvailable: room.energyCapacityAvailable,
       controllerLevel: room.controller ? room.controller.level : 0,
@@ -122,24 +114,6 @@ module.exports = {
     }
 
     var finalState = this.createState(sharedState, phase);
-
-    finalState.remoteSites =
-      profiler && roomLabelPrefix
-        ? profiler.wrap(
-            roomLabelPrefix + ".state.remoteSites",
-            remoteManager.getHomeRoomSites,
-            remoteManager,
-            room.name,
-            finalState,
-            profiler,
-            roomLabelPrefix + ".state",
-          )
-        : remoteManager.getHomeRoomSites(room.name, finalState);
-    finalState.remotePlan = remoteManager.getHomeRoomPlan(
-      room,
-      finalState,
-      finalState.remoteSites,
-    );
     finalState.defense = defenseManager.collect(room, finalState);
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
     finalState.buildStatus = constructionStatus.getStatus(room, finalState);
@@ -234,17 +208,6 @@ module.exports = {
     return grouped;
   },
 
-  getControllerContainers(structures, controller) {
-    if (!controller) return [];
-
-    return _.filter(structures, function (structure) {
-      return (
-        structure.structureType === STRUCTURE_CONTAINER &&
-        structure.pos.getRangeTo(controller) <= 4
-      );
-    });
-  },
-
   getSourceContainers(structures, sources) {
     return _.filter(structures, function (structure) {
       if (structure.structureType !== STRUCTURE_CONTAINER) return false;
@@ -282,9 +245,7 @@ module.exports = {
     if (
       room.controller &&
       room.controller.level >= 3 &&
-      buildStatus.sourceContainersBuilt >= buildStatus.sourceContainersNeeded &&
-      buildStatus.controllerContainersBuilt >=
-        buildStatus.controllerContainersNeeded
+      buildStatus.sourceContainersBuilt >= buildStatus.sourceContainersNeeded
     ) {
       return true;
     }

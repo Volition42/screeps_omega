@@ -144,18 +144,6 @@ module.exports = {
         console.log(`[CPU:room ${roomName}] ${parts.join(" | ")}`);
       }
 
-      if (roomGroup.remotes.length > 0) {
-        const remoteParts = [];
-
-        for (let i = 0; i < roomGroup.remotes.length; i++) {
-          remoteParts.push(
-            `${roomGroup.remotes[i].label}:${roomGroup.remotes[i].total.toFixed(3)}`,
-          );
-        }
-
-        console.log(`[CPU:remotes ${roomName}] ${remoteParts.join(" | ")}`);
-      }
-
       if (roomGroup.roles && roomGroup.roles.length > 0) {
         const roleParts = [];
 
@@ -184,7 +172,6 @@ module.exports = {
         grouped[roomName] = {
           total: null,
           steps: [],
-          remotes: [],
         };
       }
 
@@ -211,18 +198,6 @@ module.exports = {
         total: sections[label].total,
       };
 
-      if (parts[2] === "state" && parts[3] === "remote") {
-        row.label = parts[4];
-        grouped[roomName].remotes.push(row);
-        continue;
-      }
-
-      if (parts[2] === "construction" && parts[3] === "remote") {
-        row.label = `plan.${parts[4]}`;
-        grouped[roomName].remotes.push(row);
-        continue;
-      }
-
       grouped[roomName].steps.push(row);
     }
 
@@ -230,9 +205,6 @@ module.exports = {
       if (!Object.prototype.hasOwnProperty.call(grouped, roomName)) continue;
 
       grouped[roomName].steps.sort(function (a, b) {
-        return b.total - a.total;
-      });
-      grouped[roomName].remotes.sort(function (a, b) {
         return b.total - a.total;
       });
       grouped[roomName].roles = grouped[roomName].roles || [];
@@ -256,7 +228,6 @@ module.exports = {
     return {
       pressure: "normal",
       forceOverview: false,
-      remoteScanBudget: 1,
       thinkIntervalMultiplier: 1,
       constructionIntervalMultiplier: 1,
       skipDirectives: false,
@@ -295,7 +266,6 @@ module.exports = {
     }
 
     const pressureKey = pressure;
-    const scanBudget = policy.REMOTE_SCAN_BUDGET || {};
     const thinkMultiplier = policy.THINK_INTERVAL_MULTIPLIER || {};
     const constructionMultiplier = policy.CONSTRUCTION_INTERVAL_MULTIPLIER || {};
 
@@ -304,10 +274,6 @@ module.exports = {
       forceOverview:
         pressure !== "normal" &&
         policy.DETAIL_DOWNGRADE_AT_TIGHT === true,
-      remoteScanBudget:
-        Object.prototype.hasOwnProperty.call(scanBudget, pressureKey)
-          ? scanBudget[pressureKey]
-          : 1,
       thinkIntervalMultiplier:
         Object.prototype.hasOwnProperty.call(thinkMultiplier, pressureKey)
           ? thinkMultiplier[pressureKey]

@@ -5,11 +5,8 @@ Creep role dispatcher.
 Purpose:
 - Route creeps to the correct role logic
 - Keep role execution simple and explicit
-- Allow home-room-owned remote creeps to run through the same manager
 
 Important Notes:
-- Remote creeps still use memory.room as their home room
-- That allows the home room manager to continue owning their logic
 - Non-defense creeps now yield to the room defense state and retreat before
   their normal role logic runs
 */
@@ -17,18 +14,12 @@ Important Notes:
 const config = require("config");
 const defenseManager = require("defense_manager");
 const roleJrWorker = require("role_jrworker");
-const roleRemoteJrWorker = require("role_remote_jrworker");
-const roleRemoteWorker = require("role_remote_worker");
-const roleRemoteMiner = require("role_remote_miner");
-const roleRemoteHauler = require("role_remote_hauler");
-const roleReserver = require("role_reserver");
 const roleWorker = require("role_worker");
 const roleMiner = require("role_miner");
 const roleHauler = require("role_hauler");
 const roleUpgrader = require("role_upgrader");
 const roleRepair = require("role_repair");
 const roleDefender = require("role_defender");
-const roleRangedDefender = require("role_ranged_defender");
 const utils = require("utils");
 
 const RETREAT_MOVE_OPTIONS = {
@@ -77,45 +68,6 @@ module.exports = {
           runRole("jrworker", roleJrWorker.run.bind(roleJrWorker), creep);
           break;
 
-        case "remotejrworker":
-          runRole(
-            "remotejrworker",
-            roleRemoteJrWorker.run.bind(roleRemoteJrWorker),
-            creep,
-            roleOptions,
-          );
-          break;
-
-        case "remoteworker":
-          runRole(
-            "remoteworker",
-            roleRemoteWorker.run.bind(roleRemoteWorker),
-            creep,
-            roleOptions,
-          );
-          break;
-
-        case "remoteminer":
-          runRole(
-            "remoteminer",
-            roleRemoteMiner.run.bind(roleRemoteMiner),
-            creep,
-          );
-          break;
-
-        case "remotehauler":
-          runRole(
-            "remotehauler",
-            roleRemoteHauler.run.bind(roleRemoteHauler),
-            creep,
-            roleOptions,
-          );
-          break;
-
-        case "reserver":
-          runRole("reserver", roleReserver.run.bind(roleReserver), creep);
-          break;
-
         case "worker":
           runRole(
             "worker",
@@ -143,6 +95,7 @@ module.exports = {
             "upgrader",
             roleUpgrader.run.bind(roleUpgrader),
             creep,
+            roleOptions,
           );
           break;
 
@@ -158,15 +111,6 @@ module.exports = {
           runRole(
             "defender",
             roleDefender.run.bind(roleDefender),
-            creep,
-            state,
-          );
-          break;
-
-        case "rangeddefender":
-          runRole(
-            "rangeddefender",
-            roleRangedDefender.run.bind(roleRangedDefender),
             creep,
             state,
           );
@@ -188,10 +132,7 @@ module.exports = {
 
   runDefenseRetreat(creep, state) {
     if (!state || !state.defense || !state.defense.hasThreats) return false;
-    if (
-      creep.memory.role === "defender" ||
-      creep.memory.role === "rangeddefender"
-    ) {
+    if (creep.memory.role === "defender") {
       return false;
     }
 
@@ -200,18 +141,9 @@ module.exports = {
       state.defense,
       creep.room.name,
     );
-    const assignedThreat = creep.memory.targetRoom
-      ? defenseManager.getThreatByRoom(state.defense, creep.memory.targetRoom)
-      : null;
+    if (!currentThreat) return false;
 
-    if (!currentThreat && !assignedThreat) return false;
-
-    if (currentThreat) {
-      this.retreatFromThreatRoom(creep, homeRoomName, currentThreat);
-      return true;
-    }
-
-    this.holdAtHome(creep, homeRoomName);
+    this.retreatFromThreatRoom(creep, homeRoomName, currentThreat);
     return true;
   },
 

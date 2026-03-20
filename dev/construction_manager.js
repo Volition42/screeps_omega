@@ -63,10 +63,6 @@ module.exports = {
           this.placeSourceContainers(context);
           break;
 
-        case "controllerContainer":
-          this.placeControllerContainer(context);
-          break;
-
         case "anchorRoads":
           this.placeAnchorRoads(context);
           break;
@@ -112,13 +108,6 @@ module.exports = {
       }
     }
 
-    this.planRemoteSites(
-      room,
-      state,
-      profiler,
-      roomLabelPrefix,
-      runtimeMode,
-    );
   },
 
   getRoomConstructionMemory(room) {
@@ -148,11 +137,7 @@ module.exports = {
   },
 
   isSiteCapReached(context) {
-    var maxSites = context.isRemote
-      ? config.CONSTRUCTION.REMOTE_MAX_SITES || config.CONSTRUCTION.MAX_SITES
-      : config.CONSTRUCTION.MAX_SITES;
-
-    return context.siteCount >= maxSites;
+    return context.siteCount >= config.CONSTRUCTION.MAX_SITES;
   },
 
   getAnchorOrigin(context) {
@@ -229,10 +214,6 @@ module.exports = {
     var terminalPlan = this.buildTerminalPlan(context, plan, storagePos, linkPlan);
     var extractorPlan = this.buildExtractorPlan(context, plan);
     var labPlan = this.buildLabPlan(context, plan, storagePos, terminalPlan);
-    var remoteScaling = this.buildRemoteScalingPlan(context, plan, {
-      linkPlan: linkPlan,
-      terminalPlan: terminalPlan,
-    });
 
     return {
       tick: Game.time,
@@ -246,7 +227,6 @@ module.exports = {
       terminal: terminalPlan,
       extractor: extractorPlan,
       labs: labPlan,
-      remoteScaling: remoteScaling,
     };
   },
 
@@ -484,37 +464,6 @@ module.exports = {
       targetCount: targetCount,
       origin: this.serializePos(stampOrigin),
       positions: _.map(positions, this.serializePos, this),
-    };
-  },
-
-  buildRemoteScalingPlan(context, plan, futureFlags) {
-    var scaling = config.REMOTE_MINING && config.REMOTE_MINING.SCALING
-      ? config.REMOTE_MINING.SCALING
-      : {};
-    var controllerLevel = context.room.controller ? context.room.controller.level : 0;
-    var capMap = scaling.recommendedSitesByControllerLevel || {};
-    var profileKey =
-      plan.goals && plan.goals.remoteScaling
-        ? plan.goals.remoteScaling.profile
-        : "baseline";
-
-    return {
-      enabled: scaling.ENABLED === true,
-      profile: scaling.profiles && scaling.profiles[profileKey]
-        ? scaling.profiles[profileKey]
-        : profileKey,
-      recommendedSiteCap:
-        Object.prototype.hasOwnProperty.call(capMap, controllerLevel)
-          ? capMap[controllerLevel]
-          : controllerLevel >= 4
-            ? 3
-            : 2,
-      throughputReady: !!(futureFlags && futureFlags.linkPlan && futureFlags.linkPlan.ready),
-      advancedLogisticsReady: !!(
-        futureFlags &&
-        futureFlags.terminalPlan &&
-        futureFlags.terminalPlan.ready
-      ),
     };
   },
 
@@ -983,29 +932,6 @@ module.exports = {
     }
   },
 
-  placeControllerContainer(context) {
-    var room = context.room;
-    if (!room.controller) return;
-
-    var existing = context.state.controllerContainers.length;
-    var existingSites = _.filter(
-      this.getSitesByType(context, STRUCTURE_CONTAINER),
-      function (site) {
-        return room.controller && site.pos.getRangeTo(room.controller) <= 4;
-      },
-    ).length;
-
-    if (existing + existingSites >= 1) return;
-
-    var positions = utils.getControllerContainerPositions(room, 1);
-
-    for (var i = 0; i < positions.length; i++) {
-      if (this.isSiteCapReached(context)) return;
-
-      if (this.createSite(context, positions[i], STRUCTURE_CONTAINER)) return;
-    }
-  },
-
   placeAnchorRoads(context) {
     var origin = this.getAnchorOrigin(context);
     if (!origin) return;
@@ -1020,23 +946,16 @@ module.exports = {
     if (!spawn) return;
 
     var sourceContainers = state.sourceContainers || [];
-    var controllerContainers = state.controllerContainers || [];
 
     for (var i = 0; i < sourceContainers.length; i++) {
       if (this.isSiteCapReached(context)) return;
 
       var sourceContainer = sourceContainers[i];
       this.placeRoadPath(context, sourceContainer.pos, spawn.pos, 1);
+    }
 
-      for (var j = 0; j < controllerContainers.length; j++) {
-        if (this.isSiteCapReached(context)) return;
-        this.placeRoadPath(
-          context,
-          sourceContainer.pos,
-          controllerContainers[j].pos,
-          0,
-        );
-      }
+    if (room.controller && !this.isSiteCapReached(context)) {
+      this.placeRoadPath(context, spawn.pos, room.controller.pos, 2);
     }
   },
 
@@ -1129,102 +1048,6 @@ module.exports = {
     for (var j = 0; j < plan.walls.length; j++) {
       if (this.isSiteCapReached(context)) return;
       this.tryPlaceStructureSite(context, plan.walls[j], STRUCTURE_WALL);
-    }
-  },
-
-  planRemoteSites(homeRoom, state, profiler, roomLabelPrefix, runtimeMode) {
-    var remoteSites = state.remoteSites || [];
-    if (remoteSites.length === 0) return;
-
-    var roomMemory = Memory.rooms[homeRoom.name];
-    if (!roomMemory.construction.remotePlans) {
-      roomMemory.construction.remotePlans = {};
-    }
-
-    for (var i = 0; i < remoteSites.length; i++) {
-      var site = remoteSites[i];
-      if (!site.phaseHooks || !site.phaseHooks.phaseTwoReady) continue;
-      if (!site.visible || !site.remoteRoom || !site.remoteState) continue;
-
-      var remoteMemory = roomMemory.construction.remotePlans[site.targetRoom];
-      if (!remoteMemory) {
-        roomMemory.construction.remotePlans[site.targetRoom] = {
-          lastPlan: 0,
-        };
-        remoteMemory = roomMemory.construction.remotePlans[site.targetRoom];
-      }
-
-      if (
-        Game.time - remoteMemory.lastPlan <
-        (config.CONSTRUCTION.REMOTE_PLAN_INTERVAL || config.CONSTRUCTION.PLAN_INTERVAL) *
-          (runtimeMode && runtimeMode.constructionIntervalMultiplier
-            ? runtimeMode.constructionIntervalMultiplier
-            : 1)
-      ) {
-        continue;
-      }
-
-      remoteMemory.lastPlan = Game.time;
-
-      var runRemotePlan = function () {
-        var context = this.createRemotePlanContext(homeRoom, state, site);
-        this.placeRemoteSourceContainers(context);
-        this.placeRemoteRoads(context);
-      };
-
-      if (profiler && roomLabelPrefix) {
-        profiler.wrap(
-          `${roomLabelPrefix}.construction.remote.${site.targetRoom}`,
-          runRemotePlan,
-          this,
-        );
-      } else {
-        runRemotePlan.call(this);
-      }
-    }
-  },
-
-  createRemotePlanContext(homeRoom, state, site) {
-    return {
-      room: site.remoteRoom,
-      homeRoom: homeRoom,
-      state: site.remoteState,
-      remoteSite: site,
-      terrain: site.remoteRoom.getTerrain(),
-      siteCount: site.progress ? site.progress.activeConstructionSites : 0,
-      plannedSitesByType: {},
-      isRemote: true,
-    };
-  },
-
-  placeRemoteSourceContainers(context) {
-    var sourceDetails = context.remoteSite.sourceDetails || [];
-
-    for (var i = 0; i < sourceDetails.length; i++) {
-      if (this.isSiteCapReached(context)) return;
-
-      var detail = sourceDetails[i];
-      if (detail.containerBuilt || detail.containerPlanned || !detail.containerPos) {
-        continue;
-      }
-
-      this.tryPlaceStructureSite(context, detail.containerPos, STRUCTURE_CONTAINER);
-    }
-  },
-
-  placeRemoteRoads(context) {
-    var sourceDetails = context.remoteSite.sourceDetails || [];
-
-    for (var i = 0; i < sourceDetails.length; i++) {
-      if (this.isSiteCapReached(context)) return;
-
-      var detail = sourceDetails[i];
-      var roadPositions = detail.roadPositions || [];
-
-      for (var j = 0; j < roadPositions.length; j++) {
-        if (this.isSiteCapReached(context)) return;
-        this.tryPlaceStructureSite(context, roadPositions[j], STRUCTURE_ROAD);
-      }
     }
   },
 

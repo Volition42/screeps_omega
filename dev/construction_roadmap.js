@@ -11,9 +11,9 @@ Phases:
 - bootstrap_jr:
     no formal construction targets
 - bootstrap:
-    containers + anchor roads + backbone roads
+    source containers + anchor roads + backbone roads
 - developing:
-    extension stamps + tower + defense + internal roads
+    extension stamps + tower + storage + defense + internal roads
 - stable:
     finish current-RCL roadmap and keep the core clean
 
@@ -40,9 +40,6 @@ module.exports = {
           extractor: false,
           labs: 0,
         },
-        remoteScaling: {
-          profile: "disabled",
-        },
       },
     },
 
@@ -50,7 +47,6 @@ module.exports = {
       phase: "bootstrap",
       buildList: [
         "sourceContainers",
-        "controllerContainer",
         "anchorRoads",
         "backboneRoads",
       ],
@@ -67,9 +63,6 @@ module.exports = {
           extractor: false,
           labs: 0,
         },
-        remoteScaling: {
-          profile: "disabled",
-        },
       },
     },
 
@@ -77,7 +70,6 @@ module.exports = {
       phase: "developing",
       buildList: [
         "sourceContainers",
-        "controllerContainer",
         "anchorRoads",
         "backboneRoads",
         "extensionStamps",
@@ -98,9 +90,6 @@ module.exports = {
           terminal: false,
           extractor: false,
           labs: 0,
-        },
-        remoteScaling: {
-          profile: "baseline",
         },
       },
     },
@@ -129,9 +118,6 @@ module.exports = {
           extractor: false,
           labs: 0,
         },
-        remoteScaling: {
-          profile: "baseline",
-        },
       },
     },
 
@@ -159,9 +145,6 @@ module.exports = {
           terminal: false,
           extractor: false,
           labs: 0,
-        },
-        remoteScaling: {
-          profile: "throughput_prep",
         },
       },
     },
@@ -193,9 +176,6 @@ module.exports = {
           terminal: true,
           extractor: true,
           labs: 3,
-        },
-        remoteScaling: {
-          profile: "advanced_prep",
         },
       },
     },

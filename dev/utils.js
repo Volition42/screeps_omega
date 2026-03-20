@@ -11,8 +11,8 @@ Important Notes:
 - General withdrawal logic now prefers storage first, then source containers,
   then direct harvesting as a fallback.
 - Hauler delivery logic now supports conditional tower priority:
-  - Threat mode or low tower energy: spawn -> towers -> extensions -> controller -> storage
-  - Normal mode: spawn -> extensions -> controller -> storage -> towers below reserve
+  - Threat mode or low tower energy: spawn -> towers -> extensions -> storage
+  - Normal mode: spawn -> extensions -> storage -> towers below reserve
 */
 
 const config = require("config");
@@ -25,7 +25,6 @@ const logisticsManager = require("logistics_manager");
 var runtimeCacheTick = null;
 var runtimeStateByRoom = {};
 var runtimeCacheByRoom = {};
-var routeDirectionCacheByKey = {};
 
 function resetRuntimeCachesIfNeeded() {
   if (runtimeCacheTick === Game.time) return;
@@ -33,7 +32,6 @@ function resetRuntimeCachesIfNeeded() {
   runtimeCacheTick = Game.time;
   runtimeStateByRoom = {};
   runtimeCacheByRoom = {};
-  routeDirectionCacheByKey = {};
 }
 
 function groupObjectsByType(objects) {
@@ -128,22 +126,6 @@ function getDefenseMaintenanceTargets(room) {
   };
 }
 
-function getRouteExitDirection(fromRoomName, targetRoomName) {
-  resetRuntimeCachesIfNeeded();
-
-  var cacheKey = fromRoomName + ":" + targetRoomName;
-  if (Object.prototype.hasOwnProperty.call(routeDirectionCacheByKey, cacheKey)) {
-    return routeDirectionCacheByKey[cacheKey];
-  }
-
-  var route = Game.map.findRoute(fromRoomName, targetRoomName);
-  var direction =
-    Array.isArray(route) && route.length > 0 ? route[0].exit : null;
-
-  routeDirectionCacheByKey[cacheKey] = direction;
-  return direction;
-}
-
 function buildRuntimeCache(room) {
   var state = getRegisteredState(room);
   var structures = state && state.structures ? state.structures : room.find(FIND_STRUCTURES);
@@ -225,65 +207,6 @@ module.exports = {
     return results;
   },
 
-  getControllerContainerPositions(room, count) {
-    if (!room.controller) return [];
-
-    const terrain = Game.map.getRoomTerrain(room.name);
-    const state = getRegisteredState(room);
-    const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
-    const candidates = [];
-
-    for (
-      let x = room.controller.pos.x - 3;
-      x <= room.controller.pos.x + 3;
-      x++
-    ) {
-      for (
-        let y = room.controller.pos.y - 3;
-        y <= room.controller.pos.y + 3;
-        y++
-      ) {
-        if (x < 1 || x > 48 || y < 1 || y > 48) continue;
-
-        const pos = new RoomPosition(x, y, room.name);
-        const range = pos.getRangeTo(room.controller.pos);
-
-        // Preferred controller container placement is 2-3 away.
-        if (range < 2 || range > 3) continue;
-        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
-
-        candidates.push(pos);
-      }
-    }
-
-    candidates.sort(function (a, b) {
-      const aScore = spawn ? a.getRangeTo(spawn) : 0;
-      const bScore = spawn ? b.getRangeTo(spawn) : 0;
-      return aScore - bScore;
-    });
-
-    const chosen = [];
-
-    for (const pos of candidates) {
-      const blocked = pos.lookFor(LOOK_STRUCTURES).length > 0;
-      const siteBlocked = pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
-
-      if (blocked || siteBlocked) continue;
-
-      const tooClose = _.some(chosen, function (other) {
-        return pos.getRangeTo(other) <= 1;
-      });
-
-      if (!tooClose) {
-        chosen.push(pos);
-      }
-
-      if (chosen.length >= count) break;
-    }
-
-    return chosen;
-  },
-
   getSourceContainerPosition(room, source) {
     const state = getRegisteredState(room);
     const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
@@ -305,61 +228,6 @@ module.exports = {
     }
 
     return null;
-  },
-
-  getRemoteSourceContainerPosition(room, source, homeRoomName) {
-    var anchor = this.getRemoteExitPosition(room, homeRoomName, source.pos);
-    var positions = this.getWalkableAdjacentPositions(source.pos);
-
-    if (positions.length === 0) return null;
-
-    positions.sort(function (a, b) {
-      var aScore = anchor ? a.getRangeTo(anchor) : a.getRangeTo(25, 25);
-      var bScore = anchor ? b.getRangeTo(anchor) : b.getRangeTo(25, 25);
-      return aScore - bScore;
-    });
-
-    for (var i = 0; i < positions.length; i++) {
-      var pos = positions[i];
-      var blocked = pos.lookFor(LOOK_STRUCTURES).length > 0;
-      var siteBlocked = pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
-
-      if (!blocked && !siteBlocked) {
-        return pos;
-      }
-    }
-
-    return positions[0];
-  },
-
-  getRemoteExitPosition(room, targetRoomName, startPos) {
-    var direction = getRouteExitDirection(room.name, targetRoomName);
-    if (!direction) return null;
-
-    var exits = room.find(direction);
-    if (!exits || exits.length === 0) return null;
-
-    return startPos.findClosestByPath(exits);
-  },
-
-  getRemoteRoadPlanPositions(room, fromPos, targetRoomName) {
-    var exitPos = this.getRemoteExitPosition(room, targetRoomName, fromPos);
-    if (!exitPos) return [];
-
-    var path = fromPos.findPathTo(exitPos, {
-      ignoreCreeps: true,
-      range: 1,
-    });
-    var positions = [];
-
-    for (var i = 0; i < path.length; i++) {
-      var step = path[i];
-
-      if (step.x < 2 || step.x > 47 || step.y < 2 || step.y > 47) continue;
-      positions.push(new RoomPosition(step.x, step.y, room.name));
-    }
-
-    return positions;
   },
 
   getSourceContainerBySource(room, sourceId) {
@@ -390,52 +258,6 @@ module.exports = {
 
   getSourceContainers(room) {
     return getRuntimeCache(room).sourceContainers;
-  },
-
-  getUpgraderWorkPosition(room, container) {
-    if (!room.controller || !container) return null;
-
-    const terrain = Game.map.getRoomTerrain(room.name);
-    const candidates = [];
-    const state = getRegisteredState(room);
-    const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
-    const around = [container.pos].concat(
-      this.getWalkableAdjacentPositions(container.pos),
-    );
-
-    for (const pos of around) {
-      if (pos.getRangeTo(container.pos) > 1) continue;
-      if (pos.getRangeTo(room.controller.pos) > 3) continue;
-
-      if (
-        !pos.isEqualTo(container.pos) &&
-        terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL
-      ) {
-        continue;
-      }
-
-      const structures = pos.lookFor(LOOK_STRUCTURES);
-      const blockingStructure = _.some(structures, function (s) {
-        return (
-          s.structureType !== STRUCTURE_ROAD &&
-          s.structureType !== STRUCTURE_CONTAINER
-        );
-      });
-
-      if (blockingStructure) continue;
-
-      candidates.push(pos);
-    }
-
-    if (candidates.length === 0) return null;
-
-    candidates.sort(function (a, b) {
-      const aScore = spawn ? a.getRangeTo(spawn) : 0;
-      const bScore = spawn ? b.getRangeTo(spawn) : 0;
-      return aScore - bScore;
-    });
-
-    return candidates[0];
   },
 
   getBalancedSourceContainer(room, creep) {

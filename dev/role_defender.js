@@ -5,10 +5,9 @@ Home defender role.
 Purpose:
 - Hold the home room during active invasions
 - Use melee pressure against hostile creeps and hostile structures
-- Stay anchored to the home room instead of responding to remote threats
+- Stay anchored to the home room
 
 Important Notes:
-- Remote response is handled by role_ranged_defender
 - This role is intentionally defensive and does not leave the home room
 */
 
@@ -26,7 +25,6 @@ module.exports = {
 
     var homeThreat = this.getHomeThreat(homeRoomName, state);
 
-    creep.memory.targetRoom = homeRoomName;
     creep.memory.defenseType = homeThreat ? homeThreat.classification : "clear";
 
     if (creep.room.name !== homeRoomName) {

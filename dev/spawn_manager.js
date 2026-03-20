@@ -6,39 +6,16 @@ Purpose:
 - Maintain the room workforce by phase
 - Support normal role-based spawning
 - Recover automatically from colony collapse
-- Maintain configured remote mining workers
-- Maintain configured remote reservers
 
 Recovery behavior:
 - If the room loses its working economy, spawn JrWorkers first
 - JrWorkers are the emergency bootstrap role
 - Once energy flow returns, normal spawning resumes
-
-Remote mining:
-- Manual remote room config
-- Remote spawning is allowed only when the home room is developing or stable
-- Remote spawning pauses automatically if the home room falls back into bootstrap
-
-Remote reservation:
-- Maintain reserver creeps for configured remote rooms
-- Reservation is fully controlled per remote room config
-- Spawn only up to desired reserver count
-- For visible rooms, replace only when reservation is missing / not yours / below threshold
-- For unseen rooms, maintain only baseline reserver coverage
 */
 
 const bodies = require("bodies");
 const config = require("config");
 const defenseManager = require("defense_manager");
-const remoteManager = require("remote_manager");
-
-const RESERVATION_CHECK_INTERVAL = 10;
-
-var remoteReservationCache = {};
-var usernameCache = {
-  tick: 0,
-  username: null,
-};
 
 module.exports = {
   run(room, state) {
@@ -58,7 +35,6 @@ module.exports = {
         threatScore: request.threatScore || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
-        targetRoom: request.targetRoom || null,
         homeRoom: request.homeRoom || null,
       };
     });
@@ -80,7 +56,6 @@ module.exports = {
         threatScore: request.threatScore || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
-        targetRoom: request.targetRoom || null,
       },
     });
 
@@ -106,9 +81,7 @@ module.exports = {
     var reaction = defenseManager.getReactionConfig();
 
     if (this.needsRecovery(state)) {
-      this.addDefenseRequests(room, state, requests, reaction, {
-        homeOnly: true,
-      });
+      this.addDefenseRequests(room, state, requests, reaction);
 
       if (this.isBootstrapPhase(state.phase)) {
         var recoveryTarget = this.getRecoveryJrWorkerTarget(room, state);
@@ -135,9 +108,7 @@ module.exports = {
     }
 
     if (state.phase === "bootstrap_jr") {
-      this.addDefenseRequests(room, state, requests, reaction, {
-        homeOnly: true,
-      });
+      this.addDefenseRequests(room, state, requests, reaction);
 
       var desiredJrWorkers = config.CREEPS.jrWorkers;
       var currentBootJrWorkers = roleCounts.jrworker || 0;
@@ -162,9 +133,7 @@ module.exports = {
     }
 
     if (state.phase === "bootstrap") {
-      this.addDefenseRequests(room, state, requests, reaction, {
-        homeOnly: true,
-      });
+      this.addDefenseRequests(room, state, requests, reaction);
 
       var desiredBootstrapWorkers = Math.max(1, config.CREEPS.workers || 1);
       var currentBootstrapWorkers = roleCounts.worker || 0;
@@ -188,9 +157,7 @@ module.exports = {
       return requests;
     }
 
-    this.addDefenseRequests(room, state, requests, reaction, {
-      homeOnly: false,
-    });
+    this.addDefenseRequests(room, state, requests, reaction);
 
     var desiredWorkers = config.CREEPS.workers;
     var currentWorkers = roleCounts.worker || 0;
@@ -266,33 +233,21 @@ module.exports = {
     }
 
     var desiredUpgraders = config.CREEPS.upgraders;
+    var currentUpgraders = roleCounts.upgrader || 0;
+    var queuedUpgraders = this.countQueued(room, "upgrader");
 
-    if (state.controllerContainers.length > 0) {
-      var controllerContainer = state.controllerContainers[0];
-
-      var existingUpgraders = this.getRoleTargetCount(
-        state,
-        "upgrader",
-        controllerContainer.id,
-      );
-
-      var queuedUpgraders = this.countQueuedForTarget(
-        room,
-        "upgrader",
-        controllerContainer.id,
-      );
-
-      for (
-        var upgraderIndex = existingUpgraders + queuedUpgraders;
-        upgraderIndex < desiredUpgraders;
-        upgraderIndex++
-      ) {
-        requests.push({
-          role: "upgrader",
-          priority: 70,
-          targetId: controllerContainer.id,
-        });
-      }
+    while (
+      currentUpgraders +
+        queuedUpgraders +
+        requests.filter(function (r) {
+          return r.role === "upgrader";
+        }).length <
+      desiredUpgraders
+    ) {
+      requests.push({
+        role: "upgrader",
+        priority: 70,
+      });
     }
 
     var desiredRepairs = config.CREEPS.repairs;
@@ -310,10 +265,6 @@ module.exports = {
       requests.push({ role: "repair", priority: 60 });
     }
 
-    this.addRemoteReservationRequests(room, state, requests);
-    this.addRemotePhaseTwoRequests(room, state, requests);
-    this.addRemotePhaseOneRequests(room, state, requests);
-
     requests.sort(function (a, b) {
       return b.priority - a.priority;
     });
@@ -325,13 +276,12 @@ module.exports = {
     return phase === "bootstrap_jr" || phase === "bootstrap";
   },
 
-  addDefenseRequests(room, state, requests, reaction, options) {
+  addDefenseRequests(room, state, requests, reaction) {
     if (!reaction.ENABLED) return;
 
     var defenseState =
       state && state.defense ? state.defense : defenseManager.collect(room, state);
     var threats = defenseState.activeThreats || [];
-    var settings = options || {};
     var defenseMemory = this.getDefenseSpawnMemory(room);
 
     this.pruneStaleDefenseLocks(defenseMemory, reaction);
@@ -343,12 +293,8 @@ module.exports = {
       var requestKey = this.getDefenseRequestKey(role, threat.roomName);
       var activeLock = defenseMemory.spawnLocks[requestKey] || null;
 
-      if (settings.homeOnly && threat.scope !== "home") {
-        continue;
-      }
-
       var existingDefenders = _.filter(
-        this.getRoleTargetRoomCreeps(state, role, threat.roomName),
+        state.roleMap && state.roleMap[role] ? state.roleMap[role] : [],
         function (creep) {
           return (
             creep.memory.role === role &&
@@ -357,11 +303,7 @@ module.exports = {
           );
         },
       ).length;
-      var queuedDefenders = this.countQueuedForTargetRoom(
-        room,
-        role,
-        threat.roomName,
-      );
+      var queuedDefenders = this.countQueued(room, role);
       var plannedDefenders = 0;
 
       if (
@@ -388,7 +330,6 @@ module.exports = {
           priority: threat.priority,
           threatLevel: threat.threatLevel || 1,
           threatScore: threat.threatScore || 0,
-          targetRoom: threat.roomName,
           homeRoom: room.name,
         });
 
@@ -399,307 +340,6 @@ module.exports = {
         };
       }
     }
-  },
-
-  addRemoteReservationRequests(room, state, requests) {
-    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
-    if (state.phase !== "developing" && state.phase !== "stable") return;
-
-    var sites =
-      state.remoteSites || remoteManager.getHomeRoomSites(room.name);
-
-    for (var i = 0; i < sites.length; i++) {
-      var site = sites[i];
-      if (!site.reservation || site.reservation.enabled !== true) continue;
-
-      var targetRoom = site.targetRoom;
-      var desiredReservers = site.reservation.reservers || 1;
-      var renewBelow = site.reservation.renewBelow || 2000;
-
-      var existingReservers = _.filter(
-        this.getRoleTargetRoomCreeps(state, "reserver", targetRoom),
-        function (creep) {
-          if (creep.memory.role !== "reserver") {
-            return false;
-          }
-
-          return creep.ticksToLive === undefined || creep.ticksToLive > 80;
-        },
-      ).length;
-
-      var queuedReservers = this.countQueuedForTargetRoom(
-        room,
-        "reserver",
-        targetRoom,
-      );
-      var totalReservers = existingReservers + queuedReservers;
-
-      if (totalReservers >= desiredReservers) {
-        continue;
-      }
-
-      var shouldSpawn = this.shouldSpawnReserver(
-        room,
-        targetRoom,
-        renewBelow,
-        totalReservers,
-      );
-
-      if (shouldSpawn) {
-        requests.push({
-          role: "reserver",
-          priority: 55,
-          targetRoom: targetRoom,
-          homeRoom: room.name,
-        });
-      }
-    }
-  },
-
-  shouldSpawnReserver(homeRoom, targetRoom, renewBelow, totalReservers) {
-    var remoteRoom = Game.rooms[targetRoom];
-
-    // Developer note:
-    // If the room is not visible, only maintain baseline coverage.
-    // Do not keep spawning blindly.
-    if (!remoteRoom || !remoteRoom.controller) {
-      return totalReservers === 0;
-    }
-
-    var reservationState = this.getCachedRemoteReservationState(
-      homeRoom,
-      targetRoom,
-      remoteRoom,
-    );
-
-    if (!reservationState.hasMyReservation) {
-      return true;
-    }
-
-    return reservationState.ticksToEnd < renewBelow;
-  },
-
-  getRemoteReservationState(homeRoom, remoteRoom) {
-    var myUsername = this.getMyUsername(homeRoom);
-
-    if (!remoteRoom || !remoteRoom.controller || !myUsername) {
-      return {
-        hasMyReservation: false,
-        ticksToEnd: 0,
-      };
-    }
-
-    var reservation = remoteRoom.controller.reservation;
-    if (!reservation) {
-      return {
-        hasMyReservation: false,
-        ticksToEnd: 0,
-      };
-    }
-
-    if (reservation.username !== myUsername) {
-      return {
-        hasMyReservation: false,
-        ticksToEnd: reservation.ticksToEnd || 0,
-      };
-    }
-
-    return {
-      hasMyReservation: true,
-      ticksToEnd: reservation.ticksToEnd || 0,
-    };
-  },
-
-  addRemotePhaseOneRequests(room, state, requests) {
-    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
-    if (state.phase !== "developing" && state.phase !== "stable") return;
-
-    var sites =
-      state.remoteSites || remoteManager.getHomeRoomSites(room.name);
-
-    for (var i = 0; i < sites.length; i++) {
-      var site = sites[i];
-      var targetRoom = site.targetRoom;
-      if (!site.phaseHooks || !site.phaseHooks.phaseOneReady) continue;
-      if (site.phase !== 1) continue;
-
-      var desired = site.jrWorkers || 0;
-
-      var existing = this.getRoleTargetRoomCount(
-        state,
-        "remotejrworker",
-        targetRoom,
-      );
-
-      var queued = this.countQueuedForTargetRoom(
-        room,
-        "remotejrworker",
-        targetRoom,
-      );
-
-      for (var count = existing + queued; count < desired; count++) {
-        requests.push({
-          role: "remotejrworker",
-          priority: 50,
-          targetRoom: targetRoom,
-          homeRoom: room.name,
-        });
-      }
-    }
-  },
-
-  addRemotePhaseTwoRequests(room, state, requests) {
-    if (!config.REMOTE_MINING || !config.REMOTE_MINING.ENABLED) return;
-    if (state.phase !== "developing" && state.phase !== "stable") return;
-
-    var sites =
-      state.remoteSites || remoteManager.getHomeRoomSites(room.name, state);
-
-    for (var i = 0; i < sites.length; i++) {
-      var site = sites[i];
-      var targetRoom = site.targetRoom;
-      if (!site.phaseHooks || !site.phaseHooks.phaseTwoReady) continue;
-      if (site.phase === 1) continue;
-
-      var desiredRemoteWorkers =
-        site.phaseTargets && typeof site.phaseTargets.remoteWorkers === "number"
-          ? site.phaseTargets.remoteWorkers
-          : 0;
-      var existingRemoteWorkers = this.getRoleTargetRoomCount(
-        state,
-        "remoteworker",
-        targetRoom,
-      );
-      var queuedRemoteWorkers = this.countQueuedForTargetRoom(
-        room,
-        "remoteworker",
-        targetRoom,
-      );
-
-      for (
-        var workerIndex = existingRemoteWorkers + queuedRemoteWorkers;
-        workerIndex < desiredRemoteWorkers;
-        workerIndex++
-      ) {
-        requests.push({
-          role: "remoteworker",
-          priority: 58,
-          targetRoom: targetRoom,
-          homeRoom: room.name,
-        });
-      }
-
-      var sourceDetails = site.sourceDetails || [];
-
-      for (var j = 0; j < sourceDetails.length; j++) {
-        var sourceDetail = sourceDetails[j];
-        if (!sourceDetail.containerBuilt) continue;
-
-        var existingRemoteMiners = this.getRoleSourceCount(
-          state,
-          "remoteminer",
-          sourceDetail.sourceId,
-        );
-        var queuedRemoteMiners = this.countQueuedForSource(
-          room,
-          "remoteminer",
-          sourceDetail.sourceId,
-        );
-
-        for (
-          var minerIndex = existingRemoteMiners + queuedRemoteMiners;
-          minerIndex < 1;
-          minerIndex++
-        ) {
-          requests.push({
-            role: "remoteminer",
-            priority: 54,
-            sourceId: sourceDetail.sourceId,
-            targetRoom: targetRoom,
-            homeRoom: room.name,
-          });
-        }
-
-        var desiredRemoteHaulers = sourceDetail.desiredRemoteHaulers || 1;
-        var existingRemoteHaulers = this.getRoleSourceCount(
-          state,
-          "remotehauler",
-          sourceDetail.sourceId,
-        );
-        var queuedRemoteHaulers = this.countQueuedForSource(
-          room,
-          "remotehauler",
-          sourceDetail.sourceId,
-        );
-
-        for (
-          var haulerIndex = existingRemoteHaulers + queuedRemoteHaulers;
-          haulerIndex < desiredRemoteHaulers;
-          haulerIndex++
-        ) {
-          requests.push({
-            role: "remotehauler",
-            priority: 53,
-            sourceId: sourceDetail.sourceId,
-            targetRoom: targetRoom,
-            homeRoom: room.name,
-          });
-        }
-      }
-    }
-  },
-
-  getMyUsername(room) {
-    if (usernameCache.tick === Game.time) {
-      return usernameCache.username;
-    }
-
-    if (!room || !room.controller) return null;
-    if (room.controller.owner && room.controller.owner.username) {
-      usernameCache.tick = Game.time;
-      usernameCache.username = room.controller.owner.username;
-      return usernameCache.username;
-    }
-
-    for (var name in Game.rooms) {
-      if (!Object.prototype.hasOwnProperty.call(Game.rooms, name)) continue;
-      var testRoom = Game.rooms[name];
-      if (
-        testRoom.controller &&
-        testRoom.controller.my &&
-        testRoom.controller.owner &&
-        testRoom.controller.owner.username
-      ) {
-        usernameCache.tick = Game.time;
-        usernameCache.username = testRoom.controller.owner.username;
-        return usernameCache.username;
-      }
-    }
-
-    usernameCache.tick = Game.time;
-    usernameCache.username = null;
-    return null;
-  },
-
-  getCachedRemoteReservationState(homeRoom, targetRoom, remoteRoom) {
-    var cacheKey = homeRoom.name + ":" + targetRoom;
-    var cached = remoteReservationCache[cacheKey];
-
-    // Developer note:
-    // Reservation state only needs coarse refreshes. Keeping a short-lived
-    // cache avoids controller reservation checks every tick for each remote.
-    if (cached && Game.time - cached.tick < RESERVATION_CHECK_INTERVAL) {
-      return cached.state;
-    }
-
-    var state = this.getRemoteReservationState(homeRoom, remoteRoom);
-
-    remoteReservationCache[cacheKey] = {
-      tick: Game.time,
-      state: state,
-    };
-
-    return state;
   },
 
   getRoleSourceCount(state, role, sourceId) {
@@ -728,22 +368,6 @@ module.exports = {
     }
 
     return state.targetRoleMap[role][targetId].length;
-  },
-
-  getRoleTargetRoomCount(state, role, targetRoom) {
-    return this.getRoleTargetRoomCreeps(state, role, targetRoom).length;
-  },
-
-  getRoleTargetRoomCreeps(state, role, targetRoom) {
-    if (
-      !state.targetRoomRoleMap ||
-      !state.targetRoomRoleMap[role] ||
-      !state.targetRoomRoleMap[role][targetRoom]
-    ) {
-      return [];
-    }
-
-    return state.targetRoomRoleMap[role][targetRoom];
   },
 
   needsRecovery(state) {
@@ -826,19 +450,6 @@ module.exports = {
     }).length;
   },
 
-  countQueuedForTargetRoom(room, role, targetRoom) {
-    var queue =
-      Memory.rooms &&
-      Memory.rooms[room.name] &&
-      Memory.rooms[room.name].spawnQueue
-        ? Memory.rooms[room.name].spawnQueue
-        : [];
-
-    return _.filter(queue, function (item) {
-      return item.role === role && item.targetRoom === targetRoom;
-    }).length;
-  },
-
   getDefenseSpawnMemory(room) {
     if (!Memory.rooms) Memory.rooms = {};
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
@@ -852,8 +463,8 @@ module.exports = {
     return Memory.rooms[room.name].defense;
   },
 
-  getDefenseRequestKey(role, targetRoom) {
-    return role + ":" + targetRoom;
+  getDefenseRequestKey(role, roomName) {
+    return role + ":" + roomName;
   },
 
   canQueueDefenseSpawn(defenseMemory, requestKey, cooldown) {

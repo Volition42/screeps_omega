@@ -17,13 +17,11 @@ Major sections:
 - DEFENSE
 - BODIES
 - DIRECTIVES
-- REMOTE_MINING
 
 Important Notes:
 - Keep the hauler override example in place for future tuning.
 - HUD options should stay easy to toggle during testing.
 - Directive settings control both recurring reports and one-time milestone announcements.
-- Remote mining starts with a simple manual setup and expands by phase.
 */
 
 module.exports = {
@@ -45,22 +43,6 @@ module.exports = {
     // structure progress so construction status can be read quickly.
     SHOW_CONSTRUCTION_CHECKLIST: true,
     CONSTRUCTION_CHECKLIST_MODE: "detailed",
-
-    /*
-    Developer note:
-    Remote site status block shown in the mirrored top-right panel of the
-    home room HUD, and synced with the visible remote-room HUD overlays.
-
-    SHOW_REMOTE_SITES
-    Master toggle for showing configured remote rooms in the home room HUD
-    and their own visible-room summary panels.
-
-    REMOTE_SITE_MODE
-    "compact"  = smaller per-remote block in the top-right panel
-    "detailed" = fuller per-remote block with phase/build/unit details
-    */
-    SHOW_REMOTE_SITES: true,
-    REMOTE_SITE_MODE: "detailed",
   },
 
   CREEPS: {
@@ -72,6 +54,10 @@ module.exports = {
     // These are the target counts once the room transitions into the
     // normal colony phases.
     workers: 2,
+
+    // Developer note:
+    // Upgraders now self-supply from shared room energy buffers instead of
+    // standing on a dedicated controller container.
     upgraders: 1,
     repairs: 1,
 
@@ -103,9 +89,6 @@ module.exports = {
     THINK_INTERVALS: {
       worker: 2,
       hauler: 2,
-      remotejrworker: 2,
-      remoteworker: 3,
-      remotehauler: 2,
       repair: 2,
       upgrader: 2,
     },
@@ -117,7 +100,7 @@ module.exports = {
 
   Roadmap intent by phase:
   - bootstrap_jr: no formal room buildout, just survive and upgrade
-  - bootstrap: source containers, controller container, and road backbone
+  - bootstrap: source containers and road backbone
   - developing: extensions, first tower, storage, internal roads, and defense
   - stable: finish the current RCL core layout cleanly
   - rcl5: add link backbone from the cached future plan
@@ -139,8 +122,6 @@ module.exports = {
   CONSTRUCTION: {
     MAX_SITES: 8,
     PLAN_INTERVAL: 50,
-    REMOTE_MAX_SITES: 4,
-    REMOTE_PLAN_INTERVAL: 75,
     ADVANCED_PLAN_INTERVAL: 250,
     ADVANCED_ACTIONS: {
       // Developer note:
@@ -184,19 +165,15 @@ module.exports = {
   Developer Notes:
   Logistics Controls
 
-  controllerContainerReserve
-  Preferred minimum energy to keep in the controller container.
-
   towerEmergencyThreshold
   If any tower drops below this level, or if hostiles are present,
-  haulers switch to threat mode and towers move ahead of extensions.
+  haulers switch to threat mode and towers move ahead of storage reserve work.
 
   towerReserveThreshold
   In normal mode, towers are only topped up after storage and only if they are
   below this reserve level.
   */
   LOGISTICS: {
-    controllerContainerReserve: 1500,
     towerEmergencyThreshold: 400,
     towerReserveThreshold: 700,
   },
@@ -228,21 +205,14 @@ module.exports = {
 
     // Developer note:
     // Reactive defender spawning stays narrow in Phase 1:
-    // - owned rooms always defend when hostiles appear
-    // - configured remote rooms only escalate when active and threatened
+    // - owned rooms defend reactively when hostiles appear
     REACTION: {
       ENABLED: true,
-      REMOTE_ENABLED: true,
       MAX_HOME_DEFENDERS: 3,
-      MAX_REMOTE_DEFENDERS: 3,
       HOME_INVASION_PRIORITY: 1100,
-      REMOTE_INVASION_PRIORITY: 180,
-      REMOTE_CLAIM_PRIORITY: 130,
       HOME_SPAWN_COOLDOWN: 5,
-      REMOTE_SPAWN_COOLDOWN: 15,
       REPLACE_TTL: 90,
       SCORE_PER_HOME_DEFENDER: 6,
-      SCORE_PER_REMOTE_DEFENDER: 5,
       HOSTILE_CREEP_BASE_SCORE: 1,
       ATTACK_PART_SCORE: 1,
       RANGED_PART_SCORE: 1,
@@ -266,7 +236,7 @@ module.exports = {
     // CPU console reporting modes:
     // - off: no CPU console output
     // - overview: top-level sections only
-    // - detail: top-level sections plus per-room and per-remote breakdowns
+    // - detail: top-level sections plus per-room and per-role breakdowns
     CPU_CONSOLE_MODE: "overview",
     CPU_PRINT_INTERVAL: 25,
     RUNTIME_POLICY: {
@@ -275,11 +245,6 @@ module.exports = {
       TIGHT_BUCKET: 8000,
       CRITICAL_BUCKET: 4000,
       DETAIL_DOWNGRADE_AT_TIGHT: true,
-      REMOTE_SCAN_BUDGET: {
-        normal: 1,
-        tight: 1,
-        critical: 0,
-      },
       THINK_INTERVAL_MULTIPLIER: {
         normal: 1,
         tight: 2,
@@ -323,127 +288,5 @@ module.exports = {
     // One-time announcement system.
     SHOW_PHASE_TRANSITION_DIRECTIVES: true,
     SHOW_MILESTONE_DIRECTIVES: true,
-  },
-
-  /*
-  Developer Notes:
-  Remote Mining Configuration
-
-  Remote spawning policy:
-  - Allowed only when the home room is in developing or stable
-  - Pauses automatically if the home room falls back into bootstrap
-  - Phase 2 uses remote workers to establish containers and roads before
-    source-specialized remote miners and haulers take over
-
-  Source configuration model:
-  - One miner per source always
-  - Haulers are configurable per source
-  - Source-specific overrides are defined by source id
-  - This model is intended for all remote sources going forward
-
-  reservation:
-  - enabled: whether this remote should be reserved
-  - reservers: number of reserver creeps to maintain
-  - renewBelow: if reservation ticks fall below this, spawn/replace reserver
-
-  sourceDefaults:
-  - miners is always 1
-  - haulers defaults per remote source
-
-  sourcesById example:
-  // sourcesById: {
-  //   "5bbcab1c9099fc012e632dbc": { miners: 1, haulers: 1 },
-  //   "5bbcab1c9099fc012e632dbd": { miners: 1, haulers: 2 }
-  // }
-  */
-  REMOTE_MINING: {
-    ENABLED: true,
-    phase2WorkersDefault: 1,
-    SCHEDULER: {
-      ENABLED: true,
-      THREAT_SCAN_INTERVAL: 1,
-      ACTIVE_SCAN_INTERVAL: 5,
-      IDLE_SCAN_INTERVAL: 15,
-      CACHE_TTL: 50,
-    },
-    SCALING: {
-      ENABLED: true,
-      recommendedSitesByControllerLevel: {
-        1: 0,
-        2: 0,
-        3: 1,
-        4: 3,
-        5: 4,
-        6: 4,
-      },
-      profiles: {
-        baseline: "manual_phase_two",
-        throughput_prep: "storage_backed",
-        advanced_prep: "terminal_ready",
-      },
-    },
-
-    SITES: {
-      W51N24: {
-        enabled: true,
-        homeRoom: "W51N25",
-        phase: 2,
-        jrWorkers: 2,
-        remoteWorkers: 1,
-
-        reservation: {
-          enabled: true,
-          reservers: 1,
-          renewBelow: 2000,
-        },
-
-        sourceDefaults: {
-          miners: 1,
-          haulers: 1,
-        },
-
-        sourcesById: {},
-      },
-      W51N26: {
-        enabled: false,
-        homeRoom: "W51N25",
-        phase: 2,
-        jrWorkers: 2,
-        remoteWorkers: 1,
-
-        reservation: {
-          enabled: true,
-          reservers: 1,
-          renewBelow: 2000,
-        },
-
-        sourceDefaults: {
-          miners: 1,
-          haulers: 1,
-        },
-
-        sourcesById: {},
-      },
-      W52N26: {
-        enabled: false,
-        homeRoom: "W51N25",
-        phase: 1,
-        jrWorkers: 2,
-        remoteWorkers: 1,
-
-        reservation: {
-          enabled: true,
-          reservers: 1,
-          renewBelow: 2000,
-        },
-
-        sourceDefaults: {
-          miners: 1,
-          haulers: 1,
-        },
-
-        sourcesById: {},
-      },
-    },
   },
 };
