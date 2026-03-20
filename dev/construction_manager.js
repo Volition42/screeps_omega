@@ -16,6 +16,7 @@ Important Notes:
 - This manager places toward the roadmap, not just ad-hoc nearest spots
 - Site cap is respected at every stage
 - Status/phase truth lives in construction_status.js
+- RCL5/RCL6 structures are placed from a cached future plan to keep CPU stable
 */
 
 const config = require("config");
@@ -50,6 +51,7 @@ module.exports = {
     if (!plan || !plan.buildList) return;
 
     this.refreshFuturePlan(context, plan, mem);
+    context.futurePlan = mem.futurePlan || null;
 
     for (var i = 0; i < plan.buildList.length; i++) {
       if (this.isSiteCapReached(context)) break;
@@ -86,6 +88,22 @@ module.exports = {
           break;
         case "storage":
           this.placeStorage(context);
+          break;
+
+        case "links":
+          this.placeLinks(context);
+          break;
+
+        case "terminal":
+          this.placeTerminal(context);
+          break;
+
+        case "extractor":
+          this.placeExtractor(context);
+          break;
+
+        case "labs":
+          this.placeLabs(context);
           break;
 
         case "defense":
@@ -156,17 +174,52 @@ module.exports = {
       config.CONSTRUCTION.PLAN_INTERVAL || 50,
     );
 
+    var signature = this.getFuturePlanSignature(context, plan);
+    var cacheConfig =
+      config.CONSTRUCTION && config.CONSTRUCTION.ADVANCED_ACTIONS
+        ? config.CONSTRUCTION.ADVANCED_ACTIONS
+        : {};
+
     if (
       memory.futurePlan &&
       memory.lastAdvancedPlan &&
       Game.time - memory.lastAdvancedPlan < interval &&
-      memory.futurePlan.roadmapPhase === plan.roadmapPhase
+      memory.futurePlan.roadmapPhase === plan.roadmapPhase &&
+      (
+        cacheConfig.REPLAN_ON_LAYOUT_CHANGE === false ||
+        memory.futurePlan.signature === signature
+      )
     ) {
       return;
     }
 
     memory.lastAdvancedPlan = Game.time;
     memory.futurePlan = this.buildFuturePlan(context, plan);
+    memory.futurePlan.signature = signature;
+  },
+
+  getFuturePlanSignature(context, plan) {
+    var controllerLevel = context.room.controller
+      ? context.room.controller.level
+      : 0;
+    var storagePos = this.getStoragePlanningPosition(context);
+    var storageCount =
+      context.state.structuresByType && context.state.structuresByType[STRUCTURE_STORAGE]
+        ? context.state.structuresByType[STRUCTURE_STORAGE].length
+        : 0;
+    var sourceCount = context.state.sources ? context.state.sources.length : 0;
+    var anchor = this.getAnchorOrigin(context);
+
+    return [
+      plan.roadmapPhase,
+      controllerLevel,
+      storageCount,
+      sourceCount,
+      storagePos ? storagePos.x : "na",
+      storagePos ? storagePos.y : "na",
+      anchor ? anchor.x : "na",
+      anchor ? anchor.y : "na",
+    ].join(":");
   },
 
   buildFuturePlan(context, plan) {
@@ -267,11 +320,11 @@ module.exports = {
       controllerLinkPos &&
       sourceLinks.length + 1 < totalLinks
     ) {
-      storageLinkPos = this.pickPreferredAnchorSlot(
+      storageLinkPos = this.pickPreferredStorageSlot(
         context,
         storagePos,
         used,
-        "utility_slot",
+        "storage_link_slot",
       );
 
       if (!storageLinkPos) {
@@ -324,11 +377,11 @@ module.exports = {
     }
 
     var terminalPos =
-      this.pickPreferredAnchorSlot(
+      this.pickPreferredStorageSlot(
         context,
         storagePos,
         used,
-        "hub_slot",
+        "terminal_slot",
       ) ||
       this.pickOpenPositionNear(
         context,
@@ -393,22 +446,43 @@ module.exports = {
 
     var used = {};
     this.markSerializedPosUsed(used, terminalPlan && terminalPlan.pos);
+    var stampOrigin = storagePos
+      ? this.pickPreferredStorageSlot(
+          context,
+          storagePos,
+          used,
+          "lab_anchor_slot",
+        )
+      : null;
 
     var centerPos = storagePos || (context.state.spawns && context.state.spawns[0]
       ? context.state.spawns[0].pos
       : null);
-    var positions = this.pickClusterPositions(
-      context,
-      centerPos,
-      targetCount,
-      config.CONSTRUCTION.FUTURE_INFRA.LAB_RANGE_FROM_STORAGE || 4,
-      used,
-    );
+    var positions = stampOrigin
+      ? this.getStampLabPositions(
+          context,
+          stampOrigin,
+          "lab_cluster_v1",
+          targetCount,
+          used,
+        )
+      : [];
+
+    if (positions.length < targetCount) {
+      positions = this.pickClusterPositions(
+        context,
+        centerPos,
+        targetCount,
+        config.CONSTRUCTION.FUTURE_INFRA.LAB_RANGE_FROM_STORAGE || 4,
+        used,
+      );
+    }
 
     return {
       enabled: true,
       ready: positions.length >= targetCount,
       targetCount: targetCount,
+      origin: this.serializePos(stampOrigin),
       positions: _.map(positions, this.serializePos, this),
     };
   },
@@ -455,19 +529,35 @@ module.exports = {
       return storageSites[0].pos;
     }
 
-    var spawn = context.state.spawns[0];
-    if (!spawn) return null;
-
-    var candidates = [
-      new RoomPosition(spawn.pos.x + 2, spawn.pos.y, context.room.name),
-      new RoomPosition(spawn.pos.x - 2, spawn.pos.y, context.room.name),
-      new RoomPosition(spawn.pos.x, spawn.pos.y + 2, context.room.name),
-      new RoomPosition(spawn.pos.x, spawn.pos.y - 2, context.room.name),
-    ];
+    var anchor = this.getAnchorOrigin(context);
+    var candidates = anchor
+      ? _.map(stamps.getStorageStampOrigins(anchor), function (origin) {
+          return new RoomPosition(origin.x, origin.y, origin.roomName);
+        })
+      : [];
 
     for (var i = 0; i < candidates.length; i++) {
       if (this.isPlanningPositionOpen(context, candidates[i], {})) {
         return candidates[i];
+      }
+    }
+
+    return null;
+  },
+
+  pickPreferredStorageSlot(context, storagePos, used, tag) {
+    if (!storagePos) return null;
+
+    var reserved = stamps.getReservedPositions(
+      storagePos,
+      "storage_hub_v1",
+      tag,
+    );
+
+    for (var i = 0; i < reserved.length; i++) {
+      if (this.isPlanningPositionOpen(context, reserved[i], used)) {
+        this.markPosUsed(used, reserved[i]);
+        return reserved[i];
       }
     }
 
@@ -548,6 +638,25 @@ module.exports = {
     }
 
     return fallback;
+  },
+
+  getStampLabPositions(context, origin, stampName, count, used) {
+    var positions = [];
+
+    stamps.forEachLabPosition(
+      origin,
+      stampName,
+      function (pos) {
+        if (positions.length >= count) return;
+        if (!this.isPlanningPositionOpen(context, pos, used)) return;
+
+        this.markPosUsed(used, pos);
+        positions.push(pos);
+      },
+      this,
+    );
+
+    return positions;
   },
 
   isTightCluster(positions) {
@@ -637,6 +746,161 @@ module.exports = {
     return !!plan && !!plan.buildList && plan.buildList.indexOf(action) !== -1;
   },
 
+  getCachedFuturePlan(context) {
+    var advancedConfig =
+      config.CONSTRUCTION && config.CONSTRUCTION.ADVANCED_ACTIONS
+        ? config.CONSTRUCTION.ADVANCED_ACTIONS
+        : {};
+
+    if (advancedConfig.USE_CACHED_FUTURE_PLAN === false) {
+      return this.buildFuturePlan(
+        context,
+        roadmap.getPlan(
+          context.state.phase,
+          context.room.controller ? context.room.controller.level : 0,
+        ),
+      );
+    }
+
+    if (context.futurePlan) return context.futurePlan;
+
+    var memory = this.getRoomConstructionMemory(context.room);
+    context.futurePlan = memory.futurePlan || null;
+    return context.futurePlan;
+  },
+
+  deserializePos(serializedPos) {
+    if (!serializedPos) return null;
+
+    return new RoomPosition(
+      serializedPos.x,
+      serializedPos.y,
+      serializedPos.roomName,
+    );
+  },
+
+  placeLinks(context) {
+    var room = context.room;
+    if (!room.controller || room.controller.level < 5) return;
+
+    var status = context.buildStatus;
+    if (!status || status.linksBuilt >= status.linksNeeded) return;
+
+    var futurePlan = this.getCachedFuturePlan(context);
+    var linkPlan = futurePlan && futurePlan.links ? futurePlan.links : null;
+    if (!linkPlan || !linkPlan.enabled) return;
+
+    var candidates = [];
+
+    if (linkPlan.controller) {
+      candidates.push(linkPlan.controller);
+    }
+
+    if (linkPlan.sources && linkPlan.sources.length > 0) {
+      for (var i = 0; i < linkPlan.sources.length; i++) {
+        candidates.push(linkPlan.sources[i].pos);
+      }
+    }
+
+    if (linkPlan.storage) {
+      candidates.push(linkPlan.storage);
+    }
+
+    this.placePlannedStructureList(
+      context,
+      candidates,
+      STRUCTURE_LINK,
+      status.linksNeeded - status.linksBuilt,
+    );
+  },
+
+  placeTerminal(context) {
+    var room = context.room;
+    if (!room.controller || room.controller.level < 6) return;
+
+    var status = context.buildStatus;
+    if (!status || status.terminalBuilt >= status.terminalNeeded) return;
+
+    var futurePlan = this.getCachedFuturePlan(context);
+    var terminalPlan = futurePlan && futurePlan.terminal ? futurePlan.terminal : null;
+    if (!terminalPlan || !terminalPlan.enabled || !terminalPlan.pos) return;
+
+    this.placePlannedStructureList(
+      context,
+      [terminalPlan.pos],
+      STRUCTURE_TERMINAL,
+      status.terminalNeeded - status.terminalBuilt,
+    );
+  },
+
+  placeExtractor(context) {
+    var room = context.room;
+    if (!room.controller || room.controller.level < 6) return;
+
+    var status = context.buildStatus;
+    if (!status || status.extractorBuilt >= status.extractorNeeded) return;
+
+    var futurePlan = this.getCachedFuturePlan(context);
+    var extractorPlan = futurePlan && futurePlan.extractor
+      ? futurePlan.extractor
+      : null;
+    if (!extractorPlan || !extractorPlan.enabled || !extractorPlan.pos) return;
+
+    this.placePlannedStructureList(
+      context,
+      [extractorPlan.pos],
+      STRUCTURE_EXTRACTOR,
+      status.extractorNeeded - status.extractorBuilt,
+    );
+  },
+
+  placeLabs(context) {
+    var room = context.room;
+    if (!room.controller || room.controller.level < 6) return;
+
+    var status = context.buildStatus;
+    if (!status || status.labsBuilt >= status.labsNeeded) return;
+
+    var futurePlan = this.getCachedFuturePlan(context);
+    var labPlan = futurePlan && futurePlan.labs ? futurePlan.labs : null;
+    if (!labPlan || !labPlan.enabled || !labPlan.positions) return;
+
+    if (labPlan.origin) {
+      this.placeStampRoads(
+        context,
+        this.deserializePos(labPlan.origin),
+        "lab_cluster_v1",
+      );
+    }
+
+    this.placePlannedStructureList(
+      context,
+      labPlan.positions,
+      STRUCTURE_LAB,
+      status.labsNeeded - status.labsBuilt,
+    );
+  },
+
+  placePlannedStructureList(context, serializedPositions, structureType, limit) {
+    if (!serializedPositions || serializedPositions.length === 0 || limit <= 0) {
+      return;
+    }
+
+    var placed = 0;
+
+    for (var i = 0; i < serializedPositions.length; i++) {
+      if (this.isSiteCapReached(context)) return;
+      if (placed >= limit) return;
+
+      var pos = this.deserializePos(serializedPositions[i]);
+      if (!pos) continue;
+
+      if (this.tryPlaceStructureSite(context, pos, structureType)) {
+        placed++;
+      }
+    }
+  },
+
   getSitesByType(context, structureType) {
     var existing =
       context.state.sitesByType && context.state.sitesByType[structureType]
@@ -678,30 +942,20 @@ module.exports = {
 
     if (existing + sites > 0) return;
 
-    const spawn = state.spawns[0];
-    if (!spawn) return;
+    var storagePos = this.getStoragePlanningPosition(context);
+    if (!storagePos) return;
 
-    const candidates = [
-      { x: spawn.pos.x + 2, y: spawn.pos.y },
-      { x: spawn.pos.x - 2, y: spawn.pos.y },
-      { x: spawn.pos.x, y: spawn.pos.y + 2 },
-      { x: spawn.pos.x, y: spawn.pos.y - 2 },
-    ];
+    this.placeStampRoads(context, storagePos, "storage_hub_v1");
 
-    for (const c of candidates) {
-      const pos = new RoomPosition(c.x, c.y, room.name);
-
-      if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
-
-      const blocked =
-        pos.lookFor(LOOK_STRUCTURES).length ||
-        pos.lookFor(LOOK_CONSTRUCTION_SITES).length;
-
-      if (!blocked) {
-        this.createSite(context, pos, STRUCTURE_STORAGE);
-        return;
-      }
-    }
+    stamps.forEachStoragePosition(
+      storagePos,
+      "storage_hub_v1",
+      function (pos) {
+        if (this.isSiteCapReached(context)) return;
+        this.tryPlaceStructureSite(context, pos, STRUCTURE_STORAGE);
+      },
+      this,
+    );
   },
 
   placeSourceContainers(context) {

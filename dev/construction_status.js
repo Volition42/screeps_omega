@@ -71,7 +71,7 @@ module.exports = {
     var labsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_LAB);
 
     var roadsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_ROAD);
-    var roadsNeeded = this.getRoadGoal(room, state, plan, anchor);
+    var roadsNeeded = this.getRoadGoal(room, state, plan, anchor, futurePlan);
 
     var defenseGoal = this.getDefenseGoal(room, state);
     var wallsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_WALL);
@@ -300,7 +300,7 @@ module.exports = {
     return built + sites;
   },
 
-  getRoadGoal(room, state, plan, anchor) {
+  getRoadGoal(room, state, plan, anchor, futurePlan) {
     var total = 0;
 
     total += this.getBackboneRoadGoal(room, state);
@@ -341,6 +341,30 @@ module.exports = {
           "tower_cluster_v1",
         );
       }
+    }
+
+    if (this.hasAction(plan, "storage")) {
+      var storageOrigin =
+        futurePlan && futurePlan.storagePos
+          ? this.deserializePos(futurePlan.storagePos)
+          : this.getStorageOrigin(room, state);
+
+      if (storageOrigin) {
+        total += this.countStampRoadCells(room, storageOrigin, "storage_hub_v1");
+      }
+    }
+
+    if (
+      this.hasAction(plan, "labs") &&
+      futurePlan &&
+      futurePlan.labs &&
+      futurePlan.labs.origin
+    ) {
+      total += this.countStampRoadCells(
+        room,
+        this.deserializePos(futurePlan.labs.origin),
+        "lab_cluster_v1",
+      );
     }
 
     return total;
@@ -386,6 +410,32 @@ module.exports = {
     );
 
     return count;
+  },
+
+  deserializePos(pos) {
+    if (!pos) return null;
+
+    return new RoomPosition(pos.x, pos.y, pos.roomName);
+  },
+
+  getStorageOrigin(room, state) {
+    var storages =
+      state.structuresByType && state.structuresByType[STRUCTURE_STORAGE]
+        ? state.structuresByType[STRUCTURE_STORAGE]
+        : [];
+    if (storages.length > 0) {
+      return storages[0].pos;
+    }
+
+    var storageSites =
+      state.sitesByType && state.sitesByType[STRUCTURE_STORAGE]
+        ? state.sitesByType[STRUCTURE_STORAGE]
+        : [];
+    if (storageSites.length > 0) {
+      return storageSites[0].pos;
+    }
+
+    return null;
   },
 
   getDefenseGoal(room, state) {

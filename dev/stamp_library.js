@@ -14,6 +14,10 @@ Current Stamps:
     tileable extension field with road cross
 - tower_cluster_v1:
     compact tower support stamp
+- storage_hub_v1:
+    storage-centered utility hub with reserved slots for advanced logistics
+- lab_cluster_v1:
+    first 3-lab cluster for RCL6 bootstrap chemistry
 
 Important Notes:
 - The anchor uses the first owned spawn as its origin.
@@ -98,6 +102,49 @@ module.exports = {
       towers: [{ x: 0, y: 0 }],
       reserved: [],
     },
+
+    storage_hub_v1: {
+      name: "storage_hub_v1",
+      roads: [
+        { x: -1, y: -1 },
+        { x: 0, y: -1 },
+        { x: 1, y: -1 },
+        { x: -1, y: 0 },
+        { x: 1, y: 0 },
+        { x: -1, y: 1 },
+        { x: 0, y: 1 },
+        { x: 1, y: 1 },
+      ],
+      storages: [{ x: 0, y: 0 }],
+      extensions: [],
+      towers: [],
+      labs: [],
+      reserved: [
+        { x: 2, y: 0, tag: "storage_link_slot" },
+        { x: 0, y: 2, tag: "terminal_slot" },
+        { x: 2, y: 2, tag: "lab_anchor_slot" },
+        { x: -2, y: 0, tag: "utility_slot" },
+        { x: 0, y: -2, tag: "utility_slot" },
+      ],
+    },
+
+    lab_cluster_v1: {
+      name: "lab_cluster_v1",
+      roads: [
+        { x: 1, y: 0 },
+        { x: 0, y: 1 },
+        { x: 2, y: 1 },
+      ],
+      storages: [],
+      extensions: [],
+      towers: [],
+      labs: [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+        { x: 2, y: 0 },
+      ],
+      reserved: [],
+    },
   },
 
   getStamp(name) {
@@ -149,6 +196,17 @@ module.exports = {
     ];
   },
 
+  getStorageStampOrigins(anchor) {
+    if (!anchor) return [];
+
+    return [
+      { x: anchor.x, y: anchor.y + 5, roomName: anchor.roomName },
+      { x: anchor.x + 5, y: anchor.y, roomName: anchor.roomName },
+      { x: anchor.x, y: anchor.y - 5, roomName: anchor.roomName },
+      { x: anchor.x - 5, y: anchor.y, roomName: anchor.roomName },
+    ];
+  },
+
   getExtensionCapacity(stampName) {
     var stamp = this.getStamp(stampName);
     if (!stamp) return 0;
@@ -195,6 +253,34 @@ module.exports = {
 
     for (var i = 0; i < stamp.towers.length; i++) {
       var cell = stamp.towers[i];
+      fn.call(
+        context,
+        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
+        cell,
+      );
+    }
+  },
+
+  forEachStoragePosition(origin, stampName, fn, context) {
+    var stamp = this.getStamp(stampName);
+    if (!stamp || !stamp.storages) return;
+
+    for (var i = 0; i < stamp.storages.length; i++) {
+      var cell = stamp.storages[i];
+      fn.call(
+        context,
+        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
+        cell,
+      );
+    }
+  },
+
+  forEachLabPosition(origin, stampName, fn, context) {
+    var stamp = this.getStamp(stampName);
+    if (!stamp || !stamp.labs) return;
+
+    for (var i = 0; i < stamp.labs.length; i++) {
+      var cell = stamp.labs[i];
       fn.call(
         context,
         new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),

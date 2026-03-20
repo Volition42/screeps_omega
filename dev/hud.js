@@ -471,9 +471,19 @@ module.exports = {
     if (!checklist) return [];
 
     const mode = config.HUD.CONSTRUCTION_CHECKLIST_MODE || "detailed";
+    const roadmapReady = checklist.currentRoadmapReady ? "READY" : "BUILD";
+    const futureReady = checklist.futurePlanReady ? "READY" : "PLAN";
 
     if (mode === "compact") {
       return [
+        "ROADMAP " +
+          String(checklist.roadmapPhase || state.phase || "bootstrap").toUpperCase() +
+          " " +
+          roadmapReady +
+          " FP " +
+          futureReady +
+          " SITES " +
+          checklist.sites,
         "BUILD EXT " +
           checklist.extensionsBuilt +
           "/" +
@@ -503,10 +513,39 @@ module.exports = {
           checklist.rampartsBuilt +
           "/" +
           checklist.rampartsNeeded,
+        "ADV LNK " +
+          checklist.linksBuilt +
+          "/" +
+          checklist.linksNeeded +
+          "   " +
+          "TRM " +
+          checklist.terminalBuilt +
+          "/" +
+          checklist.terminalNeeded +
+          "   " +
+          "EXT " +
+          checklist.extractorBuilt +
+          "/" +
+          checklist.extractorNeeded +
+          "   " +
+          "LAB " +
+          checklist.labsBuilt +
+          "/" +
+          checklist.labsNeeded,
       ];
     }
 
     return [
+      "ROADMAP " +
+        String(checklist.roadmapPhase || state.phase || "bootstrap").toUpperCase() +
+        " " +
+        roadmapReady +
+        "   " +
+        "FUTURE " +
+        futureReady +
+        "   " +
+        "SITES " +
+        checklist.sites,
       "BUILD EXT " +
         checklist.extensionsBuilt +
         "/" +
@@ -520,10 +559,7 @@ module.exports = {
         "ST " +
         checklist.storageBuilt +
         "/" +
-        checklist.storageNeeded +
-        "   " +
-        "SITES " +
-        checklist.sites,
+        checklist.storageNeeded,
       "BUILD RD " +
         checklist.roadsBuilt +
         "/" +
@@ -538,6 +574,25 @@ module.exports = {
         checklist.rampartsBuilt +
         "/" +
         checklist.rampartsNeeded,
+      "ADV LNK " +
+        checklist.linksBuilt +
+        "/" +
+        checklist.linksNeeded +
+        "   " +
+        "TRM " +
+        checklist.terminalBuilt +
+        "/" +
+        checklist.terminalNeeded +
+        "   " +
+        "EXT " +
+        checklist.extractorBuilt +
+        "/" +
+        checklist.extractorNeeded +
+        "   " +
+        "LAB " +
+        checklist.labsBuilt +
+        "/" +
+        checklist.labsNeeded,
     ];
   },
 

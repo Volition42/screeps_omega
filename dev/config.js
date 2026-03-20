@@ -111,6 +111,19 @@ module.exports = {
   Developer Notes:
   Construction System Controls
 
+  Roadmap intent by phase:
+  - bootstrap_jr: no formal room buildout, just survive and upgrade
+  - bootstrap: source containers, controller container, and road backbone
+  - developing: extensions, first tower, storage, internal roads, and defense
+  - stable: finish the current RCL core layout cleanly
+  - rcl5: add link backbone from the cached future plan
+  - rcl6: add terminal, extractor, and first lab cluster from the cached future plan
+
+  CPU policy:
+  - live construction placement stays on the normal plan interval
+  - advanced RCL5/RCL6 layout planning is cached and rebuilt slowly
+  - cached advanced plans are reused for actual site placement
+
   MAX_SITES
   Limits the total number of construction sites the AI will create at once.
 
@@ -125,7 +138,21 @@ module.exports = {
     REMOTE_MAX_SITES: 4,
     REMOTE_PLAN_INTERVAL: 75,
     ADVANCED_PLAN_INTERVAL: 250,
+    ADVANCED_ACTIONS: {
+      // Developer note:
+      // Advanced structure placement should normally use the cached future plan.
+      // Disable only when manually debugging future-plan generation.
+      USE_CACHED_FUTURE_PLAN: true,
+
+      // Developer note:
+      // Rebuild the cached future plan immediately when the room layout context
+      // changes enough to affect advanced structure placement.
+      REPLAN_ON_LAYOUT_CHANGE: true,
+    },
     FUTURE_INFRA: {
+      // Developer note:
+      // These ranges define the planner's preferred placement envelope.
+      // They are planning hints, not transfer logic.
       LINK_CONTROLLER_RANGE: 2,
       LINK_SOURCE_RANGE: 2,
       STORAGE_LINK_RANGE: 2,

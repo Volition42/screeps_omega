@@ -27,6 +27,23 @@ module.exports = {
     bootstrap_jr: {
       phase: "bootstrap_jr",
       buildList: [],
+      goals: {
+        logisticsTier: "survival_bootstrap",
+        linkPlanning: {
+          enabled: false,
+          controllerLink: false,
+          sourceLinks: 0,
+          storageLink: false,
+        },
+        advancedStructures: {
+          terminal: false,
+          extractor: false,
+          labs: 0,
+        },
+        remoteScaling: {
+          profile: "disabled",
+        },
+      },
     },
 
     bootstrap: {
@@ -37,6 +54,23 @@ module.exports = {
         "anchorRoads",
         "backboneRoads",
       ],
+      goals: {
+        logisticsTier: "container_bootstrap",
+        linkPlanning: {
+          enabled: false,
+          controllerLink: false,
+          sourceLinks: 0,
+          storageLink: false,
+        },
+        advancedStructures: {
+          terminal: false,
+          extractor: false,
+          labs: 0,
+        },
+        remoteScaling: {
+          profile: "disabled",
+        },
+      },
     },
 
     developing: {
@@ -52,6 +86,23 @@ module.exports = {
         "internalRoads",
         "defense",
       ],
+      goals: {
+        logisticsTier: "development_backbone",
+        linkPlanning: {
+          enabled: false,
+          controllerLink: false,
+          sourceLinks: 0,
+          storageLink: false,
+        },
+        advancedStructures: {
+          terminal: false,
+          extractor: false,
+          labs: 0,
+        },
+        remoteScaling: {
+          profile: "baseline",
+        },
+      },
     },
 
     stable: {
