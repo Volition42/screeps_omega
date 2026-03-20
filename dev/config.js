@@ -32,12 +32,12 @@ module.exports = {
   HUD: {
     ENABLED: true,
     CREEP_LABELS: true,
-    LABEL_INTERVAL: 5,
+    LABEL_INTERVAL: 1,
     CONSOLE_INTERVAL: 25,
 
     // Developer note:
     // Show a tiny performance line using Memory.stats from stats_manager.
-    SHOW_PERFORMANCE: true,
+    SHOW_PERFORMANCE: false,
 
     // Developer note:
     // Construction checklist block shown in the room HUD.
@@ -56,7 +56,7 @@ module.exports = {
     "detailed" = one fuller line per remote site
     */
     SHOW_REMOTE_SITES: true,
-    REMOTE_SITE_MODE: "compact",
+    REMOTE_SITE_MODE: "detailed",
   },
 
   CREEPS: {
@@ -227,7 +227,7 @@ module.exports = {
   BODIES: {
     // Developer note:
     // These tiers are keyed off room.energyCapacityAvailable, not current energy.
-    maxTierEnergy: 1300,
+    maxTierEnergy: 1800,
   },
 
   STATS: {
@@ -236,7 +236,7 @@ module.exports = {
     // - off: no CPU console output
     // - overview: top-level sections only
     // - detail: top-level sections plus per-room and per-remote breakdowns
-    CPU_CONSOLE_MODE: "detail",
+    CPU_CONSOLE_MODE: "overview",
     CPU_PRINT_INTERVAL: 25,
     RUNTIME_POLICY: {
       TIGHT_CPU_RATIO: 0.8,
@@ -267,7 +267,7 @@ module.exports = {
   DIRECTIVES: {
     // Developer note:
     // Controls how often the corporate directive system logs updates.
-    ENABLED: false,
+    ENABLED: true,
     INTERVAL: 25,
 
     // Developer note:
@@ -279,7 +279,7 @@ module.exports = {
 
     // Developer note:
     // Progress / ETA directives for controller advancement.
-    SHOW_PROGRESS_DIRECTIVES: true,
+    SHOW_PROGRESS_DIRECTIVES: false,
     PROGRESS_SAMPLE_INTERVAL: 25,
     PROGRESS_REPORT_INTERVAL: 100,
 
@@ -353,50 +353,10 @@ module.exports = {
     },
 
     SITES: {
-      E11N33: {
+      W51N24: {
         enabled: true,
-        homeRoom: "E12N33",
-        phase: 1,
-        jrWorkers: 2,
-        remoteWorkers: 1,
-
-        reservation: {
-          enabled: true,
-          reservers: 1,
-          renewBelow: 3000,
-        },
-
-        sourceDefaults: {
-          miners: 1,
-          haulers: 1,
-        },
-
-        sourcesById: {},
-      },
-      E12N32: {
-        enabled: true,
-        homeRoom: "E12N33",
-        phase: 1,
-        jrWorkers: 2,
-        remoteWorkers: 1,
-
-        reservation: {
-          enabled: true,
-          reservers: 1,
-          renewBelow: 3000,
-        },
-
-        sourceDefaults: {
-          miners: 1,
-          haulers: 1,
-        },
-
-        sourcesById: {},
-      },
-      E13N32: {
-        enabled: false,
-        homeRoom: "E12N33",
-        phase: 1,
+        homeRoom: "W51N25",
+        phase: 2,
         jrWorkers: 2,
         remoteWorkers: 1,
 
@@ -413,9 +373,29 @@ module.exports = {
 
         sourcesById: {},
       },
-      E11N32: {
+      W51N26: {
         enabled: false,
-        homeRoom: "E12N33",
+        homeRoom: "W51N25",
+        phase: 2,
+        jrWorkers: 2,
+        remoteWorkers: 1,
+
+        reservation: {
+          enabled: true,
+          reservers: 1,
+          renewBelow: 2000,
+        },
+
+        sourceDefaults: {
+          miners: 1,
+          haulers: 1,
+        },
+
+        sourcesById: {},
+      },
+      W52N26: {
+        enabled: false,
+        homeRoom: "W51N25",
         phase: 1,
         jrWorkers: 2,
         remoteWorkers: 1,

@@ -134,7 +134,7 @@ module.exports = {
       return requests;
     }
 
-    if (this.isBootstrapPhase(state.phase)) {
+    if (state.phase === "bootstrap_jr") {
       this.addDefenseRequests(room, state, requests, reaction, {
         homeOnly: true,
       });
@@ -152,6 +152,33 @@ module.exports = {
         desiredJrWorkers
       ) {
         requests.push({ role: "jrworker", priority: 100 });
+      }
+
+      requests.sort(function (a, b) {
+        return b.priority - a.priority;
+      });
+
+      return requests;
+    }
+
+    if (state.phase === "bootstrap") {
+      this.addDefenseRequests(room, state, requests, reaction, {
+        homeOnly: true,
+      });
+
+      var desiredBootstrapWorkers = Math.max(1, config.CREEPS.workers || 1);
+      var currentBootstrapWorkers = roleCounts.worker || 0;
+      var queuedBootstrapWorkers = this.countQueued(room, "worker");
+
+      while (
+        currentBootstrapWorkers +
+          queuedBootstrapWorkers +
+          requests.filter(function (r) {
+            return r.role === "worker";
+          }).length <
+        desiredBootstrapWorkers
+      ) {
+        requests.push({ role: "worker", priority: 100 });
       }
 
       requests.sort(function (a, b) {
