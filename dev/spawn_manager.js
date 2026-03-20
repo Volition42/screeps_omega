@@ -135,20 +135,32 @@ module.exports = {
     if (state.phase === "bootstrap") {
       this.addDefenseRequests(room, state, requests, reaction);
 
-      var desiredBootstrapWorkers = Math.max(1, config.CREEPS.workers || 1);
-      var currentBootstrapWorkers = roleCounts.worker || 0;
-      var queuedBootstrapWorkers = this.countQueued(room, "worker");
+      if (!this.areSourceContainersReady(state)) {
+        var desiredBootstrapWorkers = Math.max(1, config.CREEPS.workers || 1);
+        var currentBootstrapWorkers = roleCounts.worker || 0;
+        var queuedBootstrapWorkers = this.countQueued(room, "worker");
 
-      while (
-        currentBootstrapWorkers +
-          queuedBootstrapWorkers +
-          requests.filter(function (r) {
-            return r.role === "worker";
-          }).length <
-        desiredBootstrapWorkers
-      ) {
-        requests.push({ role: "worker", priority: 100 });
+        while (
+          currentBootstrapWorkers +
+            queuedBootstrapWorkers +
+            requests.filter(function (r) {
+              return r.role === "worker";
+            }).length <
+          desiredBootstrapWorkers
+        ) {
+          requests.push({ role: "worker", priority: 100 });
+        }
+
+        requests.sort(function (a, b) {
+          return b.priority - a.priority;
+        });
+
+        return requests;
       }
+
+      this.addCoreEconomyRequests(room, state, requests, {
+        includeRepairs: false,
+      });
 
       requests.sort(function (a, b) {
         return b.priority - a.priority;
@@ -158,6 +170,62 @@ module.exports = {
     }
 
     this.addDefenseRequests(room, state, requests, reaction);
+    this.addCoreEconomyRequests(room, state, requests, {
+      includeRepairs: true,
+    });
+
+    requests.sort(function (a, b) {
+      return b.priority - a.priority;
+    });
+
+    return requests;
+  },
+
+  isBootstrapPhase(phase) {
+    return phase === "bootstrap_jr" || phase === "bootstrap";
+  },
+
+  areSourceContainersReady(state) {
+    if (state && state.buildStatus) {
+      return (
+        state.buildStatus.sourceContainersBuilt >=
+        state.buildStatus.sourceContainersNeeded
+      );
+    }
+
+    var sources = state && state.sources ? state.sources.length : 0;
+    var built =
+      state && state.sourceContainers ? state.sourceContainers.length : 0;
+
+    return sources > 0 && built >= sources;
+  },
+
+  addCoreEconomyRequests(room, state, requests, options) {
+    var roleCounts = state.roleCounts || {};
+    var settings = options || {};
+    var sources = state.sources || [];
+    var sourceContainersBySourceId = state.sourceContainersBySourceId || {};
+
+    for (var i = 0; i < sources.length; i++) {
+      var source = sources[i];
+      var sourceContainer = sourceContainersBySourceId[source.id];
+      if (!sourceContainer) continue;
+
+      var existingMiners = this.getRoleSourceCount(state, "miner", source.id);
+      var queuedMiners = this.countQueuedForSource(room, "miner", source.id);
+
+      for (
+        var minerIndex = existingMiners + queuedMiners;
+        minerIndex < config.CREEPS.minersPerSource;
+        minerIndex++
+      ) {
+        requests.push({
+          role: "miner",
+          priority: 100,
+          sourceId: source.id,
+        });
+      }
+    }
 
     var desiredWorkers = config.CREEPS.workers;
     var currentWorkers = roleCounts.worker || 0;
@@ -171,65 +239,7 @@ module.exports = {
         }).length <
       desiredWorkers
     ) {
-      requests.push({ role: "worker", priority: 100 });
-    }
-
-    var minersPerSource = config.CREEPS.minersPerSource;
-
-    for (var i = 0; i < state.sources.length; i++) {
-      var source = state.sources[i];
-      var sourceContainer = state.sourceContainersBySourceId[source.id];
-      if (!sourceContainer) continue;
-
-      var existingMiners = this.getRoleSourceCount(state, "miner", source.id);
-
-      var queuedMiners = this.countQueuedForSource(room, "miner", source.id);
-
-      for (
-        var minerIndex = existingMiners + queuedMiners;
-        minerIndex < minersPerSource;
-        minerIndex++
-      ) {
-        requests.push({
-          role: "miner",
-          priority: 90,
-          sourceId: source.id,
-        });
-      }
-    }
-
-    for (var j = 0; j < state.sources.length; j++) {
-      var haulSource = state.sources[j];
-      var haulContainer = state.sourceContainersBySourceId[haulSource.id];
-      if (!haulContainer) continue;
-
-      var desiredHaulersForSource = this.getDesiredHaulersForSource(
-        haulSource.id,
-      );
-
-      var existingHaulers = this.getRoleSourceCount(
-        state,
-        "hauler",
-        haulSource.id,
-      );
-
-      var queuedHaulers = this.countQueuedForSource(
-        room,
-        "hauler",
-        haulSource.id,
-      );
-
-      for (
-        var haulerIndex = existingHaulers + queuedHaulers;
-        haulerIndex < desiredHaulersForSource;
-        haulerIndex++
-      ) {
-        requests.push({
-          role: "hauler",
-          priority: 80,
-          sourceId: haulSource.id,
-        });
-      }
+      requests.push({ role: "worker", priority: 90 });
     }
 
     var desiredUpgraders = config.CREEPS.upgraders;
@@ -246,9 +256,43 @@ module.exports = {
     ) {
       requests.push({
         role: "upgrader",
-        priority: 70,
+        priority: 80,
       });
     }
+
+    for (var j = 0; j < sources.length; j++) {
+      var haulSource = sources[j];
+      var haulContainer = sourceContainersBySourceId[haulSource.id];
+      if (!haulContainer) continue;
+
+      var desiredHaulersForSource = this.getDesiredHaulersForSource(
+        haulSource.id,
+      );
+      var existingHaulers = this.getRoleSourceCount(
+        state,
+        "hauler",
+        haulSource.id,
+      );
+      var queuedHaulers = this.countQueuedForSource(
+        room,
+        "hauler",
+        haulSource.id,
+      );
+
+      for (
+        var haulerIndex = existingHaulers + queuedHaulers;
+        haulerIndex < desiredHaulersForSource;
+        haulerIndex++
+      ) {
+        requests.push({
+          role: "hauler",
+          priority: 70,
+          sourceId: haulSource.id,
+        });
+      }
+    }
+
+    if (!settings.includeRepairs) return;
 
     var desiredRepairs = config.CREEPS.repairs;
     var currentRepairs = roleCounts.repair || 0;
@@ -264,16 +308,6 @@ module.exports = {
     ) {
       requests.push({ role: "repair", priority: 60 });
     }
-
-    requests.sort(function (a, b) {
-      return b.priority - a.priority;
-    });
-
-    return requests;
-  },
-
-  isBootstrapPhase(phase) {
-    return phase === "bootstrap_jr" || phase === "bootstrap";
   },
 
   addDefenseRequests(room, state, requests, reaction) {
