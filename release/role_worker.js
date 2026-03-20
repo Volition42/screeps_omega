@@ -14,7 +14,7 @@ Withdrawal priority:
 - harvest source as fallback
 
 Important Notes:
-- Workers no longer prefer controller containers for withdrawal
+- Workers pull from the shared room energy buffers
 - Shared helper keeps worker energy logic aligned with repair creeps
 */
 
@@ -25,15 +25,20 @@ const MOVE_OPTIONS = {
 };
 
 module.exports = {
-  run(creep) {
+  run(creep, options) {
+    var thinkInterval =
+      options && options.thinkInterval ? options.thinkInterval : 1;
+
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;
       delete creep.memory.withdrawTargetId;
+      delete creep.memory.workTargetId;
     }
 
     if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
       creep.memory.working = true;
       delete creep.memory.withdrawTargetId;
+      delete creep.memory.workTargetId;
     }
 
     if (!creep.memory.working) {
@@ -82,26 +87,18 @@ module.exports = {
       return;
     }
 
-    const spawnTarget = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_SPAWN &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-        );
-      },
-    });
+    const workTarget = this.getWorkTarget(creep, thinkInterval);
 
-    if (spawnTarget) {
-      if (creep.transfer(spawnTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(spawnTarget, MOVE_OPTIONS);
+    if (workTarget && workTarget.structureType === STRUCTURE_SPAWN) {
+      if (creep.transfer(workTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(workTarget, MOVE_OPTIONS);
       }
       return;
     }
 
-    const site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
-    if (site) {
-      if (creep.build(site) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site, MOVE_OPTIONS);
+    if (workTarget && workTarget.progressTotal !== undefined) {
+      if (creep.build(workTarget) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(workTarget, MOVE_OPTIONS);
       }
       return;
     }
@@ -111,5 +108,70 @@ module.exports = {
         creep.moveTo(creep.room.controller, MOVE_OPTIONS);
       }
     }
+  },
+
+  getWorkTarget(creep, thinkInterval) {
+    const cached = this.getCachedWorkTarget(creep);
+
+    if (cached && !this.shouldThink(creep, thinkInterval, "workerWork")) {
+      return cached;
+    }
+
+    let target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_SPAWN &&
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+      },
+    });
+
+    if (!target) {
+      target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+    }
+
+    this.storeWorkTarget(creep, target);
+    return target;
+  },
+
+  getCachedWorkTarget(creep) {
+    if (!creep.memory.workTargetId) return null;
+
+    const target = Game.getObjectById(creep.memory.workTargetId);
+    if (!target) {
+      delete creep.memory.workTargetId;
+      return null;
+    }
+
+    if (
+      target.structureType === STRUCTURE_SPAWN &&
+      target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+    ) {
+      delete creep.memory.workTargetId;
+      return null;
+    }
+
+    return target;
+  },
+
+  storeWorkTarget(creep, target) {
+    if (target && target.id) {
+      creep.memory.workTargetId = target.id;
+      return;
+    }
+
+    delete creep.memory.workTargetId;
+  },
+
+  shouldThink(creep, interval, key) {
+    if (interval <= 1) return true;
+
+    const memoryKey = key + "ThinkAt";
+    if (!creep.memory[memoryKey] || Game.time >= creep.memory[memoryKey]) {
+      creep.memory[memoryKey] = Game.time + interval;
+      return true;
+    }
+
+    return false;
   },
 };

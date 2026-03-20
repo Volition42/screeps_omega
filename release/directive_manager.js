@@ -423,9 +423,6 @@ module.exports = {
     const sourceContainers = state.sourceContainers
       ? state.sourceContainers.length
       : 0;
-    const controllerContainers = state.controllerContainers
-      ? state.controllerContainers.length
-      : 0;
     const energyLine = `${room.energyAvailable}/${room.energyCapacityAvailable}`;
 
     const operationalSignature =
@@ -437,9 +434,7 @@ module.exports = {
       "|" +
       constructionSites +
       "|" +
-      sourceContainers +
-      "|" +
-      controllerContainers;
+      sourceContainers;
 
     // Developer note:
     // Operational directives are informative only, so identical room state is
@@ -483,7 +478,7 @@ module.exports = {
         header,
         "Infrastructure seeding program initiated.",
         `Source container coverage: ${sourceContainers}/${state.sources.length}.`,
-        `Controller container coverage: ${controllerContainers}/1.`,
+        "Shared hauler and upgrader logistics are replacing dedicated controller feed paths.",
         "Foundational logistics are being positioned for scalable growth.",
         footer,
       ];

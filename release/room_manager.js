@@ -1,3 +1,4 @@
+const config = require("config");
 const roomState = require("room_state");
 const utils = require("utils");
 const constructionManager = require("construction_manager");
@@ -7,18 +8,61 @@ const towerManager = require("tower_manager");
 const controllerSigner = require("controller_signer");
 const directiveManager = require("directive_manager");
 const hud = require("hud");
+const statsManager = require("stats_manager");
 
 module.exports = {
-  run(room) {
-    const state = roomState.collect(room);
+  run(room, profiler) {
+    const roomLabel = `room.${room.name}`;
+    const detailCpu =
+      profiler &&
+      statsManager.getCpuConsoleMode &&
+      statsManager.getCpuConsoleMode() === "detail";
+    const runtimeMode = statsManager.getRuntimeMode();
+    const runStep = function (suffix, fn, context, ...args) {
+      if (!detailCpu) {
+        return fn.apply(context, args);
+      }
+
+      return profiler.wrap(`${roomLabel}.${suffix}`, fn, context, ...args);
+    };
+
+    const state = runStep(
+      "state.collect",
+      roomState.collect,
+      roomState,
+      room,
+      detailCpu ? profiler : null,
+      detailCpu ? roomLabel : null,
+    );
     utils.setRoomRuntimeState(room, state);
 
-    constructionManager.plan(room, state);
-    towerManager.run(room, state);
-    spawnManager.run(room, state);
-    creepManager.run(room, state);
-    controllerSigner.run(room);
-    directiveManager.run(room, state);
-    hud.run(room, state);
+    runStep(
+      "construction",
+      constructionManager.plan,
+      constructionManager,
+      room,
+      state,
+      detailCpu ? profiler : null,
+      detailCpu ? roomLabel : null,
+    );
+    runStep("towers", towerManager.run, towerManager, room, state);
+    runStep("spawn", spawnManager.run, spawnManager, room, state);
+    runStep(
+      "creeps",
+      creepManager.run,
+      creepManager,
+      room,
+      state,
+      detailCpu ? profiler : null,
+      detailCpu ? roomLabel : null,
+      runtimeMode,
+    );
+    runStep("sign", controllerSigner.run, controllerSigner, room);
+    if (!runtimeMode.skipDirectives) {
+      runStep("directives", directiveManager.run, directiveManager, room, state);
+    }
+    if (!runtimeMode.skipHud) {
+      runStep("hud", hud.run, hud, room, state);
+    }
   },
 };

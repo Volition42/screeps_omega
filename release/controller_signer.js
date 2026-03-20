@@ -8,7 +8,6 @@ Behavior:
 - Uses the first available creep in the room for now.
 
 Future Ideas:
-- Let scouts sign remote / neutral rooms
 - Add room-specific sign themes by phase or room type
 */
 

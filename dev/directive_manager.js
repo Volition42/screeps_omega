@@ -1,10 +1,10 @@
 /*
 Developer Summary:
-vCORP Corporate Directive System
+Room Snapshot Directive System
 
 Purpose:
-- Provide themed room-level console output
-- Announce one-time operational events
+- Provide room-level console snapshots
+- Announce one-time operational state changes
 - Report recurring performance, growth, and construction status
 
 Announcement priority:
@@ -26,7 +26,7 @@ Tracked one-time events:
 - stable readiness
 
 Design goal:
-Feel like polished corporate reporting without spamming noise.
+Read like a concise analyst snapshot without spamming noise.
 */
 
 const config = require("config");
@@ -59,6 +59,10 @@ module.exports = {
   printLines(lines) {
     for (let i = 0; i < lines.length; i++) {
       console.log(lines[i]);
+    }
+
+    if (config.DIRECTIVES.SEPARATOR_LINE) {
+      console.log(config.DIRECTIVES.SEPARATOR_LINE);
     }
   },
 
@@ -113,44 +117,40 @@ module.exports = {
     const previousPhase = tracker.lastPhase;
     tracker.lastPhase = currentPhase;
 
-    const header = `[vCORP Directive Update] [Sector:${room.name}]`;
+    const header = this.getHeader(room.name, "Phase");
 
     if (currentPhase === "bootstrap") {
       return [
         header,
-        "Early market entry objectives have been satisfied.",
-        `Sector operations have transitioned from ${previousPhase} to bootstrap infrastructure deployment.`,
-        "Foundational assets are now authorized for structured expansion.",
-        `[vCORP Phase] ${previousPhase} -> ${currentPhase}`,
+        `Phase changed: ${previousPhase} -> ${currentPhase}.`,
+        "Bootstrap logistics are now the active room priority.",
+        `[Room Phase] from=${previousPhase} to=${currentPhase}`,
       ];
     }
 
     if (currentPhase === "developing") {
       return [
         header,
-        "Infrastructure seeding program completed.",
-        `Sector operations have transitioned from ${previousPhase} to active development.`,
-        "Expansion assets are now prioritized for structured growth and defensive preparation.",
-        `[vCORP Phase] ${previousPhase} -> ${currentPhase}`,
+        `Phase changed: ${previousPhase} -> ${currentPhase}.`,
+        "The room has cleared bootstrap construction and can build out its core economy.",
+        `[Room Phase] from=${previousPhase} to=${currentPhase}`,
       ];
     }
 
     if (currentPhase === "stable") {
       return [
         header,
-        "Stable operations authorized.",
-        `Sector operations have transitioned from ${previousPhase} to stable performance status.`,
-        "Capacity may now be redirected toward fortification, optimization, and revenue extraction.",
-        `[vCORP Phase] ${previousPhase} -> ${currentPhase}`,
+        `Phase changed: ${previousPhase} -> ${currentPhase}.`,
+        "The current room build plan is satisfied and the economy is stable.",
+        `[Room Phase] from=${previousPhase} to=${currentPhase}`,
       ];
     }
 
     return [
       header,
-      "Administrative phase transition recorded.",
-      `Sector operations have transitioned from ${previousPhase} to ${currentPhase}.`,
-      "Department leads are expected to align with the updated operating profile.",
-      `[vCORP Phase] ${previousPhase} -> ${currentPhase}`,
+      `Phase changed: ${previousPhase} -> ${currentPhase}.`,
+      "Room phase state has been updated.",
+      `[Room Phase] from=${previousPhase} to=${currentPhase}`,
     ];
   },
 
@@ -159,17 +159,16 @@ module.exports = {
 
     const buildStatus = state.buildStatus;
     if (!buildStatus) return null;
-    const header = `[vCORP Directive Update] [Sector:${room.name}]`;
+    const header = this.getHeader(room.name, "Milestone");
 
     if (!tracker.announced.bootstrapComplete && buildStatus.bootstrapComplete) {
       tracker.announced.bootstrapComplete = true;
 
       return [
         header,
-        "Bootstrap infrastructure baseline achieved.",
-        "Source logistics, controller support, and initial transport lanes are now online.",
-        "The sector is authorized to proceed into higher-value development programs.",
-        "[vCORP Milestone] bootstrapComplete=true",
+        "Bootstrap baseline completed.",
+        "Source containers and the early road backbone are in place.",
+        "[Room Milestone] bootstrapComplete=true",
       ];
     }
 
@@ -183,10 +182,9 @@ module.exports = {
 
       return [
         header,
-        "Defense baseline achieved.",
-        "Perimeter controls and controlled-access rampart gates are now in place.",
-        "Security posture has been upgraded from optimistic to professionally suspicious.",
-        "[vCORP Milestone] defenseComplete=true",
+        "Defense baseline completed.",
+        "Walls and ramparts now meet the current room target.",
+        "[Room Milestone] defenseComplete=true",
       ];
     }
 
@@ -199,10 +197,9 @@ module.exports = {
 
       return [
         header,
-        "Automated security platform commissioned.",
-        "Tower construction objectives have been fulfilled and response coverage is now active.",
-        "Operational continuity is expected to improve under hostile labor conditions.",
-        "[vCORP Milestone] towerReady=true",
+        "Tower baseline completed.",
+        "Tower coverage is now available for room defense and support.",
+        "[Room Milestone] towerReady=true",
       ];
     }
 
@@ -211,10 +208,9 @@ module.exports = {
 
       return [
         header,
-        "Sector maturity review approved.",
-        "Construction roadmap targets for the current operating profile have been satisfied.",
-        "Future labor may now be reassigned toward optimization, expansion, or strategic overreach.",
-        "[vCORP Milestone] stableReady=true",
+        "Stable-room baseline completed.",
+        "Current roadmap targets are satisfied for this operating profile.",
+        "[Room Milestone] stableReady=true",
       ];
     }
 
@@ -247,17 +243,16 @@ module.exports = {
     const healthyReportInterval =
       config.DIRECTIVES.HEALTHY_REPORT_INTERVAL || 100;
 
-    const header = `[vCORP Directive Update] [Sector:${room.name}]`;
+    const header = this.getHeader(room.name, "CPU");
     const footer =
-      `[vCORP Performance] cpu=${last.cpu.used.toFixed(2)} ` +
+      `[Room CPU] cpu=${last.cpu.used.toFixed(2)} ` +
       `avg=${avgCpu.toFixed(2)} bucket=${last.cpu.bucket}`;
 
     if (avgCpu > 0 && last.cpu.used >= avgCpu * cpuSpikeMultiplier) {
       return [
         header,
-        "Operational variance has exceeded acceptable corporate tolerances.",
-        "Compute overhead has risen above projected throughput targets.",
-        "All departments are instructed to maintain productivity while diagnostics proceed.",
+        "CPU spike detected above the configured threshold.",
+        "This tick used significantly more CPU than the recent average.",
         footer,
       ];
     }
@@ -265,9 +260,8 @@ module.exports = {
     if (last.cpu.bucket <= bucketWarningThreshold) {
       return [
         header,
-        "Resource conservation protocol initiated.",
-        "CPU reserve capacity has fallen below preferred operating threshold.",
-        "Non-essential activity is to remain under review until reserves recover.",
+        "CPU bucket is below the configured warning threshold.",
+        "Runtime shedding may activate until reserves recover.",
         footer,
       ];
     }
@@ -275,9 +269,8 @@ module.exports = {
     if (Game.time % healthyReportInterval === 0) {
       return [
         header,
-        "Performance review complete.",
-        "Compute expenditure remains within approved operational margins.",
-        "Reserve capacity is stable and market activities may continue as scheduled.",
+        "CPU usage is within the configured operating range.",
+        "No CPU pressure action is currently required.",
         footer,
       ];
     }
@@ -296,7 +289,7 @@ module.exports = {
     const reportInterval = config.DIRECTIVES.PROGRESS_REPORT_INTERVAL || 100;
     if (Game.time % reportInterval !== 0) return null;
 
-    const header = `[vCORP Directive Update] [Sector:${room.name}]`;
+    const header = this.getHeader(room.name, "Growth");
     const pct = Math.round(
       (room.controller.progress / room.controller.progressTotal) * 100,
     );
@@ -304,19 +297,17 @@ module.exports = {
     if (progress.rate <= 0) {
       return [
         header,
-        "Controller advancement review submitted.",
-        `Current progress remains at ${pct}% with no measurable acceleration in this reporting window.`,
-        "Labor allocation is to maintain output until growth velocity improves.",
-        `[vCORP Growth] rcl=${room.controller.level} progress=${room.controller.progress}/${room.controller.progressTotal} eta=undetermined`,
+        `Controller progress is ${pct}% toward RCL${room.controller.level + 1}.`,
+        "Upgrade rate was flat during the current sample window.",
+        `[Room Growth] rcl=${room.controller.level} progress=${room.controller.progress}/${room.controller.progressTotal} eta=undetermined`,
       ];
     }
 
     return [
       header,
-      "Controller advancement review submitted.",
-      `Current progress stands at ${pct}% toward RCL${room.controller.level + 1}.`,
-      `Projected advancement window: ${this.formatTicksAsDhM(progress.etaTicks)} at ${progress.rate.toFixed(2)} progress/tick.`,
-      `[vCORP Growth] rcl=${room.controller.level} progress=${room.controller.progress}/${room.controller.progressTotal} eta=${this.formatTicksAsDhM(progress.etaTicks)}`,
+      `Controller progress is ${pct}% toward RCL${room.controller.level + 1}.`,
+      `Estimated completion: ${this.formatTicksAsDhM(progress.etaTicks)} at ${progress.rate.toFixed(2)} progress/tick.`,
+      `[Room Growth] rcl=${room.controller.level} progress=${room.controller.progress}/${room.controller.progressTotal} eta=${this.formatTicksAsDhM(progress.etaTicks)}`,
     ];
   },
 
@@ -329,7 +320,7 @@ module.exports = {
     const checklist = state.buildStatus;
     if (!checklist) return null;
 
-    const header = `[vCORP Directive Update] [Sector:${room.name}]`;
+    const header = this.getHeader(room.name, "Build");
 
     if (
       checklist.extensionsBuilt >= checklist.extensionsNeeded &&
@@ -345,17 +336,17 @@ module.exports = {
 
     return [
       header,
-      "Infrastructure progress review submitted.",
+      "Construction snapshot for the current room phase.",
       checklist.sites > 0
-        ? "Current build program remains active."
-        : "Additional infrastructure capacity has been identified for future allocation.",
+        ? "Active construction sites are present."
+        : "The current phase still has unmet structure targets.",
       `Checklist: EXT ${checklist.extensionsBuilt}/${checklist.extensionsNeeded} | ` +
         `TOWER ${checklist.towersBuilt}/${checklist.towersNeeded} | ` +
         `STORAGE ${checklist.storageBuilt}/${checklist.storageNeeded} | ` +
         `ROADS ${checklist.roadsBuilt}/${checklist.roadsNeeded} | ` +
         `WALL ${checklist.wallsBuilt}/${checklist.wallsNeeded} | ` +
         `RAMP ${checklist.rampartsBuilt}/${checklist.rampartsNeeded}`,
-      `[vCORP Build] phase=${state.phase} sites=${checklist.sites}`,
+      `[Room Build] phase=${state.phase} sites=${checklist.sites}`,
     ];
   },
 
@@ -449,16 +440,15 @@ module.exports = {
     tracker.lastOperationalSignature = operationalSignature;
     tracker.lastOperationalTick = Game.time;
 
-    const header = `[vCORP Directive Update] [Sector:${roomName}]`;
+    const header = this.getHeader(roomName, "Status");
     const footer =
-      `[vCORP Status] phase=${state.phase} rcl=${controllerLevel} energy=${energyLine}`;
+      `[Room Status] phase=${state.phase} rcl=${controllerLevel} energy=${energyLine}`;
 
     if (hostiles > 0) {
       return [
         header,
-        "Security escalation authorized.",
-        `Hostile workforce detected: ${hostiles}.`,
-        "Defensive assets are to prioritize threat suppression and continuity of operations.",
+        `Hostiles detected: ${hostiles}.`,
+        "Room safety response is active and civilian movement may be restricted.",
         footer,
       ];
     }
@@ -466,9 +456,8 @@ module.exports = {
     if (state.phase === "bootstrap_jr") {
       return [
         header,
-        "Early market entry protocol active.",
-        "Junior labor assets are conducting direct extraction and controller investment.",
-        "Short-term growth is prioritized over operational elegance.",
+        "Early bootstrap state is active.",
+        "Junior workers are handling direct harvest and early controller progress.",
         footer,
       ];
     }
@@ -476,10 +465,9 @@ module.exports = {
     if (state.phase === "bootstrap") {
       return [
         header,
-        "Infrastructure seeding program initiated.",
+        "Bootstrap construction is active.",
         `Source container coverage: ${sourceContainers}/${state.sources.length}.`,
-        "Shared hauler and upgrader logistics are replacing dedicated controller feed paths.",
-        "Foundational logistics are being positioned for scalable growth.",
+        "Core economy roles should come online as soon as source containers are ready.",
         footer,
       ];
     }
@@ -488,18 +476,16 @@ module.exports = {
       if (constructionSites > 0) {
         return [
           header,
-          "Market Expansion Program initiated.",
-          `Active construction packages: ${constructionSites}.`,
-          "Resource acquisition priority increased to support structured development.",
+          `Active construction sites: ${constructionSites}.`,
+          "The room is still filling out its developing-phase build targets.",
           footer,
         ];
       }
 
       return [
         header,
-        "Regional development remains on schedule.",
-        "Infrastructure deployment has entered an efficiency optimization cycle.",
-        "Energy flow is being redirected toward strategic growth targets.",
+        "Developing-phase economy is active.",
+        "The room is operating without active construction pressure this cycle.",
         footer,
       ];
     }
@@ -507,19 +493,22 @@ module.exports = {
     if (state.phase === "stable") {
       return [
         header,
-        "Operational stability confirmed.",
-        "Core infrastructure is performing within acceptable corporate tolerances.",
-        "Excess capacity may be redirected toward expansion, fortification, or revenue extraction.",
+        "Stable-phase room state confirmed.",
+        "Core infrastructure is built and the room can bias toward upgrades and maintenance.",
         footer,
       ];
     }
 
     return [
       header,
-      "Administrative review in progress.",
-      "No special directive was generated for this cycle.",
+      "No special room-state change was detected for this cycle.",
       footer,
     ];
+  },
+
+  getHeader(roomName, section) {
+    const label = config.DIRECTIVES.HEADER_LABEL || "Room Snapshot";
+    return `[${label}] [${section}] [Room:${roomName}]`;
   },
 
   formatTicksAsDhM(ticks) {

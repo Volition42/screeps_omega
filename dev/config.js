@@ -22,6 +22,7 @@ Important Notes:
 - Keep the hauler override example in place for future tuning.
 - HUD options should stay easy to toggle during testing.
 - Directive settings control both recurring reports and one-time milestone announcements.
+- Directive output should read like an analyst snapshot, not executive narration.
 */
 
 module.exports = {
@@ -262,12 +263,20 @@ module.exports = {
 
   DIRECTIVES: {
     // Developer note:
-    // Controls how often the corporate directive system logs updates.
+    // Controls how often the room snapshot system logs updates.
     ENABLED: true,
     INTERVAL: 25,
 
     // Developer note:
-    // Performance-aware directive settings.
+    // Keep directive output easy to scan in the console.
+    // HEADER_LABEL sets the snapshot prefix and SEPARATOR_LINE prints after
+    // each directive block so later console messages do not run together.
+    HEADER_LABEL: "Room Snapshot",
+    SEPARATOR_LINE:
+      "------------------------------------------------------------",
+
+    // Developer note:
+    // Performance-aware snapshot settings.
     SHOW_PERFORMANCE_DIRECTIVES: true,
     CPU_SPIKE_MULTIPLIER: 1.5,
     BUCKET_WARNING_THRESHOLD: 8000,
@@ -285,7 +294,7 @@ module.exports = {
     CONSTRUCTION_REPORT_INTERVAL: 75,
 
     // Developer note:
-    // One-time announcement system.
+    // One-time snapshot announcements.
     SHOW_PHASE_TRANSITION_DIRECTIVES: true,
     SHOW_MILESTONE_DIRECTIVES: true,
   },

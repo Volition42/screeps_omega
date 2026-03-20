@@ -1,16 +1,14 @@
 /*
 Developer Summary:
-Defender role.
+Home defender role.
 
 Purpose:
-- Travel to threatened owned or configured remote rooms
-- Attack hostile creeps with a simple melee response
-- Hold remote controllers when hostile reservation pressure is the only signal
+- Hold the home room during active invasions
+- Use melee pressure against hostile creeps and hostile structures
+- Stay anchored to the home room
 
 Important Notes:
-- This role is intentionally narrow and does not perform proactive attacks
-- Assignment is reevaluated each tick from the home room defense plan
-- If no threat is active, the defender falls back to a home-room rally posture
+- This role is intentionally defensive and does not leave the home room
 */
 
 const defenseManager = require("defense_manager");
@@ -25,24 +23,12 @@ module.exports = {
     var homeRoomName = creep.memory.homeRoom || creep.memory.room;
     if (!homeRoomName) return;
 
-    var defenseState = this.getDefenseState(homeRoomName, state);
-    var threat = defenseManager.getPreferredThreat(
-      defenseState,
-      creep.memory.targetRoom,
-    );
+    var homeThreat = this.getHomeThreat(homeRoomName, state);
 
-    if (threat) {
-      creep.memory.targetRoom = threat.roomName;
-      creep.memory.defenseType = threat.type;
-    } else {
-      creep.memory.targetRoom = homeRoomName;
-      delete creep.memory.defenseType;
-    }
+    creep.memory.defenseType = homeThreat ? homeThreat.classification : "clear";
 
-    var targetRoom = creep.memory.targetRoom || homeRoomName;
-
-    if (creep.room.name !== targetRoom) {
-      this.moveToRoom(creep, targetRoom);
+    if (creep.room.name !== homeRoomName) {
+      this.moveToRoom(creep, homeRoomName);
       return;
     }
 
@@ -52,69 +38,58 @@ module.exports = {
       var attackResult = creep.attack(hostile);
 
       if (attackResult === ERR_NOT_IN_RANGE) {
-        creep.moveTo(hostile, MOVE_OPTIONS);
+        creep.moveTo(hostile, {
+          reusePath: 0,
+          range: 1,
+          visualizePathStyle: { stroke: "#ff6b6b" },
+        });
       }
 
-      return;
-    }
-
-    if (
-      threat &&
-      threat.roomName === creep.room.name &&
-      threat.hostileReservation &&
-      creep.room.controller
-    ) {
-      if (creep.pos.getRangeTo(creep.room.controller) > 1) {
-        creep.moveTo(creep.room.controller, MOVE_OPTIONS);
-      }
       return;
     }
 
     this.rally(creep, homeRoomName);
   },
 
-  getDefenseState(homeRoomName, state) {
-    if (state && state.defense) return state.defense;
+  getHomeThreat(homeRoomName, state) {
+    if (state && state.defense) {
+      return defenseManager.getThreatByRoom(state.defense, homeRoomName);
+    }
 
     var homeRoom = Game.rooms[homeRoomName];
     if (!homeRoom) return null;
 
     var cache = utils.getRoomRuntimeCache(homeRoom);
-    return cache && cache.state ? cache.state.defense || null : null;
+    if (!cache || !cache.state || !cache.state.defense) return null;
+
+    return defenseManager.getThreatByRoom(cache.state.defense, homeRoomName);
   },
 
   getPriorityHostile(creep) {
-    var hostiles = utils.getDefenseHostiles(creep.room);
+    var targets = utils.getDefenseIntruders(
+      creep.room,
+      creep.room.find(FIND_HOSTILE_CREEPS),
+      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+        ? creep.room.find(FIND_HOSTILE_POWER_CREEPS)
+        : [],
+      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+        ? creep.room.find(FIND_HOSTILE_STRUCTURES)
+        : [],
+    );
 
-    if (hostiles.length === 0) return null;
+    if (targets.length === 0) return null;
 
-    hostiles.sort(function (a, b) {
-      var aClaim = a.getActiveBodyparts(CLAIM);
-      var bClaim = b.getActiveBodyparts(CLAIM);
-      if (aClaim !== bClaim) return bClaim - aClaim;
+    var closestByPath = creep.pos.findClosestByPath(targets);
+    if (closestByPath) return closestByPath;
 
-      var aHeal = a.getActiveBodyparts(HEAL);
-      var bHeal = b.getActiveBodyparts(HEAL);
-      if (aHeal !== bHeal) return bHeal - aHeal;
-
-      var aCombat =
-        a.getActiveBodyparts(ATTACK) + a.getActiveBodyparts(RANGED_ATTACK);
-      var bCombat =
-        b.getActiveBodyparts(ATTACK) + b.getActiveBodyparts(RANGED_ATTACK);
-      if (aCombat !== bCombat) return bCombat - aCombat;
-
+    targets.sort(function (a, b) {
       return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
     });
 
-    return hostiles[0];
+    return targets[0];
   },
 
   rally(creep, homeRoomName) {
-    if (creep.room.name !== homeRoomName) {
-      this.moveToRoom(creep, homeRoomName);
-      return;
-    }
-
     var spawn = creep.room.find(FIND_MY_SPAWNS)[0];
     var anchor = spawn || new RoomPosition(25, 25, homeRoomName);
 
@@ -125,7 +100,7 @@ module.exports = {
 
   moveToRoom(creep, roomName) {
     creep.moveTo(new RoomPosition(25, 25, roomName), {
-      reusePath: 50,
+      reusePath: 40,
       range: 20,
       visualizePathStyle: { stroke: "#ff6b6b" },
     });

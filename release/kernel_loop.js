@@ -40,6 +40,7 @@ module.exports = {
             roomManager.run,
             roomManager,
             room,
+            profiler,
           );
         }
       },

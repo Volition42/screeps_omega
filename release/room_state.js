@@ -26,10 +26,9 @@ const config = require("config");
 const constructionStatus = require("construction_status");
 const defenseManager = require("defense_manager");
 const logisticsManager = require("logistics_manager");
-const remoteManager = require("remote_manager");
 
 module.exports = {
-  collect(room) {
+  collect(room, profiler, roomLabelPrefix) {
     var creeps = room.find(FIND_MY_CREEPS);
     var homeCreeps = this.getHomeCreeps(room.name);
     var spawns = room.find(FIND_MY_SPAWNS);
@@ -43,16 +42,11 @@ module.exports = {
     var roleCounts = this.countRoleMap(roleMap);
     var sourceRoleMap = this.groupCreepsByKey(homeCreeps, "sourceId");
     var targetRoleMap = this.groupCreepsByKey(homeCreeps, "targetId");
-    var targetRoomRoleMap = this.groupCreepsByKey(homeCreeps, "targetRoom");
     var creepsByCurrentRoom = this.groupCreepsByCurrentRoom(homeCreeps);
     var sourceContainers = this.getSourceContainers(structures, sources);
     var sourceContainersBySourceId = this.getSourceContainersBySourceId(
       sourceContainers,
       sources,
-    );
-    var controllerContainers = this.getControllerContainers(
-      structures,
-      room.controller,
     );
     var extensions = structuresByType[STRUCTURE_EXTENSION] || [];
 
@@ -75,13 +69,11 @@ module.exports = {
       hostileCreeps: hostileCreeps,
       sourceContainers: sourceContainers,
       sourceContainersBySourceId: sourceContainersBySourceId,
-      controllerContainers: controllerContainers,
       extensions: extensions,
       roleMap: roleMap,
       roleCounts: roleCounts,
       sourceRoleMap: sourceRoleMap,
       targetRoleMap: targetRoleMap,
-      targetRoomRoleMap: targetRoomRoleMap,
       energyAvailable: room.energyAvailable,
       energyCapacityAvailable: room.energyCapacityAvailable,
       controllerLevel: room.controller ? room.controller.level : 0,
@@ -94,17 +86,20 @@ module.exports = {
     }
 
     var provisionalState = this.createState(sharedState, phase);
-
+    var desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
     var buildStatus = constructionStatus.getStatus(room, provisionalState);
 
     if (
       phase !== "bootstrap_jr" &&
-      this.shouldEnterDeveloping(room, provisionalState, buildStatus)
+      this.shouldEnterDeveloping(
+        room,
+        provisionalState,
+        buildStatus,
+        desiredTotalHaulers,
+      )
     ) {
       phase = "developing";
     }
-
-    var desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
 
     if (
       phase === "developing" &&
@@ -119,13 +114,6 @@ module.exports = {
     }
 
     var finalState = this.createState(sharedState, phase);
-
-    finalState.remoteSites = remoteManager.getHomeRoomSites(room.name, finalState);
-    finalState.remotePlan = remoteManager.getHomeRoomPlan(
-      room,
-      finalState,
-      finalState.remoteSites,
-    );
     finalState.defense = defenseManager.collect(room, finalState);
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
     finalState.buildStatus = constructionStatus.getStatus(room, finalState);
@@ -220,17 +208,6 @@ module.exports = {
     return grouped;
   },
 
-  getControllerContainers(structures, controller) {
-    if (!controller) return [];
-
-    return _.filter(structures, function (structure) {
-      return (
-        structure.structureType === STRUCTURE_CONTAINER &&
-        structure.pos.getRangeTo(controller) <= 4
-      );
-    });
-  },
-
   getSourceContainers(structures, sources) {
     return _.filter(structures, function (structure) {
       if (structure.structureType !== STRUCTURE_CONTAINER) return false;
@@ -255,7 +232,11 @@ module.exports = {
     return bySourceId;
   },
 
-  shouldEnterDeveloping(room, state, buildStatus) {
+  shouldEnterDeveloping(room, state, buildStatus, desiredTotalHaulers) {
+    if (!this.hasDevelopingEconomyBackbone(state, desiredTotalHaulers)) {
+      return false;
+    }
+
     if (buildStatus.bootstrapComplete) return true;
 
     // Developer note:
@@ -264,14 +245,31 @@ module.exports = {
     if (
       room.controller &&
       room.controller.level >= 3 &&
-      buildStatus.sourceContainersBuilt >= buildStatus.sourceContainersNeeded &&
-      buildStatus.controllerContainersBuilt >=
-        buildStatus.controllerContainersNeeded
+      buildStatus.sourceContainersBuilt >= buildStatus.sourceContainersNeeded
     ) {
       return true;
     }
 
     return false;
+  },
+
+  hasDevelopingEconomyBackbone(state, desiredTotalHaulers) {
+    var roleCounts = state.roleCounts || {};
+    var workers = roleCounts.worker || 0;
+    var jrWorkers = roleCounts.jrworker || 0;
+    var miners = roleCounts.miner || 0;
+    var haulers = roleCounts.hauler || 0;
+    var laborers = workers + jrWorkers;
+    var totalEconomyCreeps = laborers + miners + haulers;
+    var minimumEnergy = Math.min(300, state.energyCapacityAvailable || 300);
+
+    if (laborers <= 0) return false;
+    if (totalEconomyCreeps <= 0) return false;
+    if (state.energyAvailable < minimumEnergy && totalEconomyCreeps <= 1) {
+      return false;
+    }
+
+    return true;
   },
 
   shouldEnterStable(room, state, buildStatus, desiredTotalHaulers) {
