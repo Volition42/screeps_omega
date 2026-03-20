@@ -53,7 +53,7 @@ module.exports = {
     // Developer note:
     // These are the target counts once the room transitions into the
     // normal colony phases.
-    workers: 2,
+    workers: 4,
 
     // Developer note:
     // Upgraders now self-supply from shared room energy buffers instead of
@@ -237,7 +237,7 @@ module.exports = {
     // - off: no CPU console output
     // - overview: top-level sections only
     // - detail: top-level sections plus per-room and per-role breakdowns
-    CPU_CONSOLE_MODE: "overview",
+    CPU_CONSOLE_MODE: "off",
     CPU_PRINT_INTERVAL: 25,
     RUNTIME_POLICY: {
       TIGHT_CPU_RATIO: 0.8,

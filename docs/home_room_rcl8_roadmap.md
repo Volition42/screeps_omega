@@ -98,6 +98,8 @@ Work items:
 - [ ] Simplify role counts for a single-room economy
 - [ ] Prioritize shared logistics flow toward spawn fill, extension fill, tower safety, storage, and then upgrader support
 - [ ] Reduce idle movement and target thrash in worker and hauler roles
+- [ ] Rewrite directive reporting so it reads like analyst-facing room snapshots instead of executive narration
+- [ ] Add clearer console-output separation after directive reports so the next log item is visually distinct
 - [ ] Keep defense strictly home-room reactive
 
 Done when:
