@@ -40,20 +40,24 @@ module.exports = {
     SHOW_PERFORMANCE: false,
 
     // Developer note:
-    // Construction checklist block shown in the room HUD.
+    // Construction checklist shown in the top-left home-room panel.
+    // This now includes roadmap phase, future-plan readiness, and advanced
+    // structure progress so construction status can be read quickly.
     SHOW_CONSTRUCTION_CHECKLIST: true,
     CONSTRUCTION_CHECKLIST_MODE: "detailed",
 
     /*
     Developer note:
-    Remote site status block shown in the room HUD.
+    Remote site status block shown in the mirrored top-right panel of the
+    home room HUD, and synced with the visible remote-room HUD overlays.
 
     SHOW_REMOTE_SITES
-    Master toggle for showing configured remote rooms in the home room HUD.
+    Master toggle for showing configured remote rooms in the home room HUD
+    and their own visible-room summary panels.
 
     REMOTE_SITE_MODE
-    "compact"  = one shorter line per remote site
-    "detailed" = one fuller line per remote site
+    "compact"  = smaller per-remote block in the top-right panel
+    "detailed" = fuller per-remote block with phase/build/unit details
     */
     SHOW_REMOTE_SITES: true,
     REMOTE_SITE_MODE: "detailed",

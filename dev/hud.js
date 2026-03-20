@@ -9,22 +9,22 @@ Purpose:
 
 Displayed data:
 - Home room:
+  - Top-left panel for home-room-only status
   - Room / phase header
   - Grid energy, spawn state, queue preview
-  - Creep role counts
+  - Home creep role counts
   - Controller container status
   - Safe mode status / ETA
   - Optional performance line
-  - Optional construction checklist
-  - Optional remote site status
+  - Optional construction checklist with roadmap/future-plan progress
   - Source utilization lines
 
 - Remote room:
-  - Remote room header
+  - Top-right mirrored panel in the home room
+  - Matching visible-room remote panel in the remote room itself
   - Configured remote phase
-  - Remote JrWorker count
-  - Reserver count
-  - Source energy summary
+  - Remote build needs for that phase
+  - Remote unit / guard summary
   - Reservation summary
   - Hostile presence
   - Same creep label overlay style
@@ -145,20 +145,8 @@ module.exports = {
         nextQueued,
       "ROLES J:" +
         (counts.jrworker || 0) +
-        " RJ:" +
-        (counts.remotejrworker || 0) +
-        " RW:" +
-        (counts.remoteworker || 0) +
-        " RM:" +
-        (counts.remoteminer || 0) +
-        " RH:" +
-        (counts.remotehauler || 0) +
-        " RV:" +
-        (counts.reserver || 0) +
         " D:" +
         (counts.defender || 0) +
-        " RD:" +
-        (counts.rangeddefender || 0) +
         " W:" +
         (counts.worker || 0) +
         " M:" +
@@ -223,47 +211,7 @@ module.exports = {
 
   drawRemoteRoomPanel(homeRoom, summary) {
     const remoteRoom = summary.remoteRoom;
-    const site = summary.site;
-
-    const lines = [
-      "vCORP // REMOTE // " + remoteRoom.name,
-      "PHASE " + site.phase + "   STATUS " + summary.status + "   " + summary.threat,
-      "RJ " +
-        summary.remoteJrWorkers +
-        "/" +
-        (site.jrWorkers || 0) +
-        " RW " +
-        summary.remoteWorkers +
-        "/" +
-        (site.remoteWorkers || 0),
-      "RM " +
-        summary.remoteMiners +
-        "/" +
-        summary.desiredRemoteMiners +
-        "   RH " +
-        summary.remoteHaulers +
-        "/" +
-        summary.desiredRemoteHaulers +
-        "   RV " +
-        summary.reservers +
-        "/" +
-        ((site.reservation && site.reservation.reservers) || 0) +
-        "   D " +
-        summary.defenders,
-      "BOX " +
-        summary.sourceContainersBuilt +
-        "/" +
-        summary.sourceContainersNeeded +
-        " +" +
-        summary.sourceContainersPlanned +
-        "   RD " +
-        summary.roadsBuilt +
-        "/" +
-        summary.roadsTarget +
-        " +" +
-        summary.roadsPlanned,
-      summary.reservationLine,
-    ];
+    const lines = this.getRemotePanelLines(summary, true);
 
     this.drawRemotePanel(remoteRoom, lines, {
       hostile: summary.hostiles > 0,
@@ -617,76 +565,93 @@ module.exports = {
 
     for (let i = 0; i < remoteSummaries.length; i++) {
       const summary = remoteSummaries[i];
-      const site = summary.site;
-      const targetRoom = summary.targetRoom;
+      const panelLines = this.getRemotePanelLines(summary, mode !== "compact");
 
-      if (mode === "compact") {
-        lines.push(
-          "REMOTE " +
-            targetRoom +
-            " P" +
-            site.phase +
-            " RW " +
-            summary.remoteWorkers +
-            " RM " +
-            summary.remoteMiners +
-            " RH " +
-            summary.remoteHaulers +
-            " D " +
-            summary.defenders +
-            " RD " +
-            summary.rangedDefenders +
-            " " +
-            summary.status,
-        );
-      } else {
-        // Stack each remote site's block so the mirrored home-room panel stays
-        // readable without widening beyond the existing HUD footprint.
-        lines.push(
-          "ROOM:" + targetRoom,
-        );
-        lines.push(
-          "   PHASE: " +
-            String(site.phase || "").toUpperCase() +
-            " RES: " +
-            summary.reservationShort,
-        );
-        lines.push(
-          "   RW: " +
-            summary.remoteWorkers +
-            "/" +
-            (site.remoteWorkers || 0) +
-            " RM: " +
-            summary.remoteMiners +
-            "/" +
-            summary.desiredRemoteMiners +
-            "  RH: " +
-            summary.remoteHaulers +
-            "/" +
-            summary.desiredRemoteHaulers +
-            " D: " +
-            summary.defenders +
-            " RD: " +
-            summary.rangedDefenders,
-        );
-        lines.push(
-          "   BOX: " +
-            summary.sourceContainersBuilt +
-            "/" +
-            summary.sourceContainersNeeded +
-            " +" +
-            summary.sourceContainersPlanned +
-            " RD " +
-            summary.roadsBuilt +
-            "/" +
-            summary.roadsTarget +
-            " +" +
-            summary.roadsPlanned,
-        );
+      for (let j = 0; j < panelLines.length; j++) {
+        lines.push(panelLines[j]);
       }
     }
 
     return lines;
+  },
+
+  getRemotePanelLines(summary, includeHeader) {
+    const site = summary.site;
+    const lines = [];
+
+    if (includeHeader) {
+      lines.push("REMOTE " + summary.targetRoom);
+    }
+
+    lines.push(
+      "PHASE " +
+        site.phase +
+        "   STATUS " +
+        summary.status +
+        "   " +
+        summary.threat,
+    );
+    lines.push(this.getRemoteBuildNeedLine(summary));
+    lines.push(
+      "UNITS RJ " +
+        summary.remoteJrWorkers +
+        "/" +
+        (site.jrWorkers || 0) +
+        " RW " +
+        summary.remoteWorkers +
+        "/" +
+        (site.remoteWorkers || 0) +
+        " RM " +
+        summary.remoteMiners +
+        "/" +
+        summary.desiredRemoteMiners +
+        " RH " +
+        summary.remoteHaulers +
+        "/" +
+        summary.desiredRemoteHaulers,
+    );
+    lines.push(
+      "GUARD RV " +
+        summary.reservers +
+        "/" +
+        ((site.reservation && site.reservation.reservers) || 0) +
+        " D " +
+        summary.defenders +
+        " RD " +
+        summary.rangedDefenders +
+        " RES " +
+        summary.reservationShort,
+    );
+
+    return lines;
+  },
+
+  getRemoteBuildNeedLine(summary) {
+    const site = summary.site;
+
+    if (site.phase === 1) {
+      return "BUILD NONE   PHASE 1 BOOTSTRAP";
+    }
+
+    let line =
+      "BUILD BOX " +
+      summary.sourceContainersBuilt +
+      "/" +
+      summary.sourceContainersNeeded +
+      " +" +
+      summary.sourceContainersPlanned +
+      " RD " +
+      summary.roadsBuilt +
+      "/" +
+      summary.roadsTarget +
+      " +" +
+      summary.roadsPlanned;
+
+    if (site.phase >= 3) {
+      line += " RES " + summary.reservationShort;
+    }
+
+    return line;
   },
 
   getSafeModeLine(room) {
