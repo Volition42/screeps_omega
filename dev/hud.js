@@ -24,10 +24,11 @@ Important Notes:
 */
 
 const config = require("config");
+const opsState = require("ops_state");
 
 module.exports = {
   run(room, state) {
-    if (!config.HUD.ENABLED) return;
+    if (!opsState.getHudEnabled()) return;
 
     const summaryInterval = Math.max(1, config.HUD.SUMMARY_INTERVAL || 1);
     const shouldDrawSummary =

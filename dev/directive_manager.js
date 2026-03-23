@@ -30,12 +30,13 @@ Read like a concise analyst snapshot without spamming noise.
 */
 
 const config = require("config");
+const opsState = require("ops_state");
 
 const OPERATIONAL_REPEAT_INTERVAL = 100;
 
 module.exports = {
   run(room, state) {
-    if (!config.DIRECTIVES.ENABLED) return;
+    if (!opsState.getReportsEnabled()) return;
 
     const roomMemory = this.getRoomMemory(room);
     const tracker = this.ensureTracker(roomMemory);
