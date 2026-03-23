@@ -16,6 +16,7 @@ Recovery behavior:
 const bodies = require("bodies");
 const config = require("config");
 const defenseManager = require("defense_manager");
+const utils = require("utils");
 
 module.exports = {
   run(room, state) {
@@ -28,6 +29,8 @@ module.exports = {
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
 
     Memory.rooms[room.name].spawnQueue = _.map(requests, function (request) {
+      var plan = bodies.plan(request.role, room, request, state);
+
       return {
         role: request.role,
         priority: request.priority,
@@ -36,13 +39,16 @@ module.exports = {
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         homeRoom: request.homeRoom || null,
+        bodyProfile: plan.profile || null,
+        bodyCost: plan.cost || null,
       };
     });
 
     if (spawn.spawning || requests.length === 0) return;
 
     var request = requests[0];
-    var body = bodies.get(request.role, room, request);
+    var bodyPlan = bodies.plan(request.role, room, request, state);
+    var body = bodyPlan.body;
     var name = request.role + "_" + Game.time;
 
     var result = spawn.spawnCreep(body, name, {
@@ -56,6 +62,8 @@ module.exports = {
         threatScore: request.threatScore || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
+        bodyProfile: bodyPlan.profile || null,
+        bodyCost: bodyPlan.cost || null,
       },
     });
 
@@ -136,7 +144,7 @@ module.exports = {
       this.addDefenseRequests(room, state, requests, reaction);
 
       if (!this.areSourceContainersReady(state)) {
-        var desiredBootstrapWorkers = Math.max(1, config.CREEPS.workers || 1);
+        var desiredBootstrapWorkers = this.getDesiredWorkers(room, state);
         var currentBootstrapWorkers = roleCounts.worker || 0;
         var queuedBootstrapWorkers = this.countQueued(room, "worker");
 
@@ -227,7 +235,7 @@ module.exports = {
       }
     }
 
-    var desiredWorkers = config.CREEPS.workers;
+    var desiredWorkers = this.getDesiredWorkers(room, state);
     var currentWorkers = roleCounts.worker || 0;
     var queuedWorkers = this.countQueued(room, "worker");
 
@@ -242,7 +250,7 @@ module.exports = {
       requests.push({ role: "worker", priority: 90 });
     }
 
-    var desiredUpgraders = config.CREEPS.upgraders;
+    var desiredUpgraders = this.getDesiredUpgraders(room, state);
     var currentUpgraders = roleCounts.upgrader || 0;
     var queuedUpgraders = this.countQueued(room, "upgrader");
 
@@ -266,6 +274,8 @@ module.exports = {
       if (!haulContainer) continue;
 
       var desiredHaulersForSource = this.getDesiredHaulersForSource(
+        room,
+        state,
         haulSource.id,
       );
       var existingHaulers = this.getRoleSourceCount(
@@ -294,7 +304,7 @@ module.exports = {
 
     if (!settings.includeRepairs) return;
 
-    var desiredRepairs = config.CREEPS.repairs;
+    var desiredRepairs = this.getDesiredRepairs(room, state);
     var currentRepairs = roleCounts.repair || 0;
     var queuedRepairs = this.countQueued(room, "repair");
 
@@ -435,14 +445,111 @@ module.exports = {
     return 1;
   },
 
-  getDesiredHaulersForSource(sourceId) {
+  getDesiredWorkers(room, state) {
+    var plan = bodies.plan("worker", room, { role: "worker" }, state);
+    var workPerCreep = Math.max(1, plan.workParts || 1);
+    var sites = state && state.sites ? state.sites.length : 0;
+    var targetWork = 2;
+
+    if (state.phase === "bootstrap") {
+      targetWork = Math.max(4, (state.sources ? state.sources.length : 1) * 2);
+    } else if (state.phase === "developing") {
+      targetWork = 4 + Math.min(4, sites);
+    } else {
+      targetWork = state.infrastructure && state.infrastructure.hasStorage ? 2 : 4;
+
+      if (sites > 0) {
+        targetWork += Math.min(4, sites);
+      }
+    }
+
+    if (state.buildStatus && !state.buildStatus.developingComplete) {
+      targetWork += 1;
+    }
+
+    return Math.max(1, Math.ceil(Math.min(12, targetWork) / workPerCreep));
+  },
+
+  getDesiredUpgraders(room, state) {
+    var plan = bodies.plan("upgrader", room, { role: "upgrader" }, state);
+    var workPerCreep = Math.max(1, plan.workParts || 1);
+    var sites = state && state.sites ? state.sites.length : 0;
+    var targetWork = state.phase === "bootstrap" ? 2 : 4;
+    var storageEnergy =
+      state.infrastructure && state.infrastructure.storageEnergy
+        ? state.infrastructure.storageEnergy
+        : 0;
+
+    if (state.phase === "developing" && sites > 3) {
+      targetWork = 2;
+    }
+
+    if (storageEnergy >= 10000) targetWork = Math.max(targetWork, 6);
+    if (storageEnergy >= 50000) targetWork = Math.max(targetWork, 10);
+    if (storageEnergy >= 100000) targetWork = Math.max(targetWork, 14);
+
+    if (
+      state.buildStatus &&
+      !state.buildStatus.currentRoadmapReady &&
+      sites > 0
+    ) {
+      targetWork = Math.max(2, targetWork - 2);
+    }
+
+    if (room.controller && room.controller.level >= 7) {
+      targetWork = Math.min(15, targetWork + 2);
+    }
+
+    return Math.max(1, Math.ceil(Math.min(15, targetWork) / workPerCreep));
+  },
+
+  getDesiredHaulersForSource(room, state, sourceId) {
     var overrides = config.CREEPS.haulersPerSourceBySourceId || {};
 
     if (Object.prototype.hasOwnProperty.call(overrides, sourceId)) {
       return overrides[sourceId];
     }
 
-    return config.CREEPS.haulersPerSourceDefault;
+    var plan = bodies.plan(
+      "hauler",
+      room,
+      {
+        role: "hauler",
+        sourceId: sourceId,
+      },
+      state,
+    );
+    var carryDemand = Math.max(1, plan.carryDemand || plan.carryParts || 1);
+    var carryPerCreep = Math.max(1, plan.carryParts || 1);
+
+    return Math.max(1, Math.ceil(carryDemand / carryPerCreep));
+  },
+
+  getDesiredRepairs(room, state) {
+    if (state.phase === "bootstrap") return 0;
+
+    var plan = bodies.plan("repair", room, { role: "repair" }, state);
+    var workPerCreep = Math.max(1, plan.workParts || 1);
+    var targetWork = 0;
+    var groups = utils.getRepairTargetGroups(room);
+
+    if (groups.criticalContainers.length > 0) targetWork += 2;
+    if (groups.importantStructures.length > 0) targetWork += 2;
+    if (groups.roadRepairs.length > 5) targetWork += 1;
+
+    if (groups.lowRamparts.length > 0 || groups.lowWalls.length > 0) {
+      targetWork += room.controller && room.controller.level >= 6 ? 4 : 2;
+    }
+
+    if (
+      targetWork === 0 &&
+      (state.phase === "developing" ||
+        (room.controller && room.controller.level >= 4))
+    ) {
+      targetWork = 2;
+    }
+
+    return Math.ceil(Math.min(8, targetWork) / workPerCreep);
   },
 
   countQueued(room, role) {

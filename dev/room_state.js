@@ -117,6 +117,7 @@ module.exports = {
     finalState.defense = defenseManager.collect(room, finalState);
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
     finalState.buildStatus = constructionStatus.getStatus(room, finalState);
+    finalState.infrastructure = this.getInfrastructureState(room, finalState);
 
     return finalState;
   },
@@ -274,13 +275,15 @@ module.exports = {
 
   shouldEnterStable(room, state, buildStatus, desiredTotalHaulers) {
     var roleCounts = state.roleCounts || {};
+    var laborers = (roleCounts.worker || 0) + (roleCounts.jrworker || 0);
+    var minimumHaulers = Math.max(1, Math.min(desiredTotalHaulers, state.sources.length || 1));
 
     var economyHealthy =
-      (roleCounts.worker || 0) >= config.CREEPS.workers &&
-      (roleCounts.upgrader || 0) >= config.CREEPS.upgraders &&
+      laborers >= 1 &&
+      (roleCounts.upgrader || 0) >= 1 &&
       (roleCounts.miner || 0) >=
         state.sources.length * config.CREEPS.minersPerSource &&
-      (roleCounts.hauler || 0) >= desiredTotalHaulers;
+      (roleCounts.hauler || 0) >= minimumHaulers;
 
     if (!economyHealthy) return false;
 
@@ -318,5 +321,92 @@ module.exports = {
     }
 
     return total;
+  },
+
+  getInfrastructureState(room, state) {
+    var structuresByType = state.structuresByType || {};
+    var links = structuresByType[STRUCTURE_LINK] || [];
+    var storage = room.storage || null;
+    var controller = room.controller || null;
+    var controllerLink = null;
+    var storageLink = null;
+    var sourceLinksBySourceId = {};
+    var builtSourceLinks = 0;
+
+    if (controller) {
+      controllerLink =
+        _.find(links, function (link) {
+          return link.pos.getRangeTo(controller) <= 2;
+        }) || null;
+    }
+
+    if (storage) {
+      storageLink =
+        _.find(links, function (link) {
+          return link.pos.getRangeTo(storage) <= 2;
+        }) || null;
+    }
+
+    for (var i = 0; i < state.sources.length; i++) {
+      var source = state.sources[i];
+      var sourceLink =
+        _.find(links, function (link) {
+          return link.pos.getRangeTo(source) <= 2;
+        }) || null;
+
+      sourceLinksBySourceId[source.id] = sourceLink;
+
+      if (sourceLink) {
+        builtSourceLinks++;
+      }
+    }
+
+    return {
+      hasStorage: !!storage,
+      storageEnergy: storage ? storage.store[RESOURCE_ENERGY] || 0 : 0,
+      controllerLink: controllerLink,
+      hasControllerLink: !!controllerLink,
+      storageLink: storageLink,
+      hasStorageLink: !!storageLink,
+      sourceLinksBySourceId: sourceLinksBySourceId,
+      builtSourceLinks: builtSourceLinks,
+      sourceLinksNeeded: state.buildStatus
+        ? state.buildStatus.sourceLinksNeeded || 0
+        : 0,
+      roadmapPhase: state.buildStatus
+        ? state.buildStatus.roadmapPhase || state.phase
+        : state.phase,
+      economyStage: this.getEconomyStage(room, state, {
+        hasStorage: !!storage,
+        hasControllerLink: !!controllerLink,
+        hasStorageLink: !!storageLink,
+        builtSourceLinks: builtSourceLinks,
+      }),
+    };
+  },
+
+  getEconomyStage(room, state, infrastructure) {
+    if (state.phase === "bootstrap_jr") return "bootstrap_jr";
+    if (state.phase === "bootstrap") return "container_bootstrap";
+    if (!infrastructure.hasStorage) return "container_economy";
+
+    if (
+      room.controller &&
+      room.controller.level >= 6 &&
+      infrastructure.hasControllerLink &&
+      infrastructure.hasStorageLink
+    ) {
+      return "advanced_logistics";
+    }
+
+    if (
+      room.controller &&
+      room.controller.level >= 5 &&
+      infrastructure.hasControllerLink
+    ) {
+      return "controller_link_ready";
+    }
+
+    return "storage_economy";
   },
 };

@@ -72,7 +72,7 @@ module.exports = {
       case 2:
         return [WORK, WORK, WORK, WORK, CARRY, MOVE];
       default:
-        return [WORK, CARRY, MOVE];
+        return [WORK, WORK, CARRY, MOVE];
     }
   },
 
@@ -94,7 +94,7 @@ module.exports = {
       case 2:
         return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
       default:
-        return [WORK, CARRY, MOVE];
+        return [WORK, WORK, CARRY, MOVE];
     }
   },
 
@@ -105,7 +105,7 @@ module.exports = {
       case 2:
         return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
       default:
-        return [WORK, CARRY, MOVE];
+        return [WORK, WORK, CARRY, MOVE];
     }
   },
 

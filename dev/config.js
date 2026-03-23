@@ -52,21 +52,10 @@ module.exports = {
     jrWorkers: 4,
 
     // Developer note:
-    // These are the target counts once the room transitions into the
-    // normal colony phases.
-    workers: 4,
-
-    // Developer note:
-    // Upgraders now self-supply from shared room energy buffers instead of
-    // standing on a dedicated controller container.
-    upgraders: 1,
-    repairs: 1,
-
-    /*
-    Developer note:
-    Miners are always one per source.
-    Multi-miner source logic is no longer used.
-    */
+    // Normal economy roles now use demand-based spawning. Keep only the
+    // fixed-count knobs that are still true constants.
+    //
+    // Miners are always one per source.
     minersPerSource: 1,
 
     // Developer note:
@@ -228,8 +217,15 @@ module.exports = {
 
   BODIES: {
     // Developer note:
-    // These tiers are keyed off room.energyCapacityAvailable, not current energy.
-    maxTierEnergy: 1800,
+    // Body planning is role-specific and uses room energy capacity plus
+    // infrastructure state instead of a single shared tier ladder.
+    workerMaxWork: 8,
+    minerMaxWork: 5,
+    haulerMaxCarry: 16,
+    upgraderMaxWork: 8,
+    repairMaxWork: 6,
+    haulerRoundTripBuffer: 4,
+    sourceIncomePerTick: 10,
   },
 
   STATS: {
@@ -265,7 +261,7 @@ module.exports = {
     // Developer note:
     // Controls how often the room snapshot system logs updates.
     ENABLED: true,
-    INTERVAL: 25,
+    INTERVAL: 100,
 
     // Developer note:
     // Keep directive output easy to scan in the console.
@@ -284,9 +280,9 @@ module.exports = {
 
     // Developer note:
     // Progress / ETA directives for controller advancement.
-    SHOW_PROGRESS_DIRECTIVES: false,
-    PROGRESS_SAMPLE_INTERVAL: 25,
-    PROGRESS_REPORT_INTERVAL: 100,
+    SHOW_PROGRESS_DIRECTIVES: true,
+    PROGRESS_SAMPLE_INTERVAL: 100,
+    PROGRESS_REPORT_INTERVAL: 300,
 
     // Developer note:
     // Construction checklist directives.
