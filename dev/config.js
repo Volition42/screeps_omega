@@ -29,10 +29,10 @@ module.exports = {
     ENABLED: true,
     LEAN_MODE: true,
     SUMMARY_INTERVAL: 2,
-    CREEP_LABELS: false,
+    CREEP_LABELS: true,
     LABEL_INTERVAL: 5,
-    CONSOLE_ENABLED: false,
-    CONSOLE_INTERVAL: 100,
+    CONSOLE_ENABLED: true,
+    CONSOLE_INTERVAL: 50,
 
     // Developer note:
     // Show a tiny performance line using Memory.stats from stats_manager.
@@ -246,7 +246,7 @@ module.exports = {
     // Developer note:
     // Controls how often the room snapshot system logs updates.
     ENABLED: true,
-    INTERVAL: 100,
+    INTERVAL: 50,
 
     // Developer note:
     // Keep directive output easy to scan in the console.
@@ -262,9 +262,9 @@ module.exports = {
     CPU_SPIKE_MULTIPLIER: 1.5,
     BUCKET_WARNING_THRESHOLD: 8000,
     HEALTHY_REPORT_INTERVAL: 100,
-    DEBUG_CPU_CONSOLE_ENABLED: false,
+    DEBUG_CPU_CONSOLE_ENABLED: true,
     DEBUG_CPU_CONSOLE_INTERVAL: 100,
-    DEBUG_CPU_SHOW_SECTIONS: false,
+    DEBUG_CPU_SHOW_SECTIONS: true,
 
     // Developer note:
     // Progress / ETA directives for controller advancement.

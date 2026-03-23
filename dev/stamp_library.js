@@ -151,6 +151,44 @@ module.exports = {
     return this.STAMPS[name];
   },
 
+  isRoomCoordinateValid(value) {
+    return typeof value === "number" && value >= 1 && value <= 48;
+  },
+
+  isOriginValid(origin) {
+    return (
+      !!origin &&
+      !!origin.roomName &&
+      this.isRoomCoordinateValid(origin.x) &&
+      this.isRoomCoordinateValid(origin.y)
+    );
+  },
+
+  filterValidOrigins(origins) {
+    var results = [];
+
+    for (var i = 0; i < origins.length; i++) {
+      if (this.isOriginValid(origins[i])) {
+        results.push(origins[i]);
+      }
+    }
+
+    return results;
+  },
+
+  getCellPosition(origin, cell) {
+    if (!this.isOriginValid(origin) || !cell) return null;
+
+    var x = origin.x + cell.x;
+    var y = origin.y + cell.y;
+
+    if (!this.isRoomCoordinateValid(x) || !this.isRoomCoordinateValid(y)) {
+      return null;
+    }
+
+    return new RoomPosition(x, y, origin.roomName);
+  },
+
   getAnchorOrigin(room, state) {
     var spawn = null;
 
@@ -173,7 +211,7 @@ module.exports = {
   getExtensionStampOrigins(anchor) {
     if (!anchor) return [];
 
-    return [
+    return this.filterValidOrigins([
       { x: anchor.x, y: anchor.y - 8, roomName: anchor.roomName },
       { x: anchor.x + 8, y: anchor.y, roomName: anchor.roomName },
       { x: anchor.x, y: anchor.y + 8, roomName: anchor.roomName },
@@ -182,29 +220,29 @@ module.exports = {
       { x: anchor.x + 8, y: anchor.y + 8, roomName: anchor.roomName },
       { x: anchor.x - 8, y: anchor.y + 8, roomName: anchor.roomName },
       { x: anchor.x - 8, y: anchor.y - 8, roomName: anchor.roomName },
-    ];
+    ]);
   },
 
   getTowerStampOrigins(anchor) {
     if (!anchor) return [];
 
-    return [
+    return this.filterValidOrigins([
       { x: anchor.x + 4, y: anchor.y - 4, roomName: anchor.roomName },
       { x: anchor.x + 4, y: anchor.y + 4, roomName: anchor.roomName },
       { x: anchor.x - 4, y: anchor.y + 4, roomName: anchor.roomName },
       { x: anchor.x - 4, y: anchor.y - 4, roomName: anchor.roomName },
-    ];
+    ]);
   },
 
   getStorageStampOrigins(anchor) {
     if (!anchor) return [];
 
-    return [
+    return this.filterValidOrigins([
       { x: anchor.x, y: anchor.y + 5, roomName: anchor.roomName },
       { x: anchor.x + 5, y: anchor.y, roomName: anchor.roomName },
       { x: anchor.x, y: anchor.y - 5, roomName: anchor.roomName },
       { x: anchor.x - 5, y: anchor.y, roomName: anchor.roomName },
-    ];
+    ]);
   },
 
   getExtensionCapacity(stampName) {
@@ -225,11 +263,9 @@ module.exports = {
 
     for (var i = 0; i < stamp.roads.length; i++) {
       var cell = stamp.roads[i];
-      fn.call(
-        context,
-        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
-        cell,
-      );
+      var pos = this.getCellPosition(origin, cell);
+      if (!pos) continue;
+      fn.call(context, pos, cell);
     }
   },
 
@@ -239,11 +275,9 @@ module.exports = {
 
     for (var i = 0; i < stamp.extensions.length; i++) {
       var cell = stamp.extensions[i];
-      fn.call(
-        context,
-        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
-        cell,
-      );
+      var pos = this.getCellPosition(origin, cell);
+      if (!pos) continue;
+      fn.call(context, pos, cell);
     }
   },
 
@@ -253,11 +287,9 @@ module.exports = {
 
     for (var i = 0; i < stamp.towers.length; i++) {
       var cell = stamp.towers[i];
-      fn.call(
-        context,
-        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
-        cell,
-      );
+      var pos = this.getCellPosition(origin, cell);
+      if (!pos) continue;
+      fn.call(context, pos, cell);
     }
   },
 
@@ -267,11 +299,9 @@ module.exports = {
 
     for (var i = 0; i < stamp.storages.length; i++) {
       var cell = stamp.storages[i];
-      fn.call(
-        context,
-        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
-        cell,
-      );
+      var pos = this.getCellPosition(origin, cell);
+      if (!pos) continue;
+      fn.call(context, pos, cell);
     }
   },
 
@@ -281,11 +311,9 @@ module.exports = {
 
     for (var i = 0; i < stamp.labs.length; i++) {
       var cell = stamp.labs[i];
-      fn.call(
-        context,
-        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
-        cell,
-      );
+      var pos = this.getCellPosition(origin, cell);
+      if (!pos) continue;
+      fn.call(context, pos, cell);
     }
   },
 
@@ -295,11 +323,9 @@ module.exports = {
 
     for (var i = 0; i < stamp.reserved.length; i++) {
       var cell = stamp.reserved[i];
-      fn.call(
-        context,
-        new RoomPosition(origin.x + cell.x, origin.y + cell.y, origin.roomName),
-        cell,
-      );
+      var pos = this.getCellPosition(origin, cell);
+      if (!pos) continue;
+      fn.call(context, pos, cell);
     }
   },
 
