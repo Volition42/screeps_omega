@@ -8,7 +8,6 @@ Purpose:
 - Preserve useful examples for future reference
 
 Major sections:
-- VERSION
 - HUD
 - CREEPS
 - CONSTRUCTION
@@ -26,8 +25,6 @@ Important Notes:
 */
 
 module.exports = {
-  VERSION: "0.9.0",
-
   HUD: {
     ENABLED: true,
     LEAN_MODE: true,
@@ -60,10 +57,6 @@ module.exports = {
     //
     // Miners are always one per source.
     minersPerSource: 1,
-
-    // Developer note:
-    // Default hauler count per source when no source-specific override exists.
-    haulersPerSourceDefault: 1,
 
     // Developer note:
     // Optional per-source overrides.
@@ -181,10 +174,6 @@ module.exports = {
 
     PADDING_X: 5,
     PADDING_Y: 5,
-    GATE_WIDTH: 1,
-
-    towerCountAtRCL3: 1,
-
     // Developer note:
     // Wall and rampart upkeep scales by controller level so maintenance work
     // rises with room maturity without changing gate planning behavior.

@@ -326,7 +326,7 @@ module.exports = {
       if (Object.prototype.hasOwnProperty.call(overrides, source.id)) {
         total += overrides[source.id];
       } else {
-        total += config.CREEPS.haulersPerSourceDefault;
+        total += 1;
       }
     }
 

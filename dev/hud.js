@@ -415,6 +415,6 @@ module.exports = {
       return overrides[sourceId];
     }
 
-    return config.CREEPS.haulersPerSourceDefault;
+    return 1;
   },
 };
