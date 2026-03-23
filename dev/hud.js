@@ -29,7 +29,13 @@ module.exports = {
   run(room, state) {
     if (!config.HUD.ENABLED) return;
 
-    this.drawSummary(room, state);
+    const summaryInterval = Math.max(1, config.HUD.SUMMARY_INTERVAL || 1);
+    const shouldDrawSummary =
+      !config.HUD.LEAN_MODE || Game.time % summaryInterval === 0;
+
+    if (shouldDrawSummary) {
+      this.drawSummary(room, state);
+    }
 
     if (
       config.HUD.CREEP_LABELS &&
@@ -38,7 +44,10 @@ module.exports = {
       this.drawCreepLabels(room, state);
     }
 
-    if (Game.time % config.HUD.CONSOLE_INTERVAL === 0) {
+    if (
+      config.HUD.CONSOLE_ENABLED &&
+      Game.time % config.HUD.CONSOLE_INTERVAL === 0
+    ) {
       this.printConsole(room, state);
     }
   },

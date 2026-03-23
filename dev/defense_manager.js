@@ -78,12 +78,8 @@ module.exports = {
     var hostiles = utils.getDefenseIntruders(
       room,
       state && state.hostileCreeps ? state.hostileCreeps : null,
-      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
-        ? room.find(FIND_HOSTILE_POWER_CREEPS)
-        : [],
-      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
-        ? room.find(FIND_HOSTILE_STRUCTURES)
-        : [],
+      state && state.hostilePowerCreeps ? state.hostilePowerCreeps : null,
+      state && state.hostileStructures ? state.hostileStructures : null,
     );
     var classification = hostiles.length > 0 ? "home_invasion" : "clear";
 

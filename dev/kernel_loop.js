@@ -50,6 +50,5 @@ module.exports = {
     const snapshot = profiler.finalize();
 
     statsManager.record(snapshot);
-    statsManager.print(snapshot);
   },
 };

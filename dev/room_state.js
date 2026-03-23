@@ -36,6 +36,14 @@ module.exports = {
     var sites = room.find(FIND_CONSTRUCTION_SITES);
     var structures = room.find(FIND_STRUCTURES);
     var hostileCreeps = room.find(FIND_HOSTILE_CREEPS);
+    var hostilePowerCreeps =
+      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+        ? room.find(FIND_HOSTILE_POWER_CREEPS)
+        : [];
+    var hostileStructures =
+      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+        ? room.find(FIND_HOSTILE_STRUCTURES)
+        : [];
     var structuresByType = this.groupStructuresByType(structures);
     var sitesByType = this.groupStructuresByType(sites);
     var roleMap = this.groupCreepsByRole(homeCreeps);
@@ -67,6 +75,8 @@ module.exports = {
       structures: structures,
       structuresByType: structuresByType,
       hostileCreeps: hostileCreeps,
+      hostilePowerCreeps: hostilePowerCreeps,
+      hostileStructures: hostileStructures,
       sourceContainers: sourceContainers,
       sourceContainersBySourceId: sourceContainersBySourceId,
       extensions: extensions,

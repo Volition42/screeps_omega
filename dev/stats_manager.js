@@ -7,7 +7,7 @@ Rolling CPU / colony stats recorder.
 Purpose:
 - Keep a short performance history in Memory
 - Store last snapshot and rolling averages
-- Print readable CPU summaries on an interval
+- Feed directive-facing CPU summaries and optional debug console output
 
 Memory layout:
 Memory.stats.last
@@ -24,13 +24,15 @@ module.exports = {
     if (!Memory.stats.max) Memory.stats.max = {};
 
     const history = Memory.stats.history;
+    const creepCount = Object.keys(Game.creeps).length;
+    const roomCount = this.getOwnedRoomCount();
 
     history.push({
       tick: snapshot.tick,
       cpuUsed: snapshot.cpu.used,
       bucket: snapshot.cpu.bucket,
-      creepCount: Object.keys(Game.creeps).length,
-      roomCount: this.getOwnedRoomCount(),
+      creepCount: creepCount,
+      roomCount: roomCount,
     });
 
     const maxHistory = 100;
@@ -38,19 +40,68 @@ module.exports = {
       history.shift();
     }
 
-    Memory.stats.last = snapshot;
-    Memory.stats.averages = this.computeAverages(history);
-    Memory.stats.max = this.computeMax(history);
-    Memory.stats.runtime = this.computeRuntimeMode(
+    this.finalizeCpuMeasurement(snapshot);
+    history[history.length - 1].cpuUsed = snapshot.cpu.used;
+
+    const averages = this.computeAverages(history);
+    const runtime = this.computeRuntimeMode(snapshot, averages);
+
+    Memory.stats.last = this.buildStoredSnapshot(
       snapshot,
-      Memory.stats.averages,
+      creepCount,
+      roomCount,
+      runtime,
     );
+    Memory.stats.averages = averages;
+    Memory.stats.max = this.computeMax(history);
+    Memory.stats.runtime = runtime;
+
+    this.printDebugCpu(snapshot);
   },
 
-  print(snapshot) {
-    var mode = this.getCpuConsoleMode();
-    if (mode === "off") return;
-    if (Game.time % this.getCpuPrintInterval() !== 0) return;
+  shouldProfileSections() {
+    const directives = config.DIRECTIVES || {};
+
+    if (!directives.DEBUG_CPU_CONSOLE_ENABLED) return false;
+    if (!directives.DEBUG_CPU_SHOW_SECTIONS) return false;
+
+    const runtime = this.getRuntimeMode();
+    if (runtime && runtime.forceOverview === true) {
+      return false;
+    }
+
+    return true;
+  },
+
+  finalizeCpuMeasurement(snapshot) {
+    if (!snapshot || !snapshot.cpu) return;
+
+    const finalUsed = Number(Game.cpu.getUsed().toFixed(3));
+    const delta = Math.max(0, finalUsed - (snapshot.cpu.used || 0));
+
+    snapshot.cpu.used = finalUsed;
+    snapshot.cpu.tickCost = Number(((snapshot.cpu.tickCost || 0) + delta).toFixed(3));
+  },
+
+  buildStoredSnapshot(snapshot, creepCount, roomCount, runtime) {
+    return {
+      tick: snapshot.tick,
+      cpu: {
+        used: snapshot.cpu.used,
+        tickCost: snapshot.cpu.tickCost,
+        limit: snapshot.cpu.limit,
+        tickLimit: snapshot.cpu.tickLimit,
+        bucket: snapshot.cpu.bucket,
+      },
+      creepCount: creepCount,
+      roomCount: roomCount,
+      pressure: runtime ? runtime.pressure : "normal",
+    };
+  },
+
+  printDebugCpu(snapshot) {
+    if (!this.shouldDebugCpuConsole()) return;
+    if (Game.time % this.getDebugCpuConsoleInterval() !== 0) return;
 
     const avgCpu =
       Memory.stats &&
@@ -60,9 +111,11 @@ module.exports = {
         : snapshot.cpu.used;
 
     console.log(
-      `[CPU] tick=${snapshot.tick} used=${snapshot.cpu.used.toFixed(2)} ` +
+      `[CPU DEBUG] tick=${snapshot.tick} used=${snapshot.cpu.used.toFixed(2)} ` +
         `avg=${avgCpu.toFixed(3)} bucket=${snapshot.cpu.bucket} creeps=${Object.keys(Game.creeps).length}`,
     );
+
+    if (!this.shouldProfileSections()) return;
 
     const sections = snapshot.sections || {};
     const overviewSections = this.getOverviewSections(sections);
@@ -74,35 +127,20 @@ module.exports = {
     }
 
     if (sectionParts.length > 0) {
-      console.log(`[CPU:sections] ${sectionParts.join(" | ")}`);
+      console.log(`[CPU DEBUG:sections] ${sectionParts.join(" | ")}`);
     }
-
-    if (mode !== "detail") return;
 
     this.printDetailedSections(sections);
   },
 
-  getCpuConsoleMode() {
-    var configured = config.STATS && config.STATS.CPU_CONSOLE_MODE
-      ? config.STATS.CPU_CONSOLE_MODE
-      : "overview";
-    var runtime = this.getRuntimeMode();
-
-    if (
-      configured === "detail" &&
-      runtime &&
-      runtime.forceOverview === true
-    ) {
-      return "overview";
-    }
-
-    return configured;
+  shouldDebugCpuConsole() {
+    return !!(config.DIRECTIVES && config.DIRECTIVES.DEBUG_CPU_CONSOLE_ENABLED);
   },
 
-  getCpuPrintInterval() {
-    return config.STATS && config.STATS.CPU_PRINT_INTERVAL
-      ? config.STATS.CPU_PRINT_INTERVAL
-      : 25;
+  getDebugCpuConsoleInterval() {
+    return config.DIRECTIVES && config.DIRECTIVES.DEBUG_CPU_CONSOLE_INTERVAL
+      ? config.DIRECTIVES.DEBUG_CPU_CONSOLE_INTERVAL
+      : 100;
   },
 
   getOverviewSections(sections) {
@@ -141,7 +179,7 @@ module.exports = {
       }
 
       if (parts.length > 0) {
-        console.log(`[CPU:room ${roomName}] ${parts.join(" | ")}`);
+        console.log(`[CPU DEBUG:room ${roomName}] ${parts.join(" | ")}`);
       }
 
       if (roomGroup.roles && roomGroup.roles.length > 0) {
@@ -153,7 +191,7 @@ module.exports = {
           );
         }
 
-        console.log(`[CPU:roles ${roomName}] ${roleParts.join(" | ")}`);
+        console.log(`[CPU DEBUG:roles ${roomName}] ${roleParts.join(" | ")}`);
       }
     }
   },

@@ -1,4 +1,3 @@
-const config = require("config");
 const roomState = require("room_state");
 const utils = require("utils");
 const constructionManager = require("construction_manager");
@@ -15,8 +14,8 @@ module.exports = {
     const roomLabel = `room.${room.name}`;
     const detailCpu =
       profiler &&
-      statsManager.getCpuConsoleMode &&
-      statsManager.getCpuConsoleMode() === "detail";
+      statsManager.shouldProfileSections &&
+      statsManager.shouldProfileSections();
     const runtimeMode = statsManager.getRuntimeMode();
     const runStep = function (suffix, fn, context, ...args) {
       if (!detailCpu) {

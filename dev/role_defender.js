@@ -18,6 +18,12 @@ const MOVE_OPTIONS = {
   reusePath: 10,
 };
 
+const COMBAT_MOVE_OPTIONS = {
+  reusePath: 3,
+  range: 1,
+  visualizePathStyle: { stroke: "#ff6b6b" },
+};
+
 module.exports = {
   run(creep, state) {
     var homeRoomName = creep.memory.homeRoom || creep.memory.room;
@@ -38,11 +44,7 @@ module.exports = {
       var attackResult = creep.attack(hostile);
 
       if (attackResult === ERR_NOT_IN_RANGE) {
-        creep.moveTo(hostile, {
-          reusePath: 0,
-          range: 1,
-          visualizePathStyle: { stroke: "#ff6b6b" },
-        });
+        creep.moveTo(hostile, COMBAT_MOVE_OPTIONS);
       }
 
       return;
@@ -66,16 +68,7 @@ module.exports = {
   },
 
   getPriorityHostile(creep) {
-    var targets = utils.getDefenseIntruders(
-      creep.room,
-      creep.room.find(FIND_HOSTILE_CREEPS),
-      typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
-        ? creep.room.find(FIND_HOSTILE_POWER_CREEPS)
-        : [],
-      typeof FIND_HOSTILE_STRUCTURES !== "undefined"
-        ? creep.room.find(FIND_HOSTILE_STRUCTURES)
-        : [],
-    );
+    var targets = utils.getDefenseIntruders(creep.room);
 
     if (targets.length === 0) return null;
 

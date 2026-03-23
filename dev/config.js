@@ -30,9 +30,12 @@ module.exports = {
 
   HUD: {
     ENABLED: true,
-    CREEP_LABELS: true,
-    LABEL_INTERVAL: 1,
-    CONSOLE_INTERVAL: 25,
+    LEAN_MODE: true,
+    SUMMARY_INTERVAL: 2,
+    CREEP_LABELS: false,
+    LABEL_INTERVAL: 5,
+    CONSOLE_ENABLED: false,
+    CONSOLE_INTERVAL: 100,
 
     // Developer note:
     // Show a tiny performance line using Memory.stats from stats_manager.
@@ -229,13 +232,6 @@ module.exports = {
   },
 
   STATS: {
-    // Developer note:
-    // CPU console reporting modes:
-    // - off: no CPU console output
-    // - overview: top-level sections only
-    // - detail: top-level sections plus per-room and per-role breakdowns
-    CPU_CONSOLE_MODE: "off",
-    CPU_PRINT_INTERVAL: 25,
     RUNTIME_POLICY: {
       TIGHT_CPU_RATIO: 0.8,
       CRITICAL_CPU_RATIO: 0.92,
@@ -277,6 +273,9 @@ module.exports = {
     CPU_SPIKE_MULTIPLIER: 1.5,
     BUCKET_WARNING_THRESHOLD: 8000,
     HEALTHY_REPORT_INTERVAL: 100,
+    DEBUG_CPU_CONSOLE_ENABLED: false,
+    DEBUG_CPU_CONSOLE_INTERVAL: 100,
+    DEBUG_CPU_SHOW_SECTIONS: false,
 
     // Developer note:
     // Progress / ETA directives for controller advancement.

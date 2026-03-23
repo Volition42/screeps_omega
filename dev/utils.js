@@ -137,6 +137,18 @@ function buildRuntimeCache(room) {
     state && state.hostileCreeps
       ? state.hostileCreeps
       : room.find(FIND_HOSTILE_CREEPS);
+  var hostilePowerCreeps =
+    state && state.hostilePowerCreeps
+      ? state.hostilePowerCreeps
+      : typeof FIND_HOSTILE_POWER_CREEPS !== "undefined"
+        ? room.find(FIND_HOSTILE_POWER_CREEPS)
+        : [];
+  var hostileStructures =
+    state && state.hostileStructures
+      ? state.hostileStructures
+      : typeof FIND_HOSTILE_STRUCTURES !== "undefined"
+        ? room.find(FIND_HOSTILE_STRUCTURES)
+        : [];
   var structuresByType =
     state && state.structuresByType
       ? state.structuresByType
@@ -159,6 +171,8 @@ function buildRuntimeCache(room) {
     sites: sites,
     creeps: creeps,
     hostileCreeps: hostileCreeps,
+    hostilePowerCreeps: hostilePowerCreeps,
+    hostileStructures: hostileStructures,
     sourceContainers: sourceContainers,
     sourceContainersBySourceId: sourceContainersBySourceId,
     homeCreeps: homeCreeps,
@@ -336,17 +350,12 @@ module.exports = {
     var groups = [];
     var seen = {};
     var results = [];
+    var cache = room ? getRuntimeCache(room) : null;
 
     if (structures && structures.length > 0) {
       groups.push(structures);
-    }
-
-    if (room) {
-      if (typeof FIND_HOSTILE_STRUCTURES !== "undefined") {
-        groups.push(room.find(FIND_HOSTILE_STRUCTURES));
-      }
-
-      groups.push(room.find(FIND_STRUCTURES));
+    } else if (cache && cache.hostileStructures) {
+      groups.push(cache.hostileStructures);
     }
 
     for (var i = 0; i < groups.length; i++) {
@@ -371,12 +380,23 @@ module.exports = {
     var merged = [];
     var seen = {};
     var groups = [];
+    var cache = room ? getRuntimeCache(room) : null;
     var hostilePowerCreeps = powerCreeps;
+
+    if (
+      cache &&
+      !hostiles &&
+      !powerCreeps &&
+      !structures &&
+      cache.defenseIntruders
+    ) {
+      return cache.defenseIntruders;
+    }
 
     groups.push(this.getDefenseHostiles(room, hostiles));
 
-    if (!hostilePowerCreeps && room && typeof FIND_HOSTILE_POWER_CREEPS !== "undefined") {
-      hostilePowerCreeps = room.find(FIND_HOSTILE_POWER_CREEPS);
+    if (!hostilePowerCreeps && cache && cache.hostilePowerCreeps) {
+      hostilePowerCreeps = cache.hostilePowerCreeps;
     }
 
     groups.push(
@@ -386,26 +406,6 @@ module.exports = {
     );
 
     groups.push(this.getDefenseStructures(room, structures));
-
-    if (room) {
-      groups.push(
-        _.filter(room.find(FIND_CREEPS), function (creep) {
-          return module.exports.isDefenseHostile(creep);
-        }),
-      );
-
-      if (typeof FIND_POWER_CREEPS !== "undefined") {
-        groups.push(
-          _.filter(room.find(FIND_POWER_CREEPS), function (creep) {
-            return module.exports.isDefenseHostile(creep);
-          }),
-        );
-      }
-
-      if (typeof FIND_HOSTILE_STRUCTURES !== "undefined") {
-        groups.push(this.getDefenseStructures(room, room.find(FIND_HOSTILE_STRUCTURES)));
-      }
-    }
 
     for (var i = 0; i < groups.length; i++) {
       var group = groups[i] || [];
@@ -419,6 +419,10 @@ module.exports = {
 
         merged.push(creep);
       }
+    }
+
+    if (cache && !hostiles && !powerCreeps && !structures) {
+      cache.defenseIntruders = merged;
     }
 
     return merged;
