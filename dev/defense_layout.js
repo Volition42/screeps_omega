@@ -1,23 +1,49 @@
 const config = require("config");
 
+var cachedTick = null;
+var cachedPlansByRoom = {};
+
+function resetCacheIfNeeded() {
+  if (cachedTick === Game.time) return;
+
+  cachedTick = Game.time;
+  cachedPlansByRoom = {};
+}
+
 module.exports = {
   getPlan(room, state) {
+    resetCacheIfNeeded();
+
+    if (cachedPlansByRoom[room.name] !== undefined) {
+      return cachedPlansByRoom[room.name];
+    }
+
     var spawn = state && state.spawns && state.spawns[0] ? state.spawns[0] : null;
     var controller = room.controller;
 
-    if (!spawn || !controller || !config.DEFENSE.ENABLED) return null;
-    if (controller.level < (config.DEFENSE.MIN_CONTROLLER_LEVEL || 2)) return null;
+    if (!spawn || !controller || !config.DEFENSE.ENABLED) {
+      cachedPlansByRoom[room.name] = null;
+      return null;
+    }
+    if (controller.level < (config.DEFENSE.MIN_CONTROLLER_LEVEL || 2)) {
+      cachedPlansByRoom[room.name] = null;
+      return null;
+    }
 
     var terrain = room.getTerrain();
     var protectedMap = this.getProtectedMap(room, state, spawn, terrain);
 
-    if (!protectedMap[this.toKey(spawn.pos.x, spawn.pos.y)]) return null;
+    if (!protectedMap[this.toKey(spawn.pos.x, spawn.pos.y)]) {
+      cachedPlansByRoom[room.name] = null;
+      return null;
+    }
 
     var outsideMap = this.getOutsideMap(terrain, protectedMap);
     var barrierTiles = this.getBarrierTiles(room, terrain, protectedMap, outsideMap);
 
     if (barrierTiles.length === 0) {
-      return { walls: [], gates: [] };
+      cachedPlansByRoom[room.name] = { walls: [], gates: [] };
+      return cachedPlansByRoom[room.name];
     }
 
     var barrierMap = Object.create(null);
@@ -37,10 +63,12 @@ module.exports = {
       else walls.push(tile);
     }
 
-    return {
+    cachedPlansByRoom[room.name] = {
       walls: walls,
       gates: gates,
     };
+
+    return cachedPlansByRoom[room.name];
   },
 
   getProtectedMap(room, state, spawn, terrain) {
