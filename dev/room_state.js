@@ -119,7 +119,10 @@ module.exports = {
 
   resolveRoomPhase(room, sharedState, initialPhase, desiredTotalHaulers) {
     var phase = roadmap.normalizePhase(initialPhase);
-    var provisionalState = this.createState(sharedState, phase);
+    var planningPhase = room.controller
+      ? roadmap.getHighestPhaseForControllerLevel(room.controller.level)
+      : phase;
+    var provisionalState = this.createState(sharedState, planningPhase);
     var buildStatus = constructionStatus.getStatus(room, provisionalState);
 
     if (
@@ -132,8 +135,6 @@ module.exports = {
       )
     ) {
       phase = "development";
-      provisionalState = this.createState(sharedState, phase);
-      buildStatus = constructionStatus.getStatus(room, provisionalState);
     }
 
     if (
@@ -146,8 +147,6 @@ module.exports = {
       )
     ) {
       phase = "logistics";
-      provisionalState = this.createState(sharedState, phase);
-      buildStatus = constructionStatus.getStatus(room, provisionalState);
     }
 
     if (
@@ -155,8 +154,6 @@ module.exports = {
       this.shouldEnterSpecialization(room, provisionalState, buildStatus)
     ) {
       phase = "specialization";
-      provisionalState = this.createState(sharedState, phase);
-      buildStatus = constructionStatus.getStatus(room, provisionalState);
     }
 
     if (
@@ -164,8 +161,6 @@ module.exports = {
       this.shouldEnterFortification(room, provisionalState, buildStatus)
     ) {
       phase = "fortification";
-      provisionalState = this.createState(sharedState, phase);
-      buildStatus = constructionStatus.getStatus(room, provisionalState);
     }
 
     if (
