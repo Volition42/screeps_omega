@@ -1,214 +1,111 @@
 # Home Room RCL8 Upgrade Roadmap
 
-Single-room roadmap for `screeps_omega`, focused on driving one home room to a completed `RCL8` before remote mining, claiming, or empire expansion return to scope.
+Reality-based roadmap for the current `dev/` build.
 
-## Scope Lock
+The home-room construction path now reaches `command` / `RCL8` on paper and in code. This file tracks what is still missing before the single-room RCL8 path should be considered stable, validated, and feature-complete in live play.
 
-- Home room only.
-- Controller upgrade throughput is the primary success metric.
-- Remote rooms, remote defense, and empire expansion are deferred and should be removed from active code paths.
-- CPU savings are a design requirement, not a cleanup item.
+## Already Completed In Dev
 
-## Time Estimate On Shard3
+These items are no longer active roadmap work:
 
-Assumptions:
+- Named room phases are in place: `bootstrap -> foundation -> development -> logistics -> specialization -> fortification -> command`.
+- Construction roadmap, status, and placement now cover links, terminal, extractor, labs, factory, observer, power spawn, and nuker.
+- Advanced structure placement is planned from a cached future-plan instead of being recomputed every tick.
+- Home-room defense construction now uses terrain-based exit choke planning with two-tile rampart gates.
+- HUD and directives read the shared construction status and future-plan state.
 
-- Public server `shard3`
-- Tick speed averages `2.5-3.0s`
-- One home room only
-- No remote mining
-- No market acceleration
-- Normal public-server pressure, not a perfect quiet shard
-- Code continues to improve around controller throughput and CPU waste
+## Active Remaining Work
 
-Estimated time from placing the first spawn to a completed `RCL8`:
+## 1. Live Validate Late-Game Construction Fit
 
-- Fast case: about `39 days, 8 hours, 0 minutes`
-- Average case: about `46 days, 18 hours, 0 minutes`
-- Slow case: about `57 days, 6 hours, 0 minutes`
-
-Probability view:
-
-- `25%` chance the room finishes by about `43 days`
-- `50%` chance the room finishes between about `43-51 days`
-- `25%` chance the room takes longer than about `51 days`
-
-## Phase 0 - Remove Remote Scope
-
-Status: [x] Completed
+Status: [ ] Pending live-room validation
 
 Purpose:
 
-- Remove every active remote-room code path so the bot becomes a simpler, cheaper single-room controller-growth bot.
-
-Completed baseline:
-
-- Remote room configuration and remote spawn paths have been removed from active runtime code.
-- Remote-room HUD panels, remote creep labels, and remote CPU sections have been removed.
-- Remote role files and the remote manager have been removed from `dev/`.
-- Defense is now home-room only.
-
-Done when:
-
-- No remote rooms are scanned, shown, spawned for, defended, or planned.
-- The home room HUD only shows home-room data.
-- CPU logs no longer include remote sections.
-
-Expected CPU win:
-
-- High. This should remove the largest non-home room tax from the current runtime.
-
-## Phase 1 - Bootstrap Hardening For One Room
-
-Status: [x] In progress
-
-Purpose:
-
-- Make early survival and phase progression reliable without remote help.
+- Prove that the current RCL7/RCL8 construction planner fits real rooms cleanly instead of only passing static code review.
 
 Work items:
 
-- [ ] Keep `bootstrap_jr` limited to survival labor only
-- [ ] Ensure `bootstrap` reliably transitions from `jrworker` to `worker`
-- [ ] Verify source containers and road backbone are first build priority
-- [ ] Validate phase fallbacks so dead economies drop correctly into recovery behavior
-- [ ] Trim any remaining roles or logic that only existed to support remote expansion
+- [ ] Validate `specialization` lab placement in a real RCL6 room.
+- [ ] Validate `fortification` factory placement in a real RCL7 room.
+- [ ] Validate `command` observer, power spawn, and nuker placement in a real RCL8 room.
+- [ ] Check that connector roads do not starve important structure sites under the global site cap.
+- [ ] Record any terrain shapes that force poor fallback placement and tune the planner if needed.
 
 Done when:
 
-- A new room can progress from first spawn through `developing` without manual intervention.
-- Construction required for the phase is always spawned for before optional work.
+- At least one live room has successfully planned and built through `command` without manual structure relocation.
 
-## Phase 2 - Developing And Stable Home Economy
-
-Status: [x] In progress
-
-Purpose:
-
-- Finish the home-room economy backbone needed to support controller-first growth.
-
-Completed baseline:
-
-- Upgraders now self-supply from shared room energy buffers instead of standing on a dedicated controller container.
-- Controller-container planning is no longer part of the active home-room roadmap.
-
-Work items:
-
-- [ ] Validate `developing` construction order for extensions, tower, storage, and core roads
-- [ ] Simplify role counts for a single-room economy
-- [ ] Prioritize shared logistics flow toward spawn fill, extension fill, tower safety, storage, and then upgrader support
-- [ ] Reduce idle movement and target thrash in worker and hauler roles
-- [ ] Rewrite directive reporting so it reads like analyst-facing room snapshots instead of executive narration
-- [ ] Add clearer console-output separation after directive reports so the next log item is visually distinct
-- [ ] Keep defense strictly home-room reactive
-
-Done when:
-
-- The room can hold `stable` without phase flapping.
-- Home creeps are not pathing between invalid targets.
-- Economy CPU stays predictable with no remote overhead.
-
-## Phase 3 - RCL5 Link Backbone
+## 2. Add Lab And Factory Operations
 
 Status: [ ] Not started
 
 Purpose:
 
-- Unlock the first real controller-throughput jump.
+- Turn placed late-game structures into actual production infrastructure.
 
 Work items:
 
-- [ ] Validate controller link placement from the cached future plan
-- [ ] Validate storage link placement from the storage hub plan
-- [ ] Validate source link planning for the home room only
-- [ ] Add minimal, CPU-cheap link transfer logic centered on feeding the controller path first
-- [ ] Reduce manual hauling pressure once links come online
+- [ ] Add lab operating state for reaction selection and reagent routing.
+- [ ] Define a simple factory production policy for home-room use.
+- [ ] Extend hauler logistics so labs, terminal, factory, and power spawn can be supplied without breaking core energy flow.
+- [ ] Add status or HUD visibility for active lab/factory work once that logic exists.
 
 Done when:
 
-- The controller path is link-fed.
-- Haulers no longer waste large amounts of time on controller delivery runs.
+- Labs can run a chosen reaction cycle and the factory can produce from a defined policy without manual babysitting.
 
-## Phase 4 - RCL6 Throughput Layer
+## 3. Add Observer, Power Processing, And Nuker Operations
 
 Status: [ ] Not started
 
 Purpose:
 
-- Add only the RCL6 structures that support a stronger, more stable home room while keeping controller progress first.
+- Finish the RCL8 operating layer after construction placement is complete.
 
 Work items:
 
-- [ ] Finish terminal placement and build support, but keep market logic out of scope
-- [ ] Finish extractor placement and build support, but keep mineral economics out of scope
-- [ ] Finish first lab-cluster placement and build support, but keep reaction logic out of scope
-- [ ] Improve upgrader supply flow so the controller remains the main energy sink after core refill needs are met
-- [ ] Keep advanced placement cache-driven and low-frequency
+- [ ] Add observer scan scheduling and a clear use for the vision it produces.
+- [ ] Add power spawn processing logic with safe resource gating.
+- [ ] Add nuker policy and operator controls so the structure is not just decorative.
+- [ ] Decide whether any of these systems need HUD or directive visibility.
 
 Done when:
 
-- All RCL6 construction is planned and can complete without changing the room’s single-room operating model.
-- The room becomes materially better at feeding upgraders, not just richer in structure count.
+- Observer, power spawn, and nuker all have real runtime behavior beyond construction and build-status tracking.
 
-## Phase 5 - RCL7 Efficiency Pass
+## 4. Re-Measure CPU And Simplify Again
 
-Status: [ ] Not started
+Status: [ ] Pending after live validation
 
 Purpose:
 
-- Convert a complete midgame room into a controller-focused late-game room.
+- Keep CPU reduction as a standing engineering constraint while the RCL8 path hardens.
 
 Work items:
 
-- [ ] Validate all RCL7 structure counts and build order
-- [ ] Rebalance haulers, workers, and upgraders for higher sustained controller feed
-- [ ] Tighten repair logic so roads, containers, and key defenses stay healthy without bloating CPU
-- [ ] Add CPU guardrails that shed optional work when bucket or average CPU drops
-- [ ] Re-measure role CPU and room-manager CPU after each major change
+- [ ] Measure construction, HUD, directives, and defense planning after late-game validation.
+- [ ] Remove or cache any room scans that are no longer justified.
+- [ ] Re-check runtime throttling behavior under normal, tight, and critical CPU modes.
+- [ ] Keep memory-heavy caches if they reduce repeated CPU work safely.
 
 Done when:
 
-- The room holds RCL7 comfortably without recovery drift.
-- Controller feed remains strong even during normal repair and refill cycles.
+- The home-room RCL8 path is stable without pushing average CPU back into the earlier regression range.
 
-## Phase 6 - RCL8 Completion
-
-Status: [ ] Not started
-
-Purpose:
-
-- Finish the room as a stable, completed RCL8 home before empire work returns.
-
-Work items:
-
-- [ ] Drive the controller to `RCL8`
-- [ ] Saturate the controller-upgrade path as close as practical to the `15 energy/tick` cap
-- [ ] Validate final required structure placement and completion
-- [ ] Keep downgrade protection, storage reserve, and tower safety stable while upgrading
-- [ ] Freeze or simplify any optional behavior that steals controller energy without a strong reason
-
-Done when:
-
-- The room reaches `RCL8`
-- The full home-room construction roadmap is complete
-- The codebase is still single-room and CPU-stable
-
-## Deferred Until After RCL8
+## Deferred Until After Home-Room RCL8 Is Stable
 
 - Remote mining
 - Remote reservation
 - Remote defense
 - Second-home claiming
 - Empire manager
-- Market trading
-- Lab reactions
-- Power processing
-- Factory, observer, and nuker automation
+- Market automation
+- Broader boost or war-room systems
 
 ## Developer Operating Notes
 
-- Prefer deleting remote logic over feature-flagging it if the code path is clearly out of scope.
-- Keep per-tick home-room scans shared through room state and cache.
-- Do not add broad all-creep or all-structure scans to the HUD or planner.
-- Every phase should end with a CPU re-measure and a “what can be simplified again” pass.
-- If a feature does not improve controller throughput, economy stability, or required construction completion, it should probably wait until after `RCL8`.
+- Do not mark a phase "done" just because placement exists. Construction and operating logic are separate milestones.
+- Prefer shared room-state scans and cached planner output over fresh manager-local scans.
+- Keep the home-room path readable. If a late-game feature needs too much scaffolding, add the minimum working slice first.
+- Every major late-game addition should end with a CPU re-measure and a "what can be simplified again" pass.

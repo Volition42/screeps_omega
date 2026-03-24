@@ -31,7 +31,7 @@ module.exports = {
     SUMMARY_INTERVAL: 1,
     CREEP_LABELS: true,
     LABEL_INTERVAL: 1,
-    CONSOLE_ENABLED: true,
+    CONSOLE_ENABLED: false,
     CONSOLE_INTERVAL: 50,
 
     // Developer note:
