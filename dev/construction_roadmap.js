@@ -8,24 +8,62 @@ Purpose:
 - Let construction_manager and construction_status read the same plan
 
 Phases:
-- bootstrap_jr:
-    no formal construction targets
 - bootstrap:
+    no formal construction targets, just survive and upgrade to RCL2
+- foundation:
     source containers + anchor roads + backbone roads
-- developing:
-    extension stamps + tower + storage + defense + internal roads
-- stable:
-    finish current-RCL roadmap and keep the core clean
+- development:
+    extensions + first tower + storage + defense + internal roads
+- logistics:
+    add first link backbone for a stronger core economy
+- specialization:
+    add terminal + extractor + first lab cluster
+- fortification:
+    hold the mature room on a hardened, late-game-ready core
+- command:
+    final room command phase for future RCL8 completion work
 
 Design Notes:
 - This module defines INTENT, not placement logic.
+- Later phases can be stubbed here before new placement logic exists.
 - Stamp placement logic lives in stamp_library.js and construction_manager.js.
 */
 
+const LEGACY_PHASE_MAP = {
+  bootstrap_jr: "bootstrap",
+  bootstrap: "foundation",
+  developing: "development",
+  stable: "development",
+  rcl5: "logistics",
+  rcl6: "specialization",
+};
+
 module.exports = {
+  PHASE_ORDER: [
+    "bootstrap",
+    "foundation",
+    "development",
+    "logistics",
+    "specialization",
+    "fortification",
+    "command",
+  ],
+
+  PHASE_MIN_CONTROLLER_LEVEL: {
+    bootstrap: 1,
+    foundation: 2,
+    development: 3,
+    logistics: 5,
+    specialization: 6,
+    fortification: 7,
+    command: 8,
+  },
+
   ROADMAPS: {
-    bootstrap_jr: {
-      phase: "bootstrap_jr",
+    bootstrap: {
+      phase: "bootstrap",
+      focus: "survival",
+      summary: "Direct harvest recovery and controller progress to unlock basic infrastructure.",
       buildList: [],
       goals: {
         logisticsTier: "survival_bootstrap",
@@ -43,13 +81,11 @@ module.exports = {
       },
     },
 
-    bootstrap: {
-      phase: "bootstrap",
-      buildList: [
-        "sourceContainers",
-        "anchorRoads",
-        "backboneRoads",
-      ],
+    foundation: {
+      phase: "foundation",
+      focus: "backbone",
+      summary: "Establish source containers and the first durable road network.",
+      buildList: ["sourceContainers", "anchorRoads", "backboneRoads"],
       goals: {
         logisticsTier: "container_bootstrap",
         linkPlanning: {
@@ -66,8 +102,10 @@ module.exports = {
       },
     },
 
-    developing: {
-      phase: "developing",
+    development: {
+      phase: "development",
+      focus: "core_economy",
+      summary: "Fill out the first full home-room core with storage, tower coverage, and defenses.",
       buildList: [
         "sourceContainers",
         "anchorRoads",
@@ -94,35 +132,10 @@ module.exports = {
       },
     },
 
-    stable: {
-      phase: "stable",
-      buildList: [
-        "anchorRoads",
-        "backboneRoads",
-        "extensionStamps",
-        "towerStamp",
-        "storage",
-        "internalRoads",
-        "defense",
-      ],
-      goals: {
-        logisticsTier: "storage_backbone",
-        linkPlanning: {
-          enabled: false,
-          controllerLink: false,
-          sourceLinks: 0,
-          storageLink: false,
-        },
-        advancedStructures: {
-          terminal: false,
-          extractor: false,
-          labs: 0,
-        },
-      },
-    },
-
-    rcl5: {
-      phase: "rcl5",
+    logistics: {
+      phase: "logistics",
+      focus: "energy_throughput",
+      summary: "Add the first link network so hauling pressure falls and controller supply improves.",
       buildList: [
         "anchorRoads",
         "backboneRoads",
@@ -149,8 +162,10 @@ module.exports = {
       },
     },
 
-    rcl6: {
-      phase: "rcl6",
+    specialization: {
+      phase: "specialization",
+      focus: "advanced_infrastructure",
+      summary: "Bring online terminal, mineral access, and the first lab cluster.",
       buildList: [
         "anchorRoads",
         "backboneRoads",
@@ -179,36 +194,127 @@ module.exports = {
         },
       },
     },
+
+    fortification: {
+      phase: "fortification",
+      focus: "hardening",
+      summary: "Late-game hardening phase reserved for stronger defenses and mature infrastructure.",
+      buildList: [
+        "anchorRoads",
+        "backboneRoads",
+        "extensionStamps",
+        "towerStamp",
+        "storage",
+        "internalRoads",
+        "defense",
+        "links",
+        "terminal",
+        "extractor",
+        "labs",
+      ],
+      goals: {
+        logisticsTier: "fortified_core",
+        linkPlanning: {
+          enabled: true,
+          controllerLink: true,
+          sourceLinks: 1,
+          storageLink: true,
+        },
+        advancedStructures: {
+          terminal: true,
+          extractor: true,
+          labs: 3,
+        },
+        lateGameStructures: {
+          observer: false,
+          factory: false,
+          powerSpawn: false,
+          nuker: false,
+        },
+      },
+    },
+
+    command: {
+      phase: "command",
+      focus: "finalization",
+      summary: "Final room-completion phase reserved for future RCL8 command structures.",
+      buildList: [
+        "anchorRoads",
+        "backboneRoads",
+        "extensionStamps",
+        "towerStamp",
+        "storage",
+        "internalRoads",
+        "defense",
+        "links",
+        "terminal",
+        "extractor",
+        "labs",
+      ],
+      goals: {
+        logisticsTier: "command_core",
+        linkPlanning: {
+          enabled: true,
+          controllerLink: true,
+          sourceLinks: 1,
+          storageLink: true,
+        },
+        advancedStructures: {
+          terminal: true,
+          extractor: true,
+          labs: 3,
+        },
+        lateGameStructures: {
+          observer: false,
+          factory: false,
+          powerSpawn: false,
+          nuker: false,
+        },
+      },
+    },
+  },
+
+  normalizePhase(phase) {
+    if (!phase) return "bootstrap";
+
+    return LEGACY_PHASE_MAP[phase] || phase;
   },
 
   getPlan(phase, controllerLevel) {
-    var roadmapPhase = this.getRoadmapPhase(phase, controllerLevel);
+    var normalizedPhase = this.normalizePhase(phase);
+    var roadmapPhase = this.getRoadmapPhase(normalizedPhase, controllerLevel);
     var plan = this.ROADMAPS[roadmapPhase] || this.ROADMAPS.bootstrap;
 
     return {
-      phase: phase,
+      phase: normalizedPhase,
       roadmapPhase: roadmapPhase,
+      focus: plan.focus || roadmapPhase,
+      summary: plan.summary || "",
       buildList: plan.buildList.slice(),
       goals: this.cloneGoals(plan.goals || {}),
     };
   },
 
   getRoadmapPhase(phase, controllerLevel) {
-    if (controllerLevel >= 6) return "rcl6";
-    if (controllerLevel >= 5) return "rcl5";
+    var normalizedPhase = this.normalizePhase(phase);
+    var highestPhase = this.getHighestPhaseForControllerLevel(controllerLevel);
+    var requestedIndex = this.PHASE_ORDER.indexOf(normalizedPhase);
+    var highestIndex = this.PHASE_ORDER.indexOf(highestPhase);
 
-    switch (phase) {
-      case "bootstrap_jr":
-        return "bootstrap_jr";
-      case "bootstrap":
-        return "bootstrap";
-      case "developing":
-        return "developing";
-      case "stable":
-        return "stable";
-      default:
-        return "bootstrap";
-    }
+    if (requestedIndex === -1) return highestPhase;
+    if (requestedIndex > highestIndex) return highestPhase;
+
+    return normalizedPhase;
+  },
+
+  getHighestPhaseForControllerLevel(controllerLevel) {
+    if (controllerLevel >= 8) return "command";
+    if (controllerLevel >= 7) return "fortification";
+    if (controllerLevel >= 6) return "specialization";
+    if (controllerLevel >= 5) return "logistics";
+    if (controllerLevel >= 3) return "development";
+    if (controllerLevel >= 2) return "foundation";
+    return "bootstrap";
   },
 
   getDesiredExtensionCount(controllerLevel) {

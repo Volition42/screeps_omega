@@ -22,23 +22,25 @@ Working overview and operator reference for the `dev/` game code.
 
 ## Room Phases
 
-- `bootstrap_jr`
-  Early survival. `jrworker` keeps the room alive.
 - `bootstrap`
-  Builds source containers, controller container, and the road backbone.
-- `developing`
+  Early survival. `jrworker` keeps the room alive and pushes to RCL2.
+- `foundation`
+  Builds source containers and the road backbone.
+- `development`
   Builds extensions, first tower, storage, internal roads, and defense.
-- `stable`
-  Keeps the current RCL core buildout complete and economy healthy.
-- `rcl5`
-  Adds link planning and link placement from the cached future plan.
-- `rcl6`
+- `logistics`
+  Adds link planning and first link placement from the cached future plan.
+- `specialization`
   Adds terminal, extractor, and first lab cluster from the cached future plan.
+- `fortification`
+  Stubbed late-game hardening phase for future RCL7 construction work.
+- `command`
+  Stubbed final room-completion phase for future RCL8 construction work.
 
 ## Construction System
 
 - `dev/construction_roadmap.js`
-  Defines what each phase and RCL is trying to build.
+  Defines what each named room phase is trying to build.
 - `dev/construction_status.js`
   Measures current build progress and readiness against the roadmap.
 - `dev/construction_manager.js`
@@ -49,7 +51,7 @@ Construction rules:
 - Current phase work is placed before later work.
 - Site caps are always respected.
 - Remote construction is planned on its own slower interval.
-- RCL5 and RCL6 layout planning is cached in room memory and reused for placement.
+- Advanced-phase layout planning is cached in room memory and reused for placement.
 
 ## Spawning And Roles
 

@@ -254,7 +254,7 @@ module.exports = {
         room && room.storage ? room.storage.store[RESOURCE_ENERGY] || 0 : 0,
       hasControllerLink: false,
       hasStorageLink: false,
-      economyStage: state && state.phase ? state.phase : "bootstrap_jr",
+      economyStage: state && state.phase ? state.phase : "bootstrap",
     };
   },
 

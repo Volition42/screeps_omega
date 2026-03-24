@@ -20,10 +20,10 @@ Memory.rooms[room.name].directiveTracker
 
 Tracked one-time events:
 - phase changes
-- bootstrap completion
+- foundation completion
 - defense baseline completion
 - tower readiness
-- stable readiness
+- specialization readiness
 
 Design goal:
 Read like a concise analyst snapshot without spamming noise.
@@ -81,10 +81,10 @@ module.exports = {
         lastOperationalSignature: null,
         lastOperationalTick: 0,
         announced: {
-          bootstrapComplete: false,
+          foundationComplete: false,
           defenseComplete: false,
           towerReady: false,
-          stableReady: false,
+          specializationComplete: false,
         },
       };
     }
@@ -120,29 +120,12 @@ module.exports = {
 
     const header = this.getHeader(room.name, "Phase");
 
-    if (currentPhase === "bootstrap") {
+    const summary = this.getPhaseTransitionSummary(currentPhase);
+    if (summary) {
       return [
         header,
         `Phase changed: ${previousPhase} -> ${currentPhase}.`,
-        "Bootstrap logistics are now the active room priority.",
-        `[Room Phase] from=${previousPhase} to=${currentPhase}`,
-      ];
-    }
-
-    if (currentPhase === "developing") {
-      return [
-        header,
-        `Phase changed: ${previousPhase} -> ${currentPhase}.`,
-        "The room has cleared bootstrap construction and can build out its core economy.",
-        `[Room Phase] from=${previousPhase} to=${currentPhase}`,
-      ];
-    }
-
-    if (currentPhase === "stable") {
-      return [
-        header,
-        `Phase changed: ${previousPhase} -> ${currentPhase}.`,
-        "The current room build plan is satisfied and the economy is stable.",
+        summary,
         `[Room Phase] from=${previousPhase} to=${currentPhase}`,
       ];
     }
@@ -162,14 +145,14 @@ module.exports = {
     if (!buildStatus) return null;
     const header = this.getHeader(room.name, "Milestone");
 
-    if (!tracker.announced.bootstrapComplete && buildStatus.bootstrapComplete) {
-      tracker.announced.bootstrapComplete = true;
+    if (!tracker.announced.foundationComplete && buildStatus.foundationComplete) {
+      tracker.announced.foundationComplete = true;
 
       return [
         header,
-        "Bootstrap baseline completed.",
+        "Foundation baseline completed.",
         "Source containers and the early road backbone are in place.",
-        "[Room Milestone] bootstrapComplete=true",
+        "[Room Milestone] foundationComplete=true",
       ];
     }
 
@@ -204,14 +187,17 @@ module.exports = {
       ];
     }
 
-    if (!tracker.announced.stableReady && buildStatus.stableReady) {
-      tracker.announced.stableReady = true;
+    if (
+      !tracker.announced.specializationComplete &&
+      buildStatus.specializationComplete
+    ) {
+      tracker.announced.specializationComplete = true;
 
       return [
         header,
-        "Stable-room baseline completed.",
-        "Current roadmap targets are satisfied for this operating profile.",
-        "[Room Milestone] stableReady=true",
+        "Specialization baseline completed.",
+        "Current advanced-infrastructure targets are satisfied for this room.",
+        "[Room Milestone] specializationComplete=true",
       ];
     }
 
@@ -454,50 +440,46 @@ module.exports = {
       ];
     }
 
-    if (state.phase === "bootstrap_jr") {
+    if (state.phase === "bootstrap") {
       return [
         header,
-        "Early bootstrap state is active.",
+        "Bootstrap state is active.",
         "Junior workers are handling direct harvest and early controller progress.",
         footer,
       ];
     }
 
-    if (state.phase === "bootstrap") {
+    if (state.phase === "foundation") {
       return [
         header,
-        "Bootstrap construction is active.",
+        "Foundation construction is active.",
         `Source container coverage: ${sourceContainers}/${state.sources.length}.`,
         "Core economy roles should come online as soon as source containers are ready.",
         footer,
       ];
     }
 
-    if (state.phase === "developing") {
+    if (state.phase === "development") {
       if (constructionSites > 0) {
         return [
           header,
           `Active construction sites: ${constructionSites}.`,
-          "The room is still filling out its developing-phase build targets.",
+          "The room is still filling out its development-phase build targets.",
           footer,
         ];
       }
 
       return [
         header,
-        "Developing-phase economy is active.",
+        "Development-phase economy is active.",
         "The room is operating without active construction pressure this cycle.",
         footer,
       ];
     }
 
-    if (state.phase === "stable") {
-      return [
-        header,
-        "Stable-phase room state confirmed.",
-        "Core infrastructure is built and the room can bias toward upgrades and maintenance.",
-        footer,
-      ];
+    const summary = this.getOperationalPhaseSummary(state.phase);
+    if (summary) {
+      return [header, summary.headline, summary.detail, footer];
     }
 
     return [
@@ -533,5 +515,53 @@ module.exports = {
     }
 
     return 2.5;
+  },
+
+  getPhaseTransitionSummary(phase) {
+    switch (phase) {
+      case "bootstrap":
+        return "Direct survival and controller progress are now the active room priority.";
+      case "foundation":
+        return "Backbone containers and roads are now the active room priority.";
+      case "development":
+        return "The room has cleared foundation work and can build out its core economy.";
+      case "logistics":
+        return "Link infrastructure is now the active room focus.";
+      case "specialization":
+        return "Advanced room infrastructure is now the active room focus.";
+      case "fortification":
+        return "Late-game hardening is now the active room focus.";
+      case "command":
+        return "Final room-completion work is now the active room focus.";
+      default:
+        return null;
+    }
+  },
+
+  getOperationalPhaseSummary(phase) {
+    switch (phase) {
+      case "logistics":
+        return {
+          headline: "Logistics-phase room state confirmed.",
+          detail: "Link throughput and energy movement improvements are the current room focus.",
+        };
+      case "specialization":
+        return {
+          headline: "Specialization-phase room state confirmed.",
+          detail: "Terminal, mineral access, and lab support are the current room focus.",
+        };
+      case "fortification":
+        return {
+          headline: "Fortification-phase room state confirmed.",
+          detail: "Late-game defense hardening and mature infrastructure are the current room focus.",
+        };
+      case "command":
+        return {
+          headline: "Command-phase room state confirmed.",
+          detail: "The room has entered its final completion phase for future RCL8 work.",
+        };
+      default:
+        return null;
+    }
   },
 };

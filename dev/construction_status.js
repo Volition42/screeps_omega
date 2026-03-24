@@ -127,26 +127,36 @@ module.exports = {
     status.roadCompletionRatio =
       status.roadsNeeded > 0 ? status.roadsBuilt / status.roadsNeeded : 1;
 
-    status.bootstrapComplete =
+    status.foundationComplete =
       status.sourceContainersBuilt >= status.sourceContainersNeeded &&
-      this.hasEnoughRoadsForBootstrap(status, room);
+      this.hasEnoughRoadsForFoundation(status, room);
 
-    status.developingComplete =
+    status.developmentComplete =
+      status.foundationComplete &&
       status.extensionsBuilt >= status.extensionsNeeded &&
       status.towersBuilt >= status.towersNeeded &&
       status.storageBuilt >= status.storageNeeded &&
       status.wallsBuilt >= status.wallsNeeded &&
       status.rampartsBuilt >= status.rampartsNeeded;
 
-    status.stableReady = status.bootstrapComplete && status.developingComplete;
-    status.rcl5Ready =
-      status.stableReady &&
+    status.logisticsComplete =
+      status.developmentComplete &&
       status.linksBuilt >= status.linksNeeded;
-    status.rcl6Ready =
-      status.rcl5Ready &&
+    status.specializationComplete =
+      status.logisticsComplete &&
       status.terminalBuilt >= status.terminalNeeded &&
       status.extractorBuilt >= status.extractorNeeded &&
       status.labsBuilt >= status.labsNeeded;
+    status.fortificationComplete = status.specializationComplete;
+    status.commandComplete = status.fortificationComplete;
+
+    // Temporary compatibility aliases while downstream callers migrate to the
+    // new phase vocabulary.
+    status.bootstrapComplete = status.foundationComplete;
+    status.developingComplete = status.developmentComplete;
+    status.stableReady = status.developmentComplete;
+    status.rcl5Ready = status.logisticsComplete;
+    status.rcl6Ready = status.specializationComplete;
     status.currentRoadmapReady = this.isCurrentRoadmapReady(status);
     status.futurePlanReady =
       !!futurePlan &&
@@ -160,7 +170,7 @@ module.exports = {
 
   getEmptyStatus() {
     return {
-      phase: "bootstrap_jr",
+      phase: "bootstrap",
       sites: 0,
 
       sourceContainersBuilt: 0,
@@ -200,6 +210,12 @@ module.exports = {
 
       roadCompletionRatio: 0,
 
+      foundationComplete: false,
+      developmentComplete: false,
+      logisticsComplete: false,
+      specializationComplete: false,
+      fortificationComplete: false,
+      commandComplete: false,
       bootstrapComplete: false,
       developingComplete: false,
       stableReady: false,
@@ -207,15 +223,15 @@ module.exports = {
       rcl6Ready: false,
       currentRoadmapReady: false,
       futurePlanReady: false,
-      roadmapPhase: "bootstrap_jr",
+      roadmapPhase: "bootstrap",
       futurePlan: this.getEmptyFuturePlan(),
     };
   },
 
-  hasEnoughRoadsForBootstrap(status, room) {
+  hasEnoughRoadsForFoundation(status, room) {
     // Developer note:
     // Migrated rooms may have useful but non-perfect road layouts.
-    // Treat bootstrap as complete once roads are "good enough" for operation.
+    // Treat foundation as complete once roads are "good enough" for operation.
     if (status.roadsNeeded <= 0) return true;
 
     if (status.roadsBuilt >= status.roadsNeeded) return true;
@@ -452,9 +468,17 @@ module.exports = {
   },
 
   isCurrentRoadmapReady(status) {
-    if (status.roadmapPhase === "rcl6") return status.rcl6Ready;
-    if (status.roadmapPhase === "rcl5") return status.rcl5Ready;
-    return status.stableReady;
+    if (status.roadmapPhase === "command") return status.commandComplete;
+    if (status.roadmapPhase === "fortification") {
+      return status.fortificationComplete;
+    }
+    if (status.roadmapPhase === "specialization") {
+      return status.specializationComplete;
+    }
+    if (status.roadmapPhase === "logistics") return status.logisticsComplete;
+    if (status.roadmapPhase === "development") return status.developmentComplete;
+    if (status.roadmapPhase === "foundation") return status.foundationComplete;
+    return true;
   },
 
   getFuturePlan(room) {

@@ -9,7 +9,7 @@ Purpose:
 
 Recovery behavior:
 - If the room loses its working economy, spawn JrWorkers first
-- JrWorkers are the emergency bootstrap role
+- JrWorkers are the emergency bootstrap/foundation role
 - Once energy flow returns, normal spawning resumes
 */
 
@@ -115,7 +115,7 @@ module.exports = {
       return requests;
     }
 
-    if (state.phase === "bootstrap_jr") {
+    if (state.phase === "bootstrap") {
       this.addDefenseRequests(room, state, requests, reaction);
 
       var desiredJrWorkers = config.CREEPS.jrWorkers;
@@ -140,7 +140,7 @@ module.exports = {
       return requests;
     }
 
-    if (state.phase === "bootstrap") {
+    if (state.phase === "foundation") {
       this.addDefenseRequests(room, state, requests, reaction);
 
       if (!this.areSourceContainersReady(state)) {
@@ -190,7 +190,7 @@ module.exports = {
   },
 
   isBootstrapPhase(phase) {
-    return phase === "bootstrap_jr" || phase === "bootstrap";
+    return phase === "bootstrap" || phase === "foundation";
   },
 
   areSourceContainersReady(state) {
@@ -451,9 +451,9 @@ module.exports = {
     var sites = state && state.sites ? state.sites.length : 0;
     var targetWork = 2;
 
-    if (state.phase === "bootstrap") {
+    if (state.phase === "foundation") {
       targetWork = Math.max(4, (state.sources ? state.sources.length : 1) * 2);
-    } else if (state.phase === "developing") {
+    } else if (state.phase === "development") {
       targetWork = 4 + Math.min(4, sites);
     } else {
       targetWork = state.infrastructure && state.infrastructure.hasStorage ? 2 : 4;
@@ -463,7 +463,7 @@ module.exports = {
       }
     }
 
-    if (state.buildStatus && !state.buildStatus.developingComplete) {
+    if (state.buildStatus && !state.buildStatus.developmentComplete) {
       targetWork += 1;
     }
 
@@ -474,13 +474,13 @@ module.exports = {
     var plan = bodies.plan("upgrader", room, { role: "upgrader" }, state);
     var workPerCreep = Math.max(1, plan.workParts || 1);
     var sites = state && state.sites ? state.sites.length : 0;
-    var targetWork = state.phase === "bootstrap" ? 2 : 4;
+    var targetWork = state.phase === "foundation" ? 2 : 4;
     var storageEnergy =
       state.infrastructure && state.infrastructure.storageEnergy
         ? state.infrastructure.storageEnergy
         : 0;
 
-    if (state.phase === "developing" && sites > 3) {
+    if (state.phase === "development" && sites > 3) {
       targetWork = 2;
     }
 
@@ -526,7 +526,7 @@ module.exports = {
   },
 
   getDesiredRepairs(room, state) {
-    if (state.phase === "bootstrap") return 0;
+    if (state.phase === "foundation") return 0;
 
     var plan = bodies.plan("repair", room, { role: "repair" }, state);
     var workPerCreep = Math.max(1, plan.workParts || 1);
@@ -543,7 +543,7 @@ module.exports = {
 
     if (
       targetWork === 0 &&
-      (state.phase === "developing" ||
+      (state.phase === "development" ||
         (room.controller && room.controller.level >= 4))
     ) {
       targetWork = 2;

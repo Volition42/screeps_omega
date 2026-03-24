@@ -28,9 +28,9 @@ module.exports = {
   HUD: {
     ENABLED: true,
     LEAN_MODE: true,
-    SUMMARY_INTERVAL: 2,
+    SUMMARY_INTERVAL: 1,
     CREEP_LABELS: true,
-    LABEL_INTERVAL: 5,
+    LABEL_INTERVAL: 1,
     CONSOLE_ENABLED: true,
     CONSOLE_INTERVAL: 50,
 
@@ -85,12 +85,13 @@ module.exports = {
   Construction System Controls
 
   Roadmap intent by phase:
-  - bootstrap_jr: no formal room buildout, just survive and upgrade
-  - bootstrap: source containers and road backbone
-  - developing: extensions, first tower, storage, internal roads, and defense
-  - stable: finish the current RCL core layout cleanly
-  - rcl5: add link backbone from the cached future plan
-  - rcl6: add terminal, extractor, and first lab cluster from the cached future plan
+  - bootstrap: no formal room buildout, just survive and upgrade
+  - foundation: source containers and road backbone
+  - development: extensions, first tower, storage, internal roads, and defense
+  - logistics: add the first link backbone from the cached future plan
+  - specialization: add terminal, extractor, and the first lab cluster
+  - fortification: stubbed late-game hardening phase for future RCL7 work
+  - command: stubbed finalization phase for future RCL8 work
 
   CPU policy:
   - live construction placement stays on the normal plan interval
@@ -261,7 +262,7 @@ module.exports = {
     CPU_SPIKE_MULTIPLIER: 1.5,
     BUCKET_WARNING_THRESHOLD: 8000,
     HEALTHY_REPORT_INTERVAL: 100,
-    DEBUG_CPU_CONSOLE_ENABLED: true,
+    DEBUG_CPU_CONSOLE_ENABLED: false,
     DEBUG_CPU_CONSOLE_INTERVAL: 100,
     DEBUG_CPU_SHOW_SECTIONS: true,
 

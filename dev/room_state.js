@@ -8,14 +8,20 @@ Purpose:
 - Attach synced construction/build status for HUD, directives, and planning
 
 Phase logic:
-- bootstrap_jr:
-    room below RCL2
 - bootstrap:
-    room is RCL2+ but bootstrap roadmap is not complete
-- developing:
-    bootstrap roadmap complete
-- stable:
-    development roadmap complete and room economy is healthy
+    room below RCL2 and still in direct-survival mode
+- foundation:
+    room is RCL2+ and is establishing containers + backbone roads
+- development:
+    core economy buildout is underway
+- logistics:
+    first link backbone is the active room focus
+- specialization:
+    advanced room infrastructure is the active room focus
+- fortification:
+    late-game hardening is the active room focus
+- command:
+    final room-completion phase reserved for future RCL8 work
 
 Important Notes:
 - Legacy / migrated rooms should still advance phases if their real operating
@@ -24,6 +30,7 @@ Important Notes:
 
 const config = require("config");
 const constructionStatus = require("construction_status");
+const roadmap = require("construction_roadmap");
 const defenseManager = require("defense_manager");
 const logisticsManager = require("logistics_manager");
 
@@ -89,39 +96,11 @@ module.exports = {
       controllerLevel: room.controller ? room.controller.level : 0,
     };
 
-    var phase = "bootstrap_jr";
-
-    if (room.controller && room.controller.level >= 2) {
-      phase = "bootstrap";
-    }
-
-    var provisionalState = this.createState(sharedState, phase);
+    var phase = room.controller && room.controller.level >= 2
+      ? "foundation"
+      : "bootstrap";
     var desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
-    var buildStatus = constructionStatus.getStatus(room, provisionalState);
-
-    if (
-      phase !== "bootstrap_jr" &&
-      this.shouldEnterDeveloping(
-        room,
-        provisionalState,
-        buildStatus,
-        desiredTotalHaulers,
-      )
-    ) {
-      phase = "developing";
-    }
-
-    if (
-      phase === "developing" &&
-      this.shouldEnterStable(
-        room,
-        provisionalState,
-        buildStatus,
-        desiredTotalHaulers,
-      )
-    ) {
-      phase = "stable";
-    }
+    phase = this.resolveRoomPhase(room, sharedState, phase, desiredTotalHaulers);
 
     var finalState = this.createState(sharedState, phase);
     finalState.defense = defenseManager.collect(room, finalState);
@@ -134,8 +113,69 @@ module.exports = {
 
   createState(sharedState, phase) {
     return Object.assign({}, sharedState, {
-      phase: phase,
+      phase: roadmap.normalizePhase(phase),
     });
+  },
+
+  resolveRoomPhase(room, sharedState, initialPhase, desiredTotalHaulers) {
+    var phase = roadmap.normalizePhase(initialPhase);
+    var provisionalState = this.createState(sharedState, phase);
+    var buildStatus = constructionStatus.getStatus(room, provisionalState);
+
+    if (
+      phase === "foundation" &&
+      this.shouldEnterDevelopment(
+        room,
+        provisionalState,
+        buildStatus,
+        desiredTotalHaulers,
+      )
+    ) {
+      phase = "development";
+      provisionalState = this.createState(sharedState, phase);
+      buildStatus = constructionStatus.getStatus(room, provisionalState);
+    }
+
+    if (
+      phase === "development" &&
+      this.shouldEnterLogistics(
+        room,
+        provisionalState,
+        buildStatus,
+        desiredTotalHaulers,
+      )
+    ) {
+      phase = "logistics";
+      provisionalState = this.createState(sharedState, phase);
+      buildStatus = constructionStatus.getStatus(room, provisionalState);
+    }
+
+    if (
+      phase === "logistics" &&
+      this.shouldEnterSpecialization(room, provisionalState, buildStatus)
+    ) {
+      phase = "specialization";
+      provisionalState = this.createState(sharedState, phase);
+      buildStatus = constructionStatus.getStatus(room, provisionalState);
+    }
+
+    if (
+      phase === "specialization" &&
+      this.shouldEnterFortification(room, provisionalState, buildStatus)
+    ) {
+      phase = "fortification";
+      provisionalState = this.createState(sharedState, phase);
+      buildStatus = constructionStatus.getStatus(room, provisionalState);
+    }
+
+    if (
+      phase === "fortification" &&
+      this.shouldEnterCommand(room, provisionalState, buildStatus)
+    ) {
+      phase = "command";
+    }
+
+    return phase;
   },
 
   getHomeCreeps(roomName) {
@@ -243,16 +283,16 @@ module.exports = {
     return bySourceId;
   },
 
-  shouldEnterDeveloping(room, state, buildStatus, desiredTotalHaulers) {
+  shouldEnterDevelopment(room, state, buildStatus, desiredTotalHaulers) {
     if (!this.hasDevelopingEconomyBackbone(state, desiredTotalHaulers)) {
       return false;
     }
 
-    if (buildStatus.bootstrapComplete) return true;
+    if (buildStatus.foundationComplete) return true;
 
     // Developer note:
     // Legacy room tolerance:
-    // if RCL3+ and the minimum economy backbone exists, treat the room as developing.
+    // if RCL3+ and the minimum economy backbone exists, treat the room as development-ready.
     if (
       room.controller &&
       room.controller.level >= 3 &&
@@ -297,12 +337,12 @@ module.exports = {
 
     if (!economyHealthy) return false;
 
-    if (buildStatus.developingComplete) return true;
+    if (buildStatus.developmentComplete) return true;
 
     // Developer note:
     // Legacy room tolerance:
     // if RCL3+, no construction backlog, required extensions/tower are in place,
-    // and economy is healthy, allow stable even if defense/roads are not perfect.
+    // and economy is healthy, allow logistics focus even if defense/roads are not perfect.
     if (
       room.controller &&
       room.controller.level >= 3 &&
@@ -314,6 +354,30 @@ module.exports = {
     }
 
     return false;
+  },
+
+  shouldEnterLogistics(room, state, buildStatus, desiredTotalHaulers) {
+    if (!room.controller || room.controller.level < 5) return false;
+
+    return this.shouldEnterStable(room, state, buildStatus, desiredTotalHaulers);
+  },
+
+  shouldEnterSpecialization(room, state, buildStatus) {
+    if (!room.controller || room.controller.level < 6) return false;
+
+    return !!buildStatus.logisticsComplete;
+  },
+
+  shouldEnterFortification(room, state, buildStatus) {
+    if (!room.controller || room.controller.level < 7) return false;
+
+    return !!buildStatus.specializationComplete;
+  },
+
+  shouldEnterCommand(room, state, buildStatus) {
+    if (!room.controller || room.controller.level < 8) return false;
+
+    return !!buildStatus.fortificationComplete;
   },
 
   getDesiredTotalHaulers(sources) {
@@ -396,8 +460,8 @@ module.exports = {
   },
 
   getEconomyStage(room, state, infrastructure) {
-    if (state.phase === "bootstrap_jr") return "bootstrap_jr";
-    if (state.phase === "bootstrap") return "container_bootstrap";
+    if (state.phase === "bootstrap") return "bootstrap";
+    if (state.phase === "foundation") return "container_bootstrap";
     if (!infrastructure.hasStorage) return "container_economy";
 
     if (

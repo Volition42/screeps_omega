@@ -16,7 +16,7 @@ Important Notes:
 - This manager places toward the roadmap, not just ad-hoc nearest spots
 - Site cap is respected at every stage
 - Status/phase truth lives in construction_status.js
-- RCL5/RCL6 structures are placed from a cached future plan to keep CPU stable
+- Advanced-phase structures are placed from a cached future plan to keep CPU stable
 */
 
 const config = require("config");

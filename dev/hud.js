@@ -116,9 +116,9 @@ module.exports = {
     const phase = state.phase || "bootstrap";
     const phaseColor = hostiles
       ? "#ff3b3b"
-      : phase === "bootstrap_jr"
+      : phase === "bootstrap"
         ? "#ffb347"
-        : phase === "stable"
+        : phase === "command"
           ? "#38ff9c"
           : "#39d5ff";
     const width = 17.8;
