@@ -157,6 +157,14 @@ Common operator tasks:
 - Change CPU logging in `STATS`.
 - Change defense behavior in `DEFENSE`.
 
+## Dev And Release Split
+
+- `dev/` is the primary development tree and the one used against the local Node 24 preview private server.
+- `release/` is the live-compatible tree intended for online deployment updates.
+- Private-server workflow details live in `docs/private_server_dev_workflow.md`.
+- The local browser client for that workflow runs separately on `http://127.0.0.1:8080/`.
+- The repo also includes private-server admin helpers for room reseed, tick-speed changes, and invader injection.
+
 ## Memory And Cache Use
 
 - Room runtime state is cached during the tick for reuse by managers.

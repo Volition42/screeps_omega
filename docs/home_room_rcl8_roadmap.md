@@ -13,6 +13,7 @@ These items are no longer active roadmap work:
 - Advanced structure placement is planned from a cached future-plan instead of being recomputed every tick.
 - Home-room defense construction now uses terrain-based exit choke planning with two-tile rampart gates.
 - HUD and directives read the shared construction status and future-plan state.
+- Late structure runtime now includes lab reaction selection, a conservative factory policy, and advanced haul tasks for labs, factory, power spawn, and nuker staging.
 
 ## Active Remaining Work
 
@@ -36,28 +37,35 @@ Done when:
 
 - At least one live room has successfully planned and built through `command` without manual structure relocation.
 
-## 2. Add Lab And Factory Operations
+## 2. Harden Late-Structure Operations
 
-Status: [ ] Not started
+Status: [~] Partially implemented in `dev/`
 
 Purpose:
 
-- Turn placed late-game structures into actual production infrastructure.
+- Turn placed late-game structures into stable production and supply infrastructure.
 
-Work items:
+Completed in code:
 
-- [ ] Add lab operating state for reaction selection and reagent routing.
-- [ ] Define a simple factory production policy for home-room use.
-- [ ] Extend hauler logistics so labs, terminal, factory, and power spawn can be supplied without breaking core energy flow.
-- [ ] Add status or HUD visibility for active lab/factory work once that logic exists.
+- [x] Lab operating state chooses a reaction and routes reagents to a valid lab cluster.
+- [x] Factory runtime supports a conservative home-room product policy.
+- [x] Advanced haulers can now service labs, factory, power spawn, and nuker staging.
+- [x] The active advanced haul task is chosen from a config priority list instead of hardcoded manager order.
+- [x] HUD now shows lab/factory state plus the chosen advanced haul task label.
+
+Remaining work:
+
+- [ ] Live-validate the haul priority order so advanced tasks do not interfere with core energy flow in awkward rooms.
+- [ ] Decide whether terminal balancing needs its own explicit late-ops task layer or should remain an implicit hub only.
+- [ ] Expand factory policy beyond the current conservative home-room baseline if more products become necessary.
 
 Done when:
 
-- Labs can run a chosen reaction cycle and the factory can produce from a defined policy without manual babysitting.
+- Labs and the factory can run unattended in live rooms without destabilizing hauling or requiring repeated manual tuning.
 
 ## 3. Add Observer, Power Processing, And Nuker Operations
 
-Status: [ ] Not started
+Status: [~] Supply staging exists, runtime use still missing
 
 Purpose:
 
@@ -68,11 +76,11 @@ Work items:
 - [ ] Add observer scan scheduling and a clear use for the vision it produces.
 - [ ] Add power spawn processing logic with safe resource gating.
 - [ ] Add nuker policy and operator controls so the structure is not just decorative.
-- [ ] Decide whether any of these systems need HUD or directive visibility.
+- [ ] Decide whether observer, power processing, or nuker actions need HUD or directive visibility.
 
 Done when:
 
-- Observer, power spawn, and nuker all have real runtime behavior beyond construction and build-status tracking.
+- Observer, power spawn, and nuker all have real runtime behavior beyond construction, build-status tracking, and supply staging.
 
 ## 4. Re-Measure CPU And Simplify Again
 
