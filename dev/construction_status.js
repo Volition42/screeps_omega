@@ -58,8 +58,6 @@ module.exports = {
     var extractorBuilt = this.countBuiltAndSites(room, state, STRUCTURE_EXTRACTOR);
     var labsNeeded = this.hasAction(plan, "labs")
       ? Math.min(
-          config.CONSTRUCTION.FUTURE_INFRA.LAB_CLUSTER_SIZE_AT_RCL6 ||
-            roadmap.getDesiredLabCount(room.controller.level),
           goals.advancedStructures && goals.advancedStructures.labs
             ? goals.advancedStructures.labs
             : roadmap.getDesiredLabCount(room.controller.level),
@@ -67,6 +65,38 @@ module.exports = {
         )
       : 0;
     var labsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_LAB);
+    var factoryNeeded = this.getStructureGoal(
+      room,
+      plan,
+      "factory",
+      STRUCTURE_FACTORY,
+    );
+    var factoryBuilt = this.countBuiltAndSites(room, state, STRUCTURE_FACTORY);
+    var observerNeeded = this.getStructureGoal(
+      room,
+      plan,
+      "observer",
+      STRUCTURE_OBSERVER,
+    );
+    var observerBuilt = this.countBuiltAndSites(room, state, STRUCTURE_OBSERVER);
+    var powerSpawnNeeded = this.getStructureGoal(
+      room,
+      plan,
+      "powerSpawn",
+      STRUCTURE_POWER_SPAWN,
+    );
+    var powerSpawnBuilt = this.countBuiltAndSites(
+      room,
+      state,
+      STRUCTURE_POWER_SPAWN,
+    );
+    var nukerNeeded = this.getStructureGoal(
+      room,
+      plan,
+      "nuker",
+      STRUCTURE_NUKER,
+    );
+    var nukerBuilt = this.countBuiltAndSites(room, state, STRUCTURE_NUKER);
 
     var roadsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_ROAD);
     var roadsNeeded = this.getRoadGoal(room, state, plan, anchor, futurePlan);
@@ -112,6 +142,18 @@ module.exports = {
       labsBuilt: labsBuilt,
       labsNeeded: labsNeeded,
 
+      factoryBuilt: factoryBuilt,
+      factoryNeeded: factoryNeeded,
+
+      observerBuilt: observerBuilt,
+      observerNeeded: observerNeeded,
+
+      powerSpawnBuilt: powerSpawnBuilt,
+      powerSpawnNeeded: powerSpawnNeeded,
+
+      nukerBuilt: nukerBuilt,
+      nukerNeeded: nukerNeeded,
+
       roadsBuilt: roadsBuilt,
       roadsNeeded: roadsNeeded,
 
@@ -147,8 +189,14 @@ module.exports = {
       status.terminalBuilt >= status.terminalNeeded &&
       status.extractorBuilt >= status.extractorNeeded &&
       status.labsBuilt >= status.labsNeeded;
-    status.fortificationComplete = status.specializationComplete;
-    status.commandComplete = status.fortificationComplete;
+    status.fortificationComplete =
+      status.specializationComplete &&
+      status.factoryBuilt >= status.factoryNeeded;
+    status.commandComplete =
+      status.fortificationComplete &&
+      status.observerBuilt >= status.observerNeeded &&
+      status.powerSpawnBuilt >= status.powerSpawnNeeded &&
+      status.nukerBuilt >= status.nukerNeeded;
 
     // Temporary compatibility aliases while downstream callers migrate to the
     // new phase vocabulary.
@@ -163,7 +211,11 @@ module.exports = {
       (!status.linksNeeded || !!futurePlan.linkPlanReady) &&
       (!status.terminalNeeded || !!futurePlan.terminalPlanReady) &&
       (!status.extractorNeeded || !!futurePlan.extractorPlanReady) &&
-      (!status.labsNeeded || !!futurePlan.labPlanReady);
+      (!status.labsNeeded || !!futurePlan.labPlanReady) &&
+      (!status.factoryNeeded || !!futurePlan.factoryPlanReady) &&
+      (!status.observerNeeded || !!futurePlan.observerPlanReady) &&
+      (!status.powerSpawnNeeded || !!futurePlan.powerSpawnPlanReady) &&
+      (!status.nukerNeeded || !!futurePlan.nukerPlanReady);
 
     return status;
   },
@@ -198,6 +250,18 @@ module.exports = {
 
       labsBuilt: 0,
       labsNeeded: 0,
+
+      factoryBuilt: 0,
+      factoryNeeded: 0,
+
+      observerBuilt: 0,
+      observerNeeded: 0,
+
+      powerSpawnBuilt: 0,
+      powerSpawnNeeded: 0,
+
+      nukerBuilt: 0,
+      nukerNeeded: 0,
 
       roadsBuilt: 0,
       roadsNeeded: 0,
@@ -467,6 +531,15 @@ module.exports = {
     );
   },
 
+  getStructureGoal(room, plan, action, structureType) {
+    if (!this.hasAction(plan, action)) return 0;
+
+    return roadmap.getDesiredStructureCount(
+      room.controller ? room.controller.level : 0,
+      structureType,
+    );
+  },
+
   isCurrentRoadmapReady(status) {
     if (status.roadmapPhase === "command") return status.commandComplete;
     if (status.roadmapPhase === "fortification") {
@@ -501,10 +574,18 @@ module.exports = {
       terminalPlanReady: false,
       extractorPlanReady: false,
       labPlanReady: false,
+      factoryPlanReady: false,
+      observerPlanReady: false,
+      powerSpawnPlanReady: false,
+      nukerPlanReady: false,
       links: null,
       terminal: null,
       extractor: null,
       labs: null,
+      factory: null,
+      observer: null,
+      powerSpawn: null,
+      nuker: null,
     };
   },
 };

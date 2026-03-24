@@ -95,7 +95,7 @@ module.exports = {
 
   CPU policy:
   - live construction placement stays on the normal plan interval
-  - advanced RCL5/RCL6 layout planning is cached and rebuilt slowly
+  - advanced phase layout planning is cached and rebuilt slowly
   - cached advanced plans are reused for actual site placement
 
   MAX_SITES
@@ -129,8 +129,12 @@ module.exports = {
       LINK_SOURCE_RANGE: 2,
       STORAGE_LINK_RANGE: 2,
       TERMINAL_RANGE_FROM_STORAGE: 2,
-      LAB_RANGE_FROM_STORAGE: 4,
+      LAB_RANGE_FROM_STORAGE: 6,
       LAB_CLUSTER_SIZE_AT_RCL6: 3,
+      FACTORY_RANGE_FROM_STORAGE: 3,
+      POWER_SPAWN_RANGE_FROM_STORAGE: 4,
+      OBSERVER_RANGE_FROM_ANCHOR: 6,
+      NUKER_RANGE_FROM_ANCHOR: 7,
     },
   },
 

@@ -103,6 +103,22 @@ module.exports = {
           this.placeLabs(context);
           break;
 
+        case "factory":
+          this.placeFactory(context);
+          break;
+
+        case "observer":
+          this.placeObserver(context);
+          break;
+
+        case "powerSpawn":
+          this.placePowerSpawn(context);
+          break;
+
+        case "nuker":
+          this.placeNuker(context);
+          break;
+
         case "defense":
           this.placeDefense(context);
           break;
@@ -212,9 +228,40 @@ module.exports = {
     var room = context.room;
     var storagePos = this.getStoragePlanningPosition(context);
     var linkPlan = this.buildLinkPlan(context, plan, storagePos);
-    var terminalPlan = this.buildTerminalPlan(context, plan, storagePos, linkPlan);
+    var used = {};
+    var terminalPlan = this.buildTerminalPlan(
+      context,
+      plan,
+      storagePos,
+      linkPlan,
+      used,
+    );
     var extractorPlan = this.buildExtractorPlan(context, plan);
-    var labPlan = this.buildLabPlan(context, plan, storagePos, terminalPlan);
+    var labPlan = this.buildLabPlan(
+      context,
+      plan,
+      storagePos,
+      terminalPlan,
+      used,
+    );
+    var factoryPlan = this.buildFactoryPlan(
+      context,
+      plan,
+      storagePos,
+      terminalPlan,
+      linkPlan,
+      used,
+    );
+    var powerSpawnPlan = this.buildPowerSpawnPlan(
+      context,
+      plan,
+      storagePos,
+      terminalPlan,
+      factoryPlan,
+      used,
+    );
+    var observerPlan = this.buildObserverPlan(context, plan, used);
+    var nukerPlan = this.buildNukerPlan(context, plan, used);
 
     return {
       tick: Game.time,
@@ -224,10 +271,18 @@ module.exports = {
       terminalPlanReady: !!terminalPlan.ready,
       extractorPlanReady: !!extractorPlan.ready,
       labPlanReady: !!labPlan.ready,
+      factoryPlanReady: !!factoryPlan.ready,
+      observerPlanReady: !!observerPlan.ready,
+      powerSpawnPlanReady: !!powerSpawnPlan.ready,
+      nukerPlanReady: !!nukerPlan.ready,
       links: linkPlan,
       terminal: terminalPlan,
       extractor: extractorPlan,
       labs: labPlan,
+      factory: factoryPlan,
+      observer: observerPlan,
+      powerSpawn: powerSpawnPlan,
+      nuker: nukerPlan,
     };
   },
 
@@ -334,7 +389,7 @@ module.exports = {
     };
   },
 
-  buildTerminalPlan(context, plan, storagePos, linkPlan) {
+  buildTerminalPlan(context, plan, storagePos, linkPlan, used) {
     var advancedGoals =
       plan.goals && plan.goals.advancedStructures
         ? plan.goals.advancedStructures
@@ -348,7 +403,7 @@ module.exports = {
       };
     }
 
-    var used = {};
+    used = used || {};
     this.markSerializedPosUsed(used, linkPlan && linkPlan.controller);
     this.markSerializedPosUsed(used, linkPlan && linkPlan.storage);
     if (linkPlan && linkPlan.sources) {
@@ -400,16 +455,12 @@ module.exports = {
     };
   },
 
-  buildLabPlan(context, plan, storagePos, terminalPlan) {
+  buildLabPlan(context, plan, storagePos, terminalPlan, used) {
     var advancedGoals =
       plan.goals && plan.goals.advancedStructures
         ? plan.goals.advancedStructures
         : {};
     var targetCount = Math.min(
-      config.CONSTRUCTION.FUTURE_INFRA.LAB_CLUSTER_SIZE_AT_RCL6 ||
-        roadmap.getDesiredLabCount(
-          context.room.controller ? context.room.controller.level : 0,
-        ),
       advancedGoals.labs || 0,
       roadmap.getDesiredLabCount(
         context.room.controller ? context.room.controller.level : 0,
@@ -425,7 +476,7 @@ module.exports = {
       };
     }
 
-    var used = {};
+    used = used || {};
     this.markSerializedPosUsed(used, terminalPlan && terminalPlan.pos);
     var stampOrigin = storagePos
       ? this.pickPreferredStorageSlot(
@@ -439,7 +490,7 @@ module.exports = {
     var centerPos = storagePos || (context.state.spawns && context.state.spawns[0]
       ? context.state.spawns[0].pos
       : null);
-    var positions = stampOrigin
+    var positions = stampOrigin && targetCount <= 3
       ? this.getStampLabPositions(
           context,
           stampOrigin,
@@ -450,13 +501,14 @@ module.exports = {
       : [];
 
     if (positions.length < targetCount) {
-      positions = this.pickClusterPositions(
+      positions = this.pickLabCompoundPositions(
         context,
         centerPos,
         targetCount,
-        config.CONSTRUCTION.FUTURE_INFRA.LAB_RANGE_FROM_STORAGE || 4,
+        config.CONSTRUCTION.FUTURE_INFRA.LAB_RANGE_FROM_STORAGE || 6,
         used,
       );
+      stampOrigin = null;
     }
 
     return {
@@ -465,6 +517,188 @@ module.exports = {
       targetCount: targetCount,
       origin: this.serializePos(stampOrigin),
       positions: _.map(positions, this.serializePos, this),
+    };
+  },
+
+  buildFactoryPlan(context, plan, storagePos, terminalPlan, linkPlan, used) {
+    return this.buildAdvancedUtilityStructurePlan(
+      context,
+      plan,
+      "factory",
+      storagePos,
+      used,
+      {
+        storageTag: "utility_slot",
+        storageRange:
+          config.CONSTRUCTION.FUTURE_INFRA.FACTORY_RANGE_FROM_STORAGE || 3,
+        block: [
+          terminalPlan && terminalPlan.pos,
+          linkPlan && linkPlan.storage,
+        ],
+      },
+    );
+  },
+
+  buildPowerSpawnPlan(context, plan, storagePos, terminalPlan, factoryPlan, used) {
+    return this.buildAdvancedUtilityStructurePlan(
+      context,
+      plan,
+      "powerSpawn",
+      storagePos,
+      used,
+      {
+        storageTag: "utility_slot",
+        storageRange:
+          config.CONSTRUCTION.FUTURE_INFRA.POWER_SPAWN_RANGE_FROM_STORAGE || 4,
+        anchorTag: "utility_slot",
+        anchorRange:
+          config.CONSTRUCTION.FUTURE_INFRA.POWER_SPAWN_RANGE_FROM_STORAGE || 4,
+        block: [
+          terminalPlan && terminalPlan.pos,
+          factoryPlan && factoryPlan.pos,
+        ],
+      },
+    );
+  },
+
+  buildObserverPlan(context, plan, used) {
+    return this.buildAdvancedAnchorStructurePlan(
+      context,
+      plan,
+      "observer",
+      used,
+      {
+        anchorTag: "hub_slot",
+        anchorRange:
+          config.CONSTRUCTION.FUTURE_INFRA.OBSERVER_RANGE_FROM_ANCHOR || 6,
+      },
+    );
+  },
+
+  buildNukerPlan(context, plan, used) {
+    return this.buildAdvancedAnchorStructurePlan(
+      context,
+      plan,
+      "nuker",
+      used,
+      {
+        anchorTag: "hub_slot",
+        anchorRange:
+          config.CONSTRUCTION.FUTURE_INFRA.NUKER_RANGE_FROM_ANCHOR || 7,
+      },
+    );
+  },
+
+  buildAdvancedUtilityStructurePlan(context, plan, action, storagePos, used, options) {
+    var lateGoals =
+      plan.goals && plan.goals.lateGameStructures
+        ? plan.goals.lateGameStructures
+        : {};
+
+    if (!this.hasPlanAction(plan, action) || !lateGoals[action]) {
+      return {
+        enabled: false,
+        ready: false,
+        pos: null,
+      };
+    }
+
+    used = used || {};
+    options = options || {};
+    this.markSerializedListUsed(used, options.block);
+
+    var pos = storagePos && options.storageTag
+      ? this.pickPreferredStorageSlot(
+          context,
+          storagePos,
+          used,
+          options.storageTag,
+        )
+      : null;
+
+    if (!pos && storagePos) {
+      pos = this.pickOpenPositionNear(
+        context,
+        storagePos,
+        1,
+        options.storageRange || 3,
+        used,
+      );
+    }
+
+    if (!pos && options.anchorTag) {
+      var fallbackCenter = storagePos || (context.state.spawns && context.state.spawns[0]
+        ? context.state.spawns[0].pos
+        : null);
+      pos = this.pickPreferredAnchorSlot(
+        context,
+        fallbackCenter,
+        used,
+        options.anchorTag,
+      );
+    }
+
+    if (!pos && options.anchorRange) {
+      var anchor = this.getAnchorOrigin(context);
+      pos = anchor
+        ? this.pickOpenPositionNear(
+            context,
+            new RoomPosition(anchor.x, anchor.y, anchor.roomName),
+            2,
+            options.anchorRange,
+            used,
+          )
+        : null;
+    }
+
+    return {
+      enabled: true,
+      ready: !!pos,
+      pos: this.serializePos(pos),
+    };
+  },
+
+  buildAdvancedAnchorStructurePlan(context, plan, action, used, options) {
+    var lateGoals =
+      plan.goals && plan.goals.lateGameStructures
+        ? plan.goals.lateGameStructures
+        : {};
+
+    if (!this.hasPlanAction(plan, action) || !lateGoals[action]) {
+      return {
+        enabled: false,
+        ready: false,
+        pos: null,
+      };
+    }
+
+    used = used || {};
+    options = options || {};
+    var anchor = this.getAnchorOrigin(context);
+    var anchorPos = anchor
+      ? new RoomPosition(anchor.x, anchor.y, anchor.roomName)
+      : null;
+    var pos = this.pickPreferredAnchorSlot(
+      context,
+      anchorPos,
+      used,
+      options.anchorTag,
+    );
+
+    if (!pos && anchorPos) {
+      pos = this.pickOpenPositionNear(
+        context,
+        anchorPos,
+        2,
+        options.anchorRange || 6,
+        used,
+      );
+    }
+
+    return {
+      enabled: true,
+      ready: !!pos,
+      pos: this.serializePos(pos),
     };
   },
 
@@ -590,6 +824,91 @@ module.exports = {
     return fallback;
   },
 
+  pickLabCompoundPositions(context, centerPos, count, maxRange, used) {
+    if (!centerPos || count <= 0) return [];
+    if (count <= 3) {
+      return this.pickClusterPositions(context, centerPos, count, maxRange, used);
+    }
+
+    var candidates = this.getNearbyPositions(centerPos, 1, maxRange);
+    var open = [];
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (this.isPlanningPositionOpen(context, candidates[i], used)) {
+        open.push(candidates[i]);
+      }
+    }
+
+    var bestPair = null;
+    var bestFollowers = [];
+    var bestCapacity = 0;
+    var bestDistanceScore = Infinity;
+
+    for (var a = 0; a < open.length; a++) {
+      for (var b = a + 1; b < open.length; b++) {
+        if (open[a].getRangeTo(open[b]) > 2) continue;
+
+        var followers = [];
+        for (var c = 0; c < open.length; c++) {
+          if (c === a || c === b) continue;
+          if (
+            open[c].getRangeTo(open[a]) <= 2 &&
+            open[c].getRangeTo(open[b]) <= 2
+          ) {
+            followers.push(open[c]);
+          }
+        }
+
+        var capacity = 2 + followers.length;
+        var distanceScore =
+          centerPos.getRangeTo(open[a]) + centerPos.getRangeTo(open[b]);
+
+        if (
+          !bestPair ||
+          capacity > bestCapacity ||
+          (capacity === bestCapacity && distanceScore < bestDistanceScore)
+        ) {
+          bestPair = [open[a], open[b]];
+          bestFollowers = followers;
+          bestCapacity = capacity;
+          bestDistanceScore = distanceScore;
+        }
+      }
+    }
+
+    if (!bestPair) {
+      return this.pickClusterPositions(context, centerPos, count, maxRange, used);
+    }
+
+    bestFollowers.sort(function (left, right) {
+      var leftScore =
+        left.getRangeTo(bestPair[0]) +
+        left.getRangeTo(bestPair[1]) +
+        centerPos.getRangeTo(left);
+      var rightScore =
+        right.getRangeTo(bestPair[0]) +
+        right.getRangeTo(bestPair[1]) +
+        centerPos.getRangeTo(right);
+      return leftScore - rightScore;
+    });
+
+    var selection = [bestPair[0], bestPair[1]];
+
+    for (
+      var j = 0;
+      j < bestFollowers.length && selection.length < count;
+      j++
+    ) {
+      selection.push(bestFollowers[j]);
+    }
+
+    for (var k = 0; k < selection.length; k++) {
+      this.markPosUsed(used, selection[k]);
+    }
+
+    return selection;
+  },
+
   getStampLabPositions(context, origin, stampName, count, used) {
     var positions = [];
 
@@ -676,6 +995,14 @@ module.exports = {
   markSerializedPosUsed(used, pos) {
     if (!pos) return;
     used[pos.x + ":" + pos.y] = true;
+  },
+
+  markSerializedListUsed(used, positions) {
+    if (!positions || positions.length === 0) return;
+
+    for (var i = 0; i < positions.length; i++) {
+      this.markSerializedPosUsed(used, positions[i]);
+    }
   },
 
   toPosKey(pos) {
@@ -813,6 +1140,7 @@ module.exports = {
 
     var futurePlan = this.getCachedFuturePlan(context);
     var labPlan = futurePlan && futurePlan.labs ? futurePlan.labs : null;
+    var roadAnchor = null;
     if (!labPlan || !labPlan.enabled || !labPlan.positions) return;
 
     if (labPlan.origin) {
@@ -821,6 +1149,13 @@ module.exports = {
         this.deserializePos(labPlan.origin),
         "lab_cluster_v1",
       );
+    } else {
+      var storagePos = futurePlan && futurePlan.storagePos
+        ? this.deserializePos(futurePlan.storagePos)
+        : this.getStoragePlanningPosition(context);
+      roadAnchor = storagePos || (context.state.spawns && context.state.spawns[0]
+        ? context.state.spawns[0].pos
+        : null);
     }
 
     this.placePlannedStructureList(
@@ -829,6 +1164,108 @@ module.exports = {
       STRUCTURE_LAB,
       status.labsNeeded - status.labsBuilt,
     );
+
+    if (!labPlan.origin && !this.isSiteCapReached(context)) {
+      if (roadAnchor) {
+        for (var i = 0; i < labPlan.positions.length; i++) {
+          if (this.isSiteCapReached(context)) return;
+
+          var labPos = this.deserializePos(labPlan.positions[i]);
+          if (!labPos) continue;
+          this.placeRoadPath(context, roadAnchor, labPos, 1);
+        }
+      }
+    }
+  },
+
+  placeFactory(context) {
+    this.placeSinglePlannedAdvancedStructure(context, {
+      minControllerLevel: 7,
+      structureType: STRUCTURE_FACTORY,
+      planKey: "factory",
+      builtKey: "factoryBuilt",
+      neededKey: "factoryNeeded",
+      roadOrigin: "storage",
+    });
+  },
+
+  placeObserver(context) {
+    this.placeSinglePlannedAdvancedStructure(context, {
+      minControllerLevel: 8,
+      structureType: STRUCTURE_OBSERVER,
+      planKey: "observer",
+      builtKey: "observerBuilt",
+      neededKey: "observerNeeded",
+      roadOrigin: "anchor",
+    });
+  },
+
+  placePowerSpawn(context) {
+    this.placeSinglePlannedAdvancedStructure(context, {
+      minControllerLevel: 8,
+      structureType: STRUCTURE_POWER_SPAWN,
+      planKey: "powerSpawn",
+      builtKey: "powerSpawnBuilt",
+      neededKey: "powerSpawnNeeded",
+      roadOrigin: "storage",
+    });
+  },
+
+  placeNuker(context) {
+    this.placeSinglePlannedAdvancedStructure(context, {
+      minControllerLevel: 8,
+      structureType: STRUCTURE_NUKER,
+      planKey: "nuker",
+      builtKey: "nukerBuilt",
+      neededKey: "nukerNeeded",
+      roadOrigin: "anchor",
+    });
+  },
+
+  placeSinglePlannedAdvancedStructure(context, options) {
+    var room = context.room;
+    if (!room.controller || room.controller.level < options.minControllerLevel) {
+      return;
+    }
+
+    var status = context.buildStatus;
+    if (!status || status[options.builtKey] >= status[options.neededKey]) return;
+
+    var futurePlan = this.getCachedFuturePlan(context);
+    var structurePlan = futurePlan && futurePlan[options.planKey]
+      ? futurePlan[options.planKey]
+      : null;
+    if (!structurePlan || !structurePlan.enabled || !structurePlan.pos) return;
+
+    var pos = this.deserializePos(structurePlan.pos);
+    if (!pos) return;
+
+    var roadOrigin = null;
+    if (options.roadOrigin === "storage") {
+      roadOrigin = futurePlan && futurePlan.storagePos
+        ? this.deserializePos(futurePlan.storagePos)
+        : this.getStoragePlanningPosition(context);
+    } else if (options.roadOrigin === "anchor") {
+      var anchor = this.getAnchorOrigin(context);
+      roadOrigin = anchor
+        ? new RoomPosition(anchor.x, anchor.y, anchor.roomName)
+        : null;
+    }
+
+    if (!roadOrigin && context.state.spawns && context.state.spawns[0]) {
+      roadOrigin = context.state.spawns[0].pos;
+    }
+
+    this.placePlannedStructureList(
+      context,
+      [structurePlan.pos],
+      options.structureType,
+      status[options.neededKey] - status[options.builtKey],
+    );
+
+    if (roadOrigin && !this.isSiteCapReached(context)) {
+      this.placeRoadPath(context, roadOrigin, pos, 1);
+    }
   },
 
   placePlannedStructureList(context, serializedPositions, structureType, limit) {

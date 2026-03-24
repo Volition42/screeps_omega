@@ -231,6 +231,8 @@ module.exports = {
       { x: anchor.x + 4, y: anchor.y + 4, roomName: anchor.roomName },
       { x: anchor.x - 4, y: anchor.y + 4, roomName: anchor.roomName },
       { x: anchor.x - 4, y: anchor.y - 4, roomName: anchor.roomName },
+      { x: anchor.x, y: anchor.y - 6, roomName: anchor.roomName },
+      { x: anchor.x, y: anchor.y + 6, roomName: anchor.roomName },
     ]);
   },
 
