@@ -16,6 +16,7 @@ Important Notes:
 const config = require("config");
 const roadmap = require("construction_roadmap");
 const stamps = require("stamp_library");
+const defenseLayout = require("defense_layout");
 
 module.exports = {
   getStatus(room, state) {
@@ -388,59 +389,16 @@ module.exports = {
   },
 
   getDefenseGoal(room, state) {
-    var spawn = state.spawns && state.spawns[0];
-    var controller = room.controller;
+    var plan = defenseLayout.getPlan(room, state);
 
-    if (!spawn || !controller || !config.DEFENSE.ENABLED) {
+    if (!plan) {
       return { walls: 0, ramparts: 0 };
     }
 
-    if (controller.level < config.DEFENSE.MIN_CONTROLLER_LEVEL) {
-      return { walls: 0, ramparts: 0 };
-    }
-
-    var paddingX = config.DEFENSE.PADDING_X || 5;
-    var paddingY = config.DEFENSE.PADDING_Y || 5;
-
-    var minX = Math.max(2, Math.min(spawn.pos.x, controller.pos.x) - paddingX);
-    var maxX = Math.min(47, Math.max(spawn.pos.x, controller.pos.x) + paddingX);
-    var minY = Math.max(2, Math.min(spawn.pos.y, controller.pos.y) - paddingY);
-    var maxY = Math.min(47, Math.max(spawn.pos.y, controller.pos.y) + paddingY);
-
-    var terrain = room.getTerrain();
-    var walls = 0;
-    var ramparts = 0;
-
-    var northGateX = Math.floor((minX + maxX) / 2);
-    var southGateX = northGateX;
-    var westGateY = Math.floor((minY + maxY) / 2);
-    var eastGateY = westGateY;
-
-    for (var x = minX; x <= maxX; x++) {
-      if (terrain.get(x, minY) !== TERRAIN_MASK_WALL) {
-        if (x === northGateX) ramparts++;
-        else walls++;
-      }
-
-      if (terrain.get(x, maxY) !== TERRAIN_MASK_WALL) {
-        if (x === southGateX) ramparts++;
-        else walls++;
-      }
-    }
-
-    for (var y = minY + 1; y <= maxY - 1; y++) {
-      if (terrain.get(minX, y) !== TERRAIN_MASK_WALL) {
-        if (y === westGateY) ramparts++;
-        else walls++;
-      }
-
-      if (terrain.get(maxX, y) !== TERRAIN_MASK_WALL) {
-        if (y === eastGateY) ramparts++;
-        else walls++;
-      }
-    }
-
-    return { walls: walls, ramparts: ramparts };
+    return {
+      walls: plan.walls.length,
+      ramparts: plan.gates.length,
+    };
   },
 
   hasAction(plan, action) {

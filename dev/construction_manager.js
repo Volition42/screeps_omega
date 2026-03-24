@@ -25,6 +25,7 @@ const constructionStatus = require("construction_status");
 const roadmap = require("construction_roadmap");
 const statsManager = require("stats_manager");
 const stamps = require("stamp_library");
+const defenseLayout = require("defense_layout");
 
 module.exports = {
   plan(room, state, profiler, roomLabelPrefix) {
@@ -1121,7 +1122,14 @@ module.exports = {
 
   tryPlaceStructureSite(context, pos, structureType) {
     var room = context.room;
-    if (pos.x < 2 || pos.x > 47 || pos.y < 2 || pos.y > 47) return false;
+    var isDefenseStructure =
+      structureType === STRUCTURE_WALL || structureType === STRUCTURE_RAMPART;
+    var minCoord = isDefenseStructure ? 1 : 2;
+    var maxCoord = isDefenseStructure ? 48 : 47;
+
+    if (pos.x < minCoord || pos.x > maxCoord || pos.y < minCoord || pos.y > maxCoord) {
+      return false;
+    }
     if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) return false;
 
     var structures = pos.lookFor(LOOK_STRUCTURES);
@@ -1160,59 +1168,6 @@ module.exports = {
   },
 
   getDefenseRing(context) {
-    var room = context.room;
-    var state = context.state;
-    var spawn = state.spawns[0];
-    var controller = room.controller;
-    if (!spawn || !controller) return null;
-
-    var paddingX = config.DEFENSE.PADDING_X;
-    var paddingY = config.DEFENSE.PADDING_Y;
-
-    var minX = Math.max(2, Math.min(spawn.pos.x, controller.pos.x) - paddingX);
-    var maxX = Math.min(47, Math.max(spawn.pos.x, controller.pos.x) + paddingX);
-    var minY = Math.max(2, Math.min(spawn.pos.y, controller.pos.y) - paddingY);
-    var maxY = Math.min(47, Math.max(spawn.pos.y, controller.pos.y) + paddingY);
-
-    var terrain = context.terrain;
-    var walls = [];
-    var gates = [];
-
-    var northGateX = Math.floor((minX + maxX) / 2);
-    var southGateX = northGateX;
-    var westGateY = Math.floor((minY + maxY) / 2);
-    var eastGateY = westGateY;
-
-    for (var x = minX; x <= maxX; x++) {
-      var top = new RoomPosition(x, minY, room.name);
-      var bottom = new RoomPosition(x, maxY, room.name);
-
-      if (terrain.get(top.x, top.y) !== TERRAIN_MASK_WALL) {
-        if (x === northGateX) gates.push(top);
-        else walls.push(top);
-      }
-
-      if (terrain.get(bottom.x, bottom.y) !== TERRAIN_MASK_WALL) {
-        if (x === southGateX) gates.push(bottom);
-        else walls.push(bottom);
-      }
-    }
-
-    for (var y = minY + 1; y <= maxY - 1; y++) {
-      var left = new RoomPosition(minX, y, room.name);
-      var right = new RoomPosition(maxX, y, room.name);
-
-      if (terrain.get(left.x, left.y) !== TERRAIN_MASK_WALL) {
-        if (y === westGateY) gates.push(left);
-        else walls.push(left);
-      }
-
-      if (terrain.get(right.x, right.y) !== TERRAIN_MASK_WALL) {
-        if (y === eastGateY) gates.push(right);
-        else walls.push(right);
-      }
-    }
-
-    return { walls: walls, gates: gates };
+    return defenseLayout.getPlan(context.room, context.state);
   },
 };
