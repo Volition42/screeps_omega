@@ -176,11 +176,10 @@ module.exports = {
   DEFENSE: {
     ENABLED: true,
     MIN_CONTROLLER_LEVEL: 2,
-    CORE_PADDING: 2,
-    MAX_CORE_RANGE_FROM_SPAWN: 8,
+    MAX_CHOKE_DEPTH: 8,
     // Developer note:
     // Wall and rampart upkeep scales by controller level so maintenance work
-    // rises with room maturity without changing gate planning behavior.
+    // rises with room maturity without changing choke or gate planning.
     maintenanceByControllerLevel: {
       2: 5000,
       3: 10000,
