@@ -661,6 +661,13 @@ function createCreep(name, role, x, y, options) {
     },
   };
 
+  Object.defineProperty(creep, "room", {
+    enumerable: false,
+    get() {
+      return currentRuntime.rooms[this.pos.roomName] || null;
+    },
+  });
+
   currentRuntime.objectsById[creep.id] = creep;
   Game.creeps[creep.name] = creep;
   return creep;
@@ -833,6 +840,7 @@ const constructionManager = require("construction_manager");
 const constructionStatus = require("construction_status");
 const advancedStructureManager = require("advanced_structure_manager");
 const defenseLayout = require("defense_layout");
+const utils = require("utils");
 
 function getOccupiedKey(x, y) {
   return `${x}:${y}`;
@@ -1072,6 +1080,60 @@ function runFoundationScenario() {
 
   assert(containerSites.length === 2, `expected 2 source container sites, got ${containerSites.length}`);
   assert(siteTypes.includes(STRUCTURE_ROAD), "foundation should also place road sites");
+}
+
+function runBootstrapHarvestSpreadScenario() {
+  const room = buildRoomScenario("VAL_BOOTSTRAP_SPREAD", {
+    tick: 250,
+    controllerLevel: 1,
+    spawnEnergy: 0,
+    energyAvailable: 0,
+    creeps: [
+      { name: "jr1", role: "jrworker", x: 25, y: 24 },
+      { name: "jr2", role: "jrworker", x: 25, y: 25 },
+      { name: "jr3", role: "jrworker", x: 25, y: 26 },
+    ],
+  });
+
+  const source = room.find(FIND_SOURCES)[0];
+  const creeps = room.find(FIND_MY_CREEPS);
+
+  const keys = [];
+  for (let i = 0; i < creeps.length; i++) {
+    creeps[i].memory.harvestSourceId = source.id;
+    const pos = utils.getAssignedHarvestPosition(creeps[i], source);
+    assert(pos, `expected harvest position for ${creeps[i].name}`);
+    assert(pos.getRangeTo(source) <= 1, "assigned harvest position must stay adjacent to source");
+    keys.push(utils.getHarvestPositionKey(pos));
+  }
+
+  const uniqueKeys = Array.from(new Set(keys));
+  assert(
+    uniqueKeys.length === creeps.length,
+    `expected unique harvest positions, got ${keys.join(",")}`,
+  );
+}
+
+function runBootstrapSpawnCapScenario() {
+  const room = buildRoomScenario("VAL_BOOTSTRAP_SPAWN_CAP", {
+    tick: 275,
+    controllerLevel: 1,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    creeps: [
+      { name: "jr1", role: "jrworker", x: 24, y: 25 },
+      { name: "jr2", role: "jrworker", x: 26, y: 25 },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const requests = spawnManager.getSpawnRequests(room, state);
+
+  assert(state.phase === "bootstrap", `expected bootstrap, got ${state.phase}`);
+  assert(
+    !requests.some((request) => request.role === "jrworker"),
+    "bootstrap at RCL1 should cap the emergency jrworker count instead of endlessly refilling the spawn",
+  );
 }
 
 function runDevelopmentScenario() {
@@ -1328,6 +1390,8 @@ function main() {
   const scenarios = [
     ["bootstrap", runBootstrapScenario],
     ["foundation", runFoundationScenario],
+    ["bootstrap_harvest_spread", runBootstrapHarvestSpreadScenario],
+    ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
     ["development", runDevelopmentScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],

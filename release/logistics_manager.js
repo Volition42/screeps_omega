@@ -45,7 +45,12 @@ module.exports = {
       return sourceContainer;
     }
 
-    return creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+    let source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
+    if (!source) {
+      source = creep.pos.findClosestByRange(FIND_SOURCES);
+    }
+
+    return source;
   },
 
   getStorageEnergyTarget(room) {

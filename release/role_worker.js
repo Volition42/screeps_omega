@@ -24,6 +24,16 @@ const MOVE_OPTIONS = {
   reusePath: 10,
 };
 
+const INTERACT_MOVE_OPTIONS = {
+  reusePath: 10,
+  range: 1,
+};
+
+const HARVEST_SPOT_MOVE_OPTIONS = {
+  reusePath: 10,
+  range: 0,
+};
+
 module.exports = {
   run(creep, options) {
     var thinkInterval =
@@ -39,6 +49,7 @@ module.exports = {
       creep.memory.working = true;
       delete creep.memory.withdrawTargetId;
       delete creep.memory.workTargetId;
+      utils.clearAssignedHarvestPosition(creep);
     }
 
     if (!creep.memory.working) {
@@ -74,14 +85,22 @@ module.exports = {
         target.structureType === STRUCTURE_STORAGE ||
         target.structureType === STRUCTURE_CONTAINER
       ) {
+        utils.clearAssignedHarvestPosition(creep);
         if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(target, MOVE_OPTIONS);
+          utils.moveTo(creep, target, MOVE_OPTIONS);
         }
         return;
       }
 
       if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, MOVE_OPTIONS);
+        const harvestPos = utils.getAssignedHarvestPosition(creep, target);
+        utils.moveTo(
+          creep,
+          harvestPos || target.pos,
+          harvestPos
+            ? HARVEST_SPOT_MOVE_OPTIONS
+            : INTERACT_MOVE_OPTIONS,
+        );
       }
 
       return;
@@ -91,21 +110,21 @@ module.exports = {
 
     if (workTarget && workTarget.structureType === STRUCTURE_SPAWN) {
       if (creep.transfer(workTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(workTarget, MOVE_OPTIONS);
+        utils.moveTo(creep, workTarget, MOVE_OPTIONS);
       }
       return;
     }
 
     if (workTarget && workTarget.progressTotal !== undefined) {
       if (creep.build(workTarget) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(workTarget, MOVE_OPTIONS);
+        utils.moveTo(creep, workTarget, MOVE_OPTIONS);
       }
       return;
     }
 
     if (creep.room.controller) {
       if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(creep.room.controller, MOVE_OPTIONS);
+        utils.moveTo(creep, creep.room.controller.pos, INTERACT_MOVE_OPTIONS);
       }
     }
   },

@@ -118,7 +118,7 @@ module.exports = {
     if (state.phase === "bootstrap") {
       this.addDefenseRequests(room, state, requests, reaction);
 
-      var desiredJrWorkers = config.CREEPS.jrWorkers;
+      var desiredJrWorkers = this.getDesiredBootstrapJrWorkers(room, state);
       var currentBootJrWorkers = roleCounts.jrworker || 0;
       var queuedBootJrWorkers = this.countQueued(room, "jrworker");
 
@@ -443,6 +443,18 @@ module.exports = {
     }
 
     return 1;
+  },
+
+  getDesiredBootstrapJrWorkers(room, state) {
+    var configured = Math.max(1, config.CREEPS.jrWorkers || 1);
+
+    if (!room.controller || room.controller.level >= 2) {
+      return configured;
+    }
+
+    // Keep the first room stable enough to upgrade out of RCL1 instead of
+    // endlessly refilling the spawn with an oversized emergency workforce.
+    return Math.min(configured, 2);
   },
 
   getDesiredWorkers(room, state) {

@@ -26,6 +26,11 @@ const INTERACT_MOVE_OPTIONS = {
   range: 1,
 };
 
+const HARVEST_SPOT_MOVE_OPTIONS = {
+  reusePath: 10,
+  range: 0,
+};
+
 module.exports = {
   run(creep) {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
@@ -37,6 +42,7 @@ module.exports = {
     if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
       creep.memory.working = true;
       this.clearHarvestSource(creep);
+      utils.clearAssignedHarvestPosition(creep);
       this.clearWithdrawalTarget(creep);
     }
 
@@ -74,7 +80,14 @@ module.exports = {
       };
 
       if (harvestResult === ERR_NOT_IN_RANGE) {
-        utils.moveTo(creep, source.pos, INTERACT_MOVE_OPTIONS);
+        var harvestPos = utils.getAssignedHarvestPosition(creep, source);
+        utils.moveTo(
+          creep,
+          harvestPos || source.pos,
+          harvestPos
+            ? HARVEST_SPOT_MOVE_OPTIONS
+            : INTERACT_MOVE_OPTIONS,
+        );
       }
       return;
     }
@@ -254,6 +267,7 @@ module.exports = {
 
   clearHarvestSource(creep) {
     delete creep.memory.harvestSourceId;
+    utils.clearAssignedHarvestPosition(creep);
   },
 
   clearWithdrawalTarget(creep) {

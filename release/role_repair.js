@@ -25,6 +25,11 @@ const MOVE_OPTIONS = {
   reusePath: 10,
 };
 
+const INTERACT_MOVE_OPTIONS = {
+  reusePath: 10,
+  range: 1,
+};
+
 module.exports = {
   run(creep) {
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
@@ -73,13 +78,13 @@ module.exports = {
         target.structureType === STRUCTURE_CONTAINER
       ) {
         if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(target, MOVE_OPTIONS);
+          utils.moveTo(creep, target, MOVE_OPTIONS);
         }
         return;
       }
 
       if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, MOVE_OPTIONS);
+        utils.moveTo(creep, target.pos, INTERACT_MOVE_OPTIONS);
       }
 
       return;
@@ -244,20 +249,20 @@ module.exports = {
   runWorkTarget(creep, workTarget) {
     if (workTarget.kind === "build") {
       if (creep.build(workTarget.target) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(workTarget.target, MOVE_OPTIONS);
+        utils.moveTo(creep, workTarget.target, MOVE_OPTIONS);
       }
       return;
     }
 
     if (workTarget.kind === "upgrade") {
       if (creep.upgradeController(workTarget.target) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(workTarget.target, MOVE_OPTIONS);
+        utils.moveTo(creep, workTarget.target.pos, INTERACT_MOVE_OPTIONS);
       }
       return;
     }
 
     if (creep.repair(workTarget.target) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(workTarget.target, MOVE_OPTIONS);
+      utils.moveTo(creep, workTarget.target, MOVE_OPTIONS);
     }
   },
 };

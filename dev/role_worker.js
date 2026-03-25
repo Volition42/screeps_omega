@@ -29,6 +29,11 @@ const INTERACT_MOVE_OPTIONS = {
   range: 1,
 };
 
+const HARVEST_SPOT_MOVE_OPTIONS = {
+  reusePath: 10,
+  range: 0,
+};
+
 module.exports = {
   run(creep, options) {
     var thinkInterval =
@@ -44,6 +49,7 @@ module.exports = {
       creep.memory.working = true;
       delete creep.memory.withdrawTargetId;
       delete creep.memory.workTargetId;
+      utils.clearAssignedHarvestPosition(creep);
     }
 
     if (!creep.memory.working) {
@@ -79,6 +85,7 @@ module.exports = {
         target.structureType === STRUCTURE_STORAGE ||
         target.structureType === STRUCTURE_CONTAINER
       ) {
+        utils.clearAssignedHarvestPosition(creep);
         if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
           utils.moveTo(creep, target, MOVE_OPTIONS);
         }
@@ -86,7 +93,14 @@ module.exports = {
       }
 
       if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
-        utils.moveTo(creep, target.pos, INTERACT_MOVE_OPTIONS);
+        const harvestPos = utils.getAssignedHarvestPosition(creep, target);
+        utils.moveTo(
+          creep,
+          harvestPos || target.pos,
+          harvestPos
+            ? HARVEST_SPOT_MOVE_OPTIONS
+            : INTERACT_MOVE_OPTIONS,
+        );
       }
 
       return;

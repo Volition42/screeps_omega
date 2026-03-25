@@ -25,6 +25,8 @@ const logisticsManager = require("logistics_manager");
 var runtimeCacheTick = null;
 var runtimeStateByRoom = {};
 var runtimeCacheByRoom = {};
+var sourceHarvestCapacityById = {};
+var sourceHarvestPositionsById = {};
 
 function resetRuntimeCachesIfNeeded() {
   if (runtimeCacheTick === Game.time) return;
@@ -32,6 +34,8 @@ function resetRuntimeCachesIfNeeded() {
   runtimeCacheTick = Game.time;
   runtimeStateByRoom = {};
   runtimeCacheByRoom = {};
+  sourceHarvestCapacityById = {};
+  sourceHarvestPositionsById = {};
 }
 
 function groupObjectsByType(objects) {
@@ -200,6 +204,80 @@ module.exports = {
     return getRuntimeCache(room);
   },
 
+  moveTo(creep, target, options) {
+    if (!creep || !target) return ERR_INVALID_TARGET;
+
+    var pos = target.pos ? target.pos : target;
+    if (!pos) return ERR_INVALID_TARGET;
+
+    var settings = options || {};
+    var range = typeof settings.range === "number" ? settings.range : 1;
+    var cacheKey = settings.cacheKey || "moveCache";
+    var destKey = `${pos.roomName}:${pos.x}:${pos.y}:${range}`;
+
+    if (creep.pos.inRangeTo(pos, range)) {
+      this.clearMoveCache(creep, cacheKey);
+      if (creep.memory) {
+        creep.memory.lastMoveDest = destKey;
+        creep.memory.lastMoveResult = OK;
+        creep.memory.lastMoveDir = null;
+      }
+      return OK;
+    }
+    this.clearMoveCache(creep, cacheKey);
+
+    if (typeof creep.moveTo === "function") {
+      var moveOptions = Object.assign({}, settings);
+      var moveResult = creep.moveTo(pos, moveOptions);
+
+      if (creep.memory) {
+        creep.memory.lastMoveDest = destKey;
+        creep.memory.lastMoveDir = null;
+        creep.memory.lastMoveResult = moveResult;
+      }
+
+      return moveResult;
+    }
+
+    var search = PathFinder.search(
+      creep.pos,
+      { pos: pos, range: range },
+      {
+        maxRooms:
+          settings.maxRooms ||
+          (creep.room && creep.room.name === pos.roomName ? 1 : 16),
+        plainCost: 2,
+        swampCost: 10,
+      },
+    );
+
+    if (!search.path || search.path.length === 0) {
+      if (creep.memory) {
+        creep.memory.lastMoveDest = destKey;
+        creep.memory.lastMoveDir = null;
+        creep.memory.lastMoveResult = ERR_NO_PATH;
+      }
+      return ERR_NO_PATH;
+    }
+
+    var nextStep = search.path[0];
+    var direction = creep.pos.getDirectionTo(nextStep.x, nextStep.y);
+    var moveResult = creep.move(direction);
+
+    if (creep.memory) {
+      creep.memory.lastMoveDest = destKey;
+      creep.memory.lastMoveDir = direction;
+      creep.memory.lastMoveResult = moveResult;
+    }
+
+    return moveResult;
+  },
+
+  clearMoveCache(creep, cacheKey) {
+    if (!creep || !creep.memory) return;
+    delete creep.memory[cacheKey || "moveCache"];
+  },
+
   getWalkableAdjacentPositions(pos) {
     const terrain = Game.map.getRoomTerrain(pos.roomName);
     const results = [];
@@ -221,16 +299,186 @@ module.exports = {
     return results;
   },
 
-  getSourceContainerPosition(room, source) {
+  getSourceHarvestCapacity(source) {
+    if (!source || !source.id || !source.pos) return 0;
+
+    resetRuntimeCachesIfNeeded();
+
+    if (typeof sourceHarvestCapacityById[source.id] === "number") {
+      return sourceHarvestCapacityById[source.id];
+    }
+
+    const terrain = Game.map.getRoomTerrain(source.pos.roomName);
+    let count = 0;
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+
+        const x = source.pos.x + dx;
+        const y = source.pos.y + dy;
+
+        if (x < 1 || x > 48 || y < 1 || y > 48) continue;
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+        count += 1;
+      }
+    }
+
+    sourceHarvestCapacityById[source.id] = count;
+    return count;
+  },
+
+  getSourceHarvestPositions(source) {
+    if (!source || !source.id || !source.pos) return [];
+
+    resetRuntimeCachesIfNeeded();
+
+    if (sourceHarvestPositionsById[source.id]) {
+      return sourceHarvestPositionsById[source.id];
+    }
+
+    const positions = this.getWalkableAdjacentPositions(source.pos).filter(
+      function (pos) {
+        const structures = pos.lookFor(LOOK_STRUCTURES);
+        const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+        for (let i = 0; i < structures.length; i++) {
+          const structureType = structures[i].structureType;
+          if (
+            structureType !== STRUCTURE_ROAD &&
+            structureType !== STRUCTURE_CONTAINER &&
+            structureType !== STRUCTURE_RAMPART
+          ) {
+            return false;
+          }
+        }
+
+        for (let i = 0; i < sites.length; i++) {
+          const structureType = sites[i].structureType;
+          if (
+            structureType !== STRUCTURE_ROAD &&
+            structureType !== STRUCTURE_CONTAINER &&
+            structureType !== STRUCTURE_RAMPART
+          ) {
+            return false;
+          }
+        }
+
+        return true;
+      },
+    );
+
+    sourceHarvestPositionsById[source.id] = positions;
+    return positions;
+  },
+
+  getHarvestPositionKey(pos) {
+    if (!pos) return null;
+    return `${pos.roomName}:${pos.x}:${pos.y}`;
+  },
+
+  getHarvestPositionFromKey(key) {
+    if (!key || typeof key !== "string") return null;
+
+    const parts = key.split(":");
+    if (parts.length !== 3) return null;
+
+    const x = Number(parts[1]);
+    const y = Number(parts[2]);
+    if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
+
+    return new RoomPosition(x, y, parts[0]);
+  },
+
+  getAssignedHarvestPosition(creep, source) {
+    if (!creep || !creep.memory || !source || !source.pos) return null;
+
+    const positions = this.getSourceHarvestPositions(source);
+    if (positions.length === 0) return null;
+
+    const cached = this.getHarvestPositionFromKey(creep.memory.harvestPosKey);
+    if (cached && cached.roomName === source.pos.roomName && cached.getRangeTo(source) <= 1) {
+      return cached;
+    }
+
+    const cache = getRuntimeCache(creep.room);
+    const homeCreeps = cache && cache.homeCreeps ? cache.homeCreeps : creep.room.find(FIND_MY_CREEPS);
+    const reservedByKey = {};
+
+    for (let i = 0; i < homeCreeps.length; i++) {
+      const other = homeCreeps[i];
+      if (!other || other.name === creep.name || !other.memory) continue;
+      if (other.memory.harvestSourceId && other.memory.harvestSourceId !== source.id) {
+        continue;
+      }
+
+      const reservedKey = other.memory.harvestPosKey;
+      if (!reservedKey) continue;
+      reservedByKey[reservedKey] = (reservedByKey[reservedKey] || 0) + 1;
+    }
+
+    let best = null;
+    let bestScore = Infinity;
+
+    for (let i = 0; i < positions.length; i++) {
+      const pos = positions[i];
+      const key = this.getHarvestPositionKey(pos);
+      const occupants = pos.lookFor(LOOK_CREEPS).filter(function (other) {
+        return other && other.name !== creep.name;
+      }).length;
+      const powerOccupants =
+        typeof LOOK_POWER_CREEPS !== "undefined"
+          ? pos.lookFor(LOOK_POWER_CREEPS).length
+          : 0;
+      const reserved = reservedByKey[key] || 0;
+      const score =
+        (occupants + powerOccupants) * 1000 +
+        reserved * 100 +
+        creep.pos.getRangeTo(pos);
+
+      if (score < bestScore) {
+        best = pos;
+        bestScore = score;
+      }
+    }
+
+    if (best) {
+      creep.memory.harvestPosKey = this.getHarvestPositionKey(best);
+    }
+
+    return best;
+  },
+
+  clearAssignedHarvestPosition(creep) {
+    if (!creep || !creep.memory) return;
+    delete creep.memory.harvestPosKey;
+  },
+
+  getSourceContainerPositions(room, source) {
     const state = getRegisteredState(room);
     const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
     const positions = this.getWalkableAdjacentPositions(source.pos);
 
     positions.sort(function (a, b) {
-      const aScore = spawn ? a.getRangeTo(spawn) : 0;
-      const bScore = spawn ? b.getRangeTo(spawn) : 0;
+      const aCreeps = a.lookFor(LOOK_CREEPS).length;
+      const bCreeps = b.lookFor(LOOK_CREEPS).length;
+      const aPowerCreeps =
+        typeof LOOK_POWER_CREEPS !== "undefined" ? a.lookFor(LOOK_POWER_CREEPS).length : 0;
+      const bPowerCreeps =
+        typeof LOOK_POWER_CREEPS !== "undefined" ? b.lookFor(LOOK_POWER_CREEPS).length : 0;
+      const aOccupied = aCreeps + aPowerCreeps;
+      const bOccupied = bCreeps + bPowerCreeps;
+      const aScore = (spawn ? a.getRangeTo(spawn) : 0) + aOccupied * 100;
+      const bScore = (spawn ? b.getRangeTo(spawn) : 0) + bOccupied * 100;
       return aScore - bScore;
     });
+
+    return positions;
+  },
+
+  getSourceContainerPosition(room, source) {
+    const positions = this.getSourceContainerPositions(room, source);
 
     for (const pos of positions) {
       const blocked = pos.lookFor(LOOK_STRUCTURES).length > 0;
@@ -241,7 +489,7 @@ module.exports = {
       }
     }
 
-    return null;
+    return positions.length > 0 ? positions[0] : null;
   },
 
   getSourceContainerBySource(room, sourceId) {
