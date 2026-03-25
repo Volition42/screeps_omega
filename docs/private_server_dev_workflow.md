@@ -2,34 +2,40 @@
 
 Current split:
 
-- `dev/` is the primary development source tree for the local Node 24 preview server.
+- `dev/` is the primary development source tree for the local `screeps@ptr` private server.
 - `release/` is the current live-compatible source tree for the existing online deployment path.
 
 As of March 24, 2026:
 
-- `screeps@ptr` is still `4.3.0-beta` and still declares `node >=22.9.0`.
-- `screeps@feat-node24` is the Node 24 preview target now used for the local private server.
-- When `screeps@ptr` catches up after April 1, 2026, the private server target should be switched from `feat-node24` to `ptr`.
+- `screeps@ptr` is `4.3.0-beta` and declares `node >=22.9.0`.
+- `screeps@feat-node24` remains available as a secondary preview profile for comparison work.
+- The default private-server target is now `ptr`.
 
 ## Local Paths
 
-- Private server root: `/Users/jaysheldon/screeps_private_server`
+- PTR private server root: `/Users/jaysheldon/screeps_private_server_ptr`
+- Optional Node 24 preview server root: `/Users/jaysheldon/screeps_private_server`
 - Browser client root: `/Users/jaysheldon/screeps_browser_client`
-- Node 24 binary path: `/opt/homebrew/opt/node@24/bin`
+- PTR Node binary path: `/opt/homebrew/opt/node@22/bin`
+- Preview Node binary path: `/opt/homebrew/opt/node@24/bin`
+- PTR server URL: `http://127.0.0.1:21035`
+- PTR CLI port: `21036`
 - Local dev auth token: `screeps-omega-dev-token`
+- Default local test CPU cap: `20`
 - Default browser login: `local-dev` / `screeps-local-pass`
 
 The private server stays outside the repo on purpose. Only the helper scripts and docs live in source control.
 
 ## Current Local Server Notes
 
-- The local preview server is installed with `screeps@feat-node24`.
-- The server is configured in local-only no-auth mode for development because the native Steam auth path is ABI-incompatible with the Node 24 preview build on Apple Silicon.
+- The primary local server is installed with `screeps@ptr`.
+- The server is configured in local-only no-auth mode for development so scripted testing, browser login, and fixed local CPU limits stay deterministic.
 - This no-auth mode exists only in the external private-server install. It is not part of the repo game code.
-- `http://127.0.0.1:21025/` is only a server status page. It is not a browser game client.
+- `http://127.0.0.1:21035/` is only a server status page. It is not a browser game client.
 - The local no-auth patch now also bridges `/api/auth/steam-ticket`, so the Screeps client login flow can complete without live Steam auth against this private server.
 - Browser access is provided by a separate `screepers-steamless-client` install on `http://127.0.0.1:8080/`, not by the private server itself.
 - The private server also loads `node_modules/screepsmod-auth`, which provides `/api/auth/signin` and password auth for the browser client.
+- All repo helper scripts source `scripts/private_server/load_server_profile.sh`. Set `SCREEPS_SERVER_PROFILE=feat-node24` only when you intentionally want the older preview server.
 
 ## Repo Helpers
 
@@ -55,6 +61,8 @@ The private server stays outside the repo on purpose. Only the helper scripts an
   Wipes the world, recreates `local-dev`, uploads `dev/`, and reseeds the default test room.
 - `scripts/private_server/set_fast_tick.sh`
   Lowers tick duration for faster local progression.
+- `scripts/private_server/set_test_cpu.sh`
+  Writes the next private-server `LOCAL_NOAUTH_CPU` value for `local-dev`. Restart the private server after using it.
 - `scripts/private_server/pause_simulation.sh`
   Pauses the simulation loop.
 - `scripts/private_server/resume_simulation.sh`
@@ -67,8 +75,12 @@ The private server stays outside the repo on purpose. Only the helper scripts an
   Uploads `release/` to the private server active world branch.
 - `scripts/private_server/upload_code.py`
   Generic uploader for any Screeps source directory.
+- `scripts/private_server/load_server_profile.sh`
+  Central profile switch between the default `ptr` server and the optional `feat-node24` preview server.
+- `scripts/private_server/patch_private_server.py`
+  Reapplies the external private-server bootstrap and local auth/browser patches after a reinstall or package update.
 - `scripts/private_server/patch_feat_node24_server.py`
-  Reapplies the external private-server bootstrap and local Apple Silicon / no-auth patches after a reinstall or package update.
+  Compatibility wrapper that forwards to `patch_private_server.py`.
 
 ## Standard Dev Loop
 
@@ -109,7 +121,7 @@ http://127.0.0.1:8080/
 or the direct local-server route:
 
 ```text
-http://127.0.0.1:8080/(http://127.0.0.1:21025)/
+  http://127.0.0.1:8080/(http://127.0.0.1:21035)/
 ```
 
 3. Sign in with:
@@ -130,9 +142,18 @@ scripts/private_server/set_browser_password.sh
 Common fast-loop commands:
 
 ```bash
+scripts/private_server/set_test_cpu.sh 20
 scripts/private_server/set_fast_tick.sh 100
 scripts/private_server/reseed_dev_room.sh
 scripts/private_server/spawn_test_invader.sh
+```
+
+If you change the CPU cap, restart the private server before resetting or reseeding:
+
+```bash
+scripts/private_server/set_test_cpu.sh 20
+scripts/private_server/stop_dev_server.sh
+scripts/private_server/start_dev_server.sh
 ```
 
 Full world reset back to a fresh `dev/` room:
@@ -158,11 +179,11 @@ scripts/private_server/resume_simulation.sh
 
 The private server has already been bootstrapped successfully enough to:
 
-- start the Node 24 preview server
+- start the current PTR server
 - authenticate with the local dev token
 - upload the repo `dev/` modules
 - create a local user
 - place a first spawn in `W5N5`
 - observe the uploaded code spawning a `jrworker`
 
-That means `dev/` is now executing on the private Node 24 preview server instead of being limited to syntax checks.
+That means `dev/` is now executing on the private PTR server instead of being limited to syntax checks.

@@ -1,7 +1,10 @@
 #!/bin/zsh
 set -euo pipefail
 
-SERVER_ROOT="${SCREEPS_PRIVATE_SERVER_DIR:-/Users/jaysheldon/screeps_private_server}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/load_server_profile.sh"
+
+SERVER_ROOT="${SCREEPS_PRIVATE_SERVER_DIR}"
 
 pkill -f "${SERVER_ROOT}" || true
 pkill -f 'npx screeps start' || true

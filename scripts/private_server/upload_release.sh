@@ -2,8 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-TOKEN="${SCREEPS_LOCAL_TOKEN:-screeps-omega-dev-token}"
-SERVER_URL="${SCREEPS_SERVER_URL:-http://127.0.0.1:21025}"
+source "${ROOT_DIR}/scripts/private_server/load_server_profile.sh"
+
+TOKEN="${SCREEPS_LOCAL_TOKEN}"
+SERVER_URL="${SCREEPS_SERVER_URL}"
 
 exec python3 "${ROOT_DIR}/scripts/private_server/upload_code.py" \
   "${ROOT_DIR}/release" \

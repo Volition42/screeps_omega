@@ -1,9 +1,16 @@
 #!/bin/zsh
 set -euo pipefail
 
-SERVER_URL="${SCREEPS_SERVER_URL:-http://127.0.0.1:21025}"
-LOCAL_TOKEN="${SCREEPS_LOCAL_TOKEN:-screeps-omega-dev-token}"
-BROWSER_PASSWORD="${SCREEPS_BROWSER_PASSWORD:-screeps-local-pass}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/load_server_profile.sh"
+
+SERVER_URL="${SCREEPS_SERVER_URL}"
+LOCAL_TOKEN="${SCREEPS_LOCAL_TOKEN}"
+BROWSER_PASSWORD="${SCREEPS_BROWSER_PASSWORD}"
+
+curl -sSf -H "Content-Type: application/json" \
+  -d '{"ticket":"local-dev-browser","useNativeAuth":false}' \
+  "${SERVER_URL}/api/auth/steam-ticket" >/dev/null
 
 curl -sSf \
   -H "X-Token: ${LOCAL_TOKEN}" \

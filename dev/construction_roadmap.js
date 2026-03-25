@@ -31,7 +31,6 @@ Design Notes:
 
 const LEGACY_PHASE_MAP = {
   bootstrap_jr: "bootstrap",
-  bootstrap: "foundation",
   developing: "development",
   stable: "development",
   rcl5: "logistics",

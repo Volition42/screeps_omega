@@ -9,16 +9,18 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SERVER_ROOT = Path(
-    os.environ.get("SCREEPS_PRIVATE_SERVER_DIR", "/Users/jaysheldon/screeps_private_server")
+    os.environ.get("SCREEPS_PRIVATE_SERVER_DIR", "/Users/jaysheldon/screeps_private_server_ptr")
 )
-DEFAULT_NODE24_BIN = os.environ.get("SCREEPS_NODE24_BIN", "/opt/homebrew/opt/node@24/bin")
-DEFAULT_SERVER_URL = os.environ.get("SCREEPS_SERVER_URL", "http://127.0.0.1:21025")
+DEFAULT_SERVER_URL = os.environ.get("SCREEPS_SERVER_URL", "http://127.0.0.1:21035")
 DEFAULT_TOKEN = os.environ.get("SCREEPS_LOCAL_TOKEN", "screeps-omega-dev-token")
+DEFAULT_CLI_HOST = os.environ.get("SCREEPS_CLI_HOST", "localhost")
+DEFAULT_CLI_PORT = int(os.environ.get("SCREEPS_CLI_PORT", "21036"))
 
 
 def api_request(url: str, payload: dict | None = None, token: str | None = None) -> dict:
@@ -82,6 +84,23 @@ def load_db(server_root: Path) -> dict:
     return json.loads((server_root / "db.json").read_text(encoding="utf8"))
 
 
+def wait_for_room_terrain(server_root: Path, room: str, timeout_seconds: float = 5.0) -> tuple[dict, dict]:
+    deadline = time.monotonic() + timeout_seconds
+
+    while True:
+        db = load_db(server_root)
+        terrains_collection = next(c for c in db["collections"] if c["name"] == "rooms.terrain")
+        terrain = next((entry for entry in terrains_collection["data"] if entry["room"] == room), None)
+
+        if terrain is not None:
+            return db, terrain
+
+        if time.monotonic() >= deadline:
+            raise SystemExit(f"terrain not found for room {room}")
+
+        time.sleep(0.1)
+
+
 def terrain_char_is_wall(value: str) -> bool:
     return bool(int(value) & 1)
 
@@ -92,12 +111,8 @@ def iter_spawn_positions(
     preferred_x: int,
     preferred_y: int,
 ) -> list[tuple[int, int]]:
-    db = load_db(server_root)
-    terrains = db["collections"][db["collections"].index(next(c for c in db["collections"] if c["name"] == "rooms.terrain"))]["data"]
+    db, terrain = wait_for_room_terrain(server_root, room)
     objects = db["collections"][db["collections"].index(next(c for c in db["collections"] if c["name"] == "rooms.objects"))]["data"]
-    terrain = next((entry for entry in terrains if entry["room"] == room), None)
-    if terrain is None:
-        raise SystemExit(f"terrain not found for room {room}")
 
     occupied = {
         (obj["x"], obj["y"])
@@ -136,6 +151,84 @@ def iter_spawn_positions(
         raise SystemExit(f"no valid spawn position found in {room}")
 
     return candidates
+
+
+def get_room_terrain_and_objects(server_root: Path, room: str) -> tuple[str, list[dict]]:
+    db, terrain = wait_for_room_terrain(server_root, room)
+    objects = next(c for c in db["collections"] if c["name"] == "rooms.objects")["data"]
+
+    room_objects = [obj for obj in objects if obj.get("room") == room]
+    return terrain["terrain"], room_objects
+
+
+def get_walkable_objective_tiles(
+    terrain: str,
+    room_objects: list[dict],
+) -> list[set[tuple[int, int]]]:
+    objectives: list[set[tuple[int, int]]] = []
+
+    def is_walkable(x: int, y: int) -> bool:
+        if x < 1 or x > 48 or y < 1 or y > 48:
+            return False
+        return not terrain_char_is_wall(terrain[y * 50 + x])
+
+    controller = next((obj for obj in room_objects if obj.get("type") == "controller"), None)
+    if controller:
+        tiles = set()
+        for y in range(controller["y"] - 1, controller["y"] + 2):
+            for x in range(controller["x"] - 1, controller["x"] + 2):
+                if is_walkable(x, y):
+                    tiles.add((x, y))
+        if tiles:
+            objectives.append(tiles)
+
+    for source in room_objects:
+        if source.get("type") != "source":
+            continue
+        tiles = set()
+        for y in range(source["y"] - 1, source["y"] + 2):
+            for x in range(source["x"] - 1, source["x"] + 2):
+                if (x, y) == (source["x"], source["y"]):
+                    continue
+                if is_walkable(x, y):
+                    tiles.add((x, y))
+        if tiles:
+            objectives.append(tiles)
+
+    return objectives
+
+
+def is_spawn_position_connected(
+    server_root: Path,
+    room: str,
+    spawn_x: int,
+    spawn_y: int,
+) -> bool:
+    terrain, room_objects = get_room_terrain_and_objects(server_root, room)
+    objectives = get_walkable_objective_tiles(terrain, room_objects)
+    if not objectives:
+        return True
+
+    seen: set[tuple[int, int]] = {(spawn_x, spawn_y)}
+    queue: deque[tuple[int, int]] = deque([(spawn_x, spawn_y)])
+
+    def is_walkable(x: int, y: int) -> bool:
+        if x < 1 or x > 48 or y < 1 or y > 48:
+            return False
+        return not terrain_char_is_wall(terrain[y * 50 + x])
+
+    while queue:
+        x, y = queue.popleft()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if (nx, ny) in seen:
+                continue
+            if not is_walkable(nx, ny):
+                continue
+            seen.add((nx, ny))
+            queue.append((nx, ny))
+
+    return all(any(tile in seen for tile in objective) for objective in objectives)
 
 
 def build_reseed_command(room: str, controller: bool, sources: int, terrain_type: int | None) -> str:
@@ -198,6 +291,30 @@ def command_ensure_local_user(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_set_user_cpu(args: argparse.Namespace) -> int:
+    user_id = args.user_id
+    if not user_id:
+        if args.username != "local-dev":
+            raise SystemExit("set-user-cpu requires --user-id for non-local-dev users")
+        user_id = ensure_local_user(args.server_url)["user"]["_id"]
+
+    output = run_cli(
+        f"Promise.resolve(storage.db.users.findOne({{_id:'{user_id}'}}))"
+        ".then(user => {"
+        " if (!user) { throw new Error('user not found'); }"
+        f" return storage.db.users.update({{_id: user._id}}, {{$set: {{cpu: {args.cpu}}}}})"
+        " .then(() => storage.db.users.findOne({_id: user._id}));"
+        "})"
+        ".then(user => print(JSON.stringify({username: user.username, cpu: user.cpu, cpuAvailable: user.cpuAvailable || null})))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+    print(output)
+    return 0
+
+
 def command_reseed_room(args: argparse.Namespace) -> int:
     ensure_local_user(args.server_url)
     output = run_cli(
@@ -226,6 +343,14 @@ def command_reseed_room(args: argparse.Namespace) -> int:
     )
     last_result: dict | None = None
     for spawn_x, spawn_y in spawn_candidates:
+        if not is_spawn_position_connected(
+            args.server_root,
+            args.room,
+            spawn_x,
+            spawn_y,
+        ):
+            continue
+
         payload = {
             "room": args.room,
             "x": spawn_x,
@@ -273,8 +398,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(server_root=DEFAULT_SERVER_ROOT)
     parser.set_defaults(server_url=DEFAULT_SERVER_URL)
     parser.set_defaults(token=DEFAULT_TOKEN)
-    parser.set_defaults(cli_host="localhost")
-    parser.set_defaults(cli_port=21026)
+    parser.set_defaults(cli_host=DEFAULT_CLI_HOST)
+    parser.set_defaults(cli_port=DEFAULT_CLI_PORT)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -293,6 +418,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ensure = subparsers.add_parser("ensure-local-user", help="bootstrap the local-dev user")
     ensure.set_defaults(func=command_ensure_local_user)
+
+    set_cpu = subparsers.add_parser("set-user-cpu", help="set a private-server user's CPU limit")
+    set_cpu.add_argument("cpu", type=int)
+    set_cpu.add_argument("--username", default="local-dev")
+    set_cpu.add_argument("--user-id")
+    set_cpu.set_defaults(func=command_set_user_cpu)
 
     reseed = subparsers.add_parser("reseed-room", help="reset and regenerate a room")
     reseed.add_argument("--room", default="W5N5")

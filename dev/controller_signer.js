@@ -1,3 +1,5 @@
+const utils = require("utils");
+
 /*
 Developer Note:
 Automatically signs owned room controllers with rotating vCORP messaging.
@@ -14,6 +16,7 @@ Future Ideas:
 module.exports = {
   run(room) {
     if (!room.controller || !room.controller.my) return;
+    if (room.controller.level <= 1) return;
 
     const desiredText = this.getSign();
     const currentSign = room.controller.sign;
@@ -26,7 +29,7 @@ module.exports = {
     if (creep.pos.inRangeTo(room.controller, 1)) {
       creep.signController(room.controller, desiredText);
     } else {
-      creep.moveTo(room.controller);
+      utils.moveTo(creep, room.controller, { reusePath: 10, range: 1 });
     }
   },
 

@@ -200,6 +200,44 @@ module.exports = {
     return getRuntimeCache(room);
   },
 
+  moveTo(creep, target, options) {
+    if (!creep || !target) return ERR_INVALID_TARGET;
+
+    var pos = target.pos ? target.pos : target;
+    if (!pos) return ERR_INVALID_TARGET;
+
+    var settings = options || {};
+    var range = typeof settings.range === "number" ? settings.range : 1;
+    var cacheKey = settings.cacheKey || "moveCache";
+    var destKey = `${pos.roomName}:${pos.x}:${pos.y}:${range}`;
+
+    if (creep.pos.inRangeTo(pos, range)) {
+      this.clearMoveCache(creep, cacheKey);
+      if (creep.memory) {
+        creep.memory.lastMoveDest = destKey;
+        creep.memory.lastMoveResult = OK;
+        creep.memory.lastMoveDir = null;
+      }
+      return OK;
+    }
+    this.clearMoveCache(creep, cacheKey);
+
+    var moveResult = creep.moveTo(pos, settings);
+
+    if (creep.memory) {
+      creep.memory.lastMoveDest = destKey;
+      creep.memory.lastMoveDir = null;
+      creep.memory.lastMoveResult = moveResult;
+    }
+
+    return moveResult;
+  },
+
+  clearMoveCache(creep, cacheKey) {
+    if (!creep || !creep.memory) return;
+    delete creep.memory[cacheKey || "moveCache"];
+  },
+
   getWalkableAdjacentPositions(pos) {
     const terrain = Game.map.getRoomTerrain(pos.roomName);
     const results = [];

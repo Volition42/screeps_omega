@@ -1,8 +1,11 @@
 #!/bin/zsh
 set -euo pipefail
 
-CLIENT_URL="${SCREEPS_BROWSER_URL:-http://127.0.0.1:8080}"
-SERVER_URL="${SCREEPS_SERVER_URL:-http://127.0.0.1:21025}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/load_server_profile.sh"
+
+CLIENT_URL="${SCREEPS_BROWSER_URL}"
+SERVER_URL="${SCREEPS_SERVER_URL}"
 
 echo "Browser Client Root:"
 curl -sSfI "${CLIENT_URL}/"

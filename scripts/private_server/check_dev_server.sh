@@ -1,8 +1,15 @@
 #!/bin/zsh
 set -euo pipefail
 
-SERVER_URL="${SCREEPS_SERVER_URL:-http://127.0.0.1:21025}"
-LOCAL_TOKEN="${SCREEPS_LOCAL_TOKEN:-screeps-omega-dev-token}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/load_server_profile.sh"
+
+SERVER_URL="${SCREEPS_SERVER_URL}"
+LOCAL_TOKEN="${SCREEPS_LOCAL_TOKEN}"
+
+curl -sSf -H "Content-Type: application/json" \
+  -d '{"ticket":"local-dev-check","useNativeAuth":false}' \
+  "${SERVER_URL}/api/auth/steam-ticket" >/dev/null
 
 echo "Version:"
 curl -sSf "${SERVER_URL}/api/version"

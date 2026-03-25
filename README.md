@@ -159,7 +159,7 @@ Common operator tasks:
 
 ## Dev And Release Split
 
-- `dev/` is the primary development tree and the one used against the local Node 24 preview private server.
+- `dev/` is the primary development tree and the one used against the local `screeps@ptr` private server.
 - `release/` is the live-compatible tree intended for online deployment updates.
 - Private-server workflow details live in `docs/private_server_dev_workflow.md`.
 - The local browser client for that workflow runs separately on `http://127.0.0.1:8080/`.

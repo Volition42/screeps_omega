@@ -1,13 +1,23 @@
 #!/bin/zsh
 set -euo pipefail
 
-SERVER_ROOT="${SCREEPS_PRIVATE_SERVER_DIR:-/Users/jaysheldon/screeps_private_server}"
-NODE24_BIN="${SCREEPS_NODE24_BIN:-/opt/homebrew/opt/node@24/bin}"
-LOCAL_TOKEN="${SCREEPS_LOCAL_TOKEN:-screeps-omega-dev-token}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/load_server_profile.sh"
 
-export PATH="${NODE24_BIN}:$PATH"
+SERVER_ROOT="${SCREEPS_PRIVATE_SERVER_DIR}"
+NODE_BIN="${SCREEPS_NODE_BIN}"
+LOCAL_TOKEN="${SCREEPS_LOCAL_TOKEN}"
+SERVER_ENV_FILE="${SERVER_ROOT}/.local-dev.env"
+
+export PATH="${NODE_BIN}:$PATH"
+
+if [[ -f "${SERVER_ENV_FILE}" ]]; then
+  source "${SERVER_ENV_FILE}"
+fi
+
 export LOCAL_NOAUTH=1
 export LOCAL_NOAUTH_TOKEN="${LOCAL_TOKEN}"
+export LOCAL_NOAUTH_CPU="${LOCAL_NOAUTH_CPU:-${SCREEPS_TEST_CPU:-20}}"
 
 cd "${SERVER_ROOT}"
 exec npx screeps start

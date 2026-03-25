@@ -35,6 +35,7 @@ module.exports = {
       detailCpu ? roomLabel : null,
     );
     utils.setRoomRuntimeState(room, state);
+    this.captureLiveSnapshot(room, state);
 
     runStep(
       "construction",
@@ -71,5 +72,41 @@ module.exports = {
     if (!runtimeMode.skipHud) {
       runStep("hud", hud.run, hud, room, state);
     }
+  },
+
+  captureLiveSnapshot(room, state) {
+    if (!Memory.runtime) Memory.runtime = {};
+    if (!Memory.runtime.rooms) Memory.runtime.rooms = {};
+
+    const roomMemory = Memory.runtime.rooms[room.name] || {};
+    const creeps = state && state.homeCreeps ? state.homeCreeps : [];
+    const creepSnapshots = [];
+
+    for (let i = 0; i < creeps.length; i++) {
+      const creep = creeps[i];
+      creepSnapshots.push({
+        name: creep.name,
+        role: creep.memory && creep.memory.role ? creep.memory.role : null,
+        x: creep.pos ? creep.pos.x : null,
+        y: creep.pos ? creep.pos.y : null,
+        energy: creep.store ? creep.store[RESOURCE_ENERGY] || 0 : 0,
+        fatigue: creep.fatigue || 0,
+        working: creep.memory ? !!creep.memory.working : false,
+      });
+    }
+
+    Memory.runtime.rooms[room.name] = Object.assign(roomMemory, {
+      tick: Game.time,
+      phase: state && state.phase ? state.phase : null,
+      energyAvailable: room.energyAvailable,
+      energyCapacityAvailable: room.energyCapacityAvailable,
+      spawnEnergy:
+        state && state.spawns && state.spawns[0] && state.spawns[0].store
+          ? state.spawns[0].store[RESOURCE_ENERGY] || 0
+          : null,
+      controllerProgress: room.controller ? room.controller.progress || 0 : null,
+      controllerLevel: room.controller ? room.controller.level : null,
+      creeps: creepSnapshots,
+    });
   },
 };

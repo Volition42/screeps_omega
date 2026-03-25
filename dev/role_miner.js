@@ -31,9 +31,9 @@ module.exports = {
 
     // Move onto assigned container if possible
     if (container && !creep.pos.isEqualTo(container.pos)) {
-      creep.moveTo(container, {
+      utils.moveTo(creep, container.pos, {
         reusePath: 20,
-        visualizePathStyle: { stroke: "#ffaa00" },
+        range: 0,
       });
       return;
     }
@@ -78,9 +78,9 @@ module.exports = {
 
     // Fallback movement if not already in place
     if (harvestResult === ERR_NOT_IN_RANGE) {
-      creep.moveTo(source, {
+      utils.moveTo(creep, source.pos, {
         reusePath: 20,
-        visualizePathStyle: { stroke: "#ffaa00" },
+        range: 1,
       });
     }
   },

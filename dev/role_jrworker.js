@@ -15,9 +15,15 @@ Important Notes:
 */
 
 const logisticsManager = require("logistics_manager");
+const utils = require("utils");
 
 const MOVE_OPTIONS = {
   reusePath: 10,
+};
+
+const INTERACT_MOVE_OPTIONS = {
+  reusePath: 10,
+  range: 1,
 };
 
 module.exports = {
@@ -44,7 +50,7 @@ module.exports = {
         );
 
         if (withdrawalResult === ERR_NOT_IN_RANGE) {
-          creep.moveTo(withdrawalTarget, MOVE_OPTIONS);
+          utils.moveTo(creep, withdrawalTarget, MOVE_OPTIONS);
         } else if (
           withdrawalResult === ERR_FULL ||
           withdrawalResult === ERR_INVALID_TARGET ||
@@ -59,8 +65,16 @@ module.exports = {
       var source = this.getHarvestSource(creep);
       if (!source) return;
 
-      if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(source, MOVE_OPTIONS);
+      var harvestResult = creep.harvest(source);
+      creep.memory.debugAction = {
+        kind: "harvest",
+        result: harvestResult,
+        range: creep.pos.getRangeTo(source),
+        sourceId: source.id,
+      };
+
+      if (harvestResult === ERR_NOT_IN_RANGE) {
+        utils.moveTo(creep, source.pos, INTERACT_MOVE_OPTIONS);
       }
       return;
     }
@@ -71,7 +85,7 @@ module.exports = {
       var transferResult = creep.transfer(deliveryTarget, RESOURCE_ENERGY);
 
       if (transferResult === ERR_NOT_IN_RANGE) {
-        creep.moveTo(deliveryTarget, MOVE_OPTIONS);
+        utils.moveTo(creep, deliveryTarget, MOVE_OPTIONS);
         return;
       }
 
@@ -88,7 +102,7 @@ module.exports = {
 
     if (creep.room.controller) {
       if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(creep.room.controller, MOVE_OPTIONS);
+        utils.moveTo(creep, creep.room.controller.pos, INTERACT_MOVE_OPTIONS);
       }
     }
   },
@@ -111,9 +125,30 @@ module.exports = {
     }
 
     if (!source) {
-      source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
-      if (!source) {
-        source = creep.pos.findClosestByPath(FIND_SOURCES);
+      var candidates = creep.room.find(FIND_SOURCES_ACTIVE);
+      if (!candidates || candidates.length === 0) {
+        candidates = creep.room.find(FIND_SOURCES);
+      }
+
+      if (candidates && candidates.length > 0) {
+        var assignedCounts = {};
+        var creeps = creep.room.find(FIND_MY_CREEPS);
+
+        for (var i = 0; i < creeps.length; i++) {
+          var other = creeps[i];
+          var assignedId =
+            other.memory && other.memory.harvestSourceId
+              ? other.memory.harvestSourceId
+              : null;
+
+          if (!assignedId) continue;
+          assignedCounts[assignedId] = (assignedCounts[assignedId] || 0) + 1;
+        }
+
+        source = _.min(candidates, function (candidate) {
+          var assigned = assignedCounts[candidate.id] || 0;
+          return assigned * 100 + creep.pos.getRangeTo(candidate);
+        });
       }
 
       if (source) {

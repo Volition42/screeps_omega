@@ -279,6 +279,10 @@ module.exports = {
   },
 
   shouldEnterDevelopment(room, state, buildStatus, desiredTotalHaulers) {
+    if (!room.controller || room.controller.level < 2) {
+      return false;
+    }
+
     if (!this.hasDevelopingEconomyBackbone(state, desiredTotalHaulers)) {
       return false;
     }
