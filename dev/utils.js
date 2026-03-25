@@ -25,6 +25,7 @@ const logisticsManager = require("logistics_manager");
 var runtimeCacheTick = null;
 var runtimeStateByRoom = {};
 var runtimeCacheByRoom = {};
+var sourceHarvestCapacityById = {};
 
 function resetRuntimeCachesIfNeeded() {
   if (runtimeCacheTick === Game.time) return;
@@ -32,6 +33,7 @@ function resetRuntimeCachesIfNeeded() {
   runtimeCacheTick = Game.time;
   runtimeStateByRoom = {};
   runtimeCacheByRoom = {};
+  sourceHarvestCapacityById = {};
 }
 
 function groupObjectsByType(objects) {
@@ -222,11 +224,34 @@ module.exports = {
     }
     this.clearMoveCache(creep, cacheKey);
 
-    var moveResult = creep.moveTo(pos, settings);
+    var search = PathFinder.search(
+      creep.pos,
+      { pos: pos, range: range },
+      {
+        maxRooms:
+          settings.maxRooms ||
+          (creep.room && creep.room.name === pos.roomName ? 1 : 16),
+        plainCost: 2,
+        swampCost: 10,
+      },
+    );
+
+    if (!search.path || search.path.length === 0) {
+      if (creep.memory) {
+        creep.memory.lastMoveDest = destKey;
+        creep.memory.lastMoveDir = null;
+        creep.memory.lastMoveResult = ERR_NO_PATH;
+      }
+      return ERR_NO_PATH;
+    }
+
+    var nextStep = search.path[0];
+    var direction = creep.pos.getDirectionTo(nextStep.x, nextStep.y);
+    var moveResult = creep.move(direction);
 
     if (creep.memory) {
       creep.memory.lastMoveDest = destKey;
-      creep.memory.lastMoveDir = null;
+      creep.memory.lastMoveDir = direction;
       creep.memory.lastMoveResult = moveResult;
     }
 
@@ -259,16 +284,60 @@ module.exports = {
     return results;
   },
 
-  getSourceContainerPosition(room, source) {
+  getSourceHarvestCapacity(source) {
+    if (!source || !source.id || !source.pos) return 0;
+
+    resetRuntimeCachesIfNeeded();
+
+    if (typeof sourceHarvestCapacityById[source.id] === "number") {
+      return sourceHarvestCapacityById[source.id];
+    }
+
+    const terrain = Game.map.getRoomTerrain(source.pos.roomName);
+    let count = 0;
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+
+        const x = source.pos.x + dx;
+        const y = source.pos.y + dy;
+
+        if (x < 1 || x > 48 || y < 1 || y > 48) continue;
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+        count += 1;
+      }
+    }
+
+    sourceHarvestCapacityById[source.id] = count;
+    return count;
+  },
+
+  getSourceContainerPositions(room, source) {
     const state = getRegisteredState(room);
     const spawn = state && state.spawns ? state.spawns[0] : room.find(FIND_MY_SPAWNS)[0];
     const positions = this.getWalkableAdjacentPositions(source.pos);
 
     positions.sort(function (a, b) {
-      const aScore = spawn ? a.getRangeTo(spawn) : 0;
-      const bScore = spawn ? b.getRangeTo(spawn) : 0;
+      const aCreeps = a.lookFor(LOOK_CREEPS).length;
+      const bCreeps = b.lookFor(LOOK_CREEPS).length;
+      const aPowerCreeps =
+        typeof LOOK_POWER_CREEPS !== "undefined" ? a.lookFor(LOOK_POWER_CREEPS).length : 0;
+      const bPowerCreeps =
+        typeof LOOK_POWER_CREEPS !== "undefined" ? b.lookFor(LOOK_POWER_CREEPS).length : 0;
+      const aOccupied = aCreeps + aPowerCreeps;
+      const bOccupied = bCreeps + bPowerCreeps;
+      const aScore = (spawn ? a.getRangeTo(spawn) : 0) + aOccupied * 100;
+      const bScore = (spawn ? b.getRangeTo(spawn) : 0) + bOccupied * 100;
       return aScore - bScore;
     });
+
+    return positions;
+  },
+
+  getSourceContainerPosition(room, source) {
+    const positions = this.getSourceContainerPositions(room, source);
 
     for (const pos of positions) {
       const blocked = pos.lookFor(LOOK_STRUCTURES).length > 0;
@@ -279,7 +348,7 @@ module.exports = {
       }
     }
 
-    return null;
+    return positions.length > 0 ? positions[0] : null;
   },
 
   getSourceContainerBySource(room, sourceId) {

@@ -147,7 +147,10 @@ module.exports = {
 
         source = _.min(candidates, function (candidate) {
           var assigned = assignedCounts[candidate.id] || 0;
-          return assigned * 100 + creep.pos.getRangeTo(candidate);
+          var capacity = Math.max(1, utils.getSourceHarvestCapacity(candidate));
+          var overload = assigned >= capacity ? (assigned - capacity + 1) * 1000 : 0;
+
+          return overload + (assigned / capacity) * 100 + creep.pos.getRangeTo(candidate);
         });
       }
 

@@ -1363,9 +1363,11 @@ module.exports = {
 
       if (existing || existingSite) continue;
 
-      var pos = utils.getSourceContainerPosition(room, source);
-      if (pos) {
-        this.createSite(context, pos, STRUCTURE_CONTAINER);
+      var positions = utils.getSourceContainerPositions(room, source);
+      for (var j = 0; j < positions.length; j++) {
+        if (this.tryPlaceStructureSite(context, positions[j], STRUCTURE_CONTAINER)) {
+          break;
+        }
       }
     }
   },

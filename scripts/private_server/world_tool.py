@@ -22,6 +22,169 @@ DEFAULT_TOKEN = os.environ.get("SCREEPS_LOCAL_TOKEN", "screeps-omega-dev-token")
 DEFAULT_CLI_HOST = os.environ.get("SCREEPS_CLI_HOST", "localhost")
 DEFAULT_CLI_PORT = int(os.environ.get("SCREEPS_CLI_PORT", "21036"))
 
+CONTROLLER_LEVELS = {
+    1: 200,
+    2: 45000,
+    3: 135000,
+    4: 405000,
+    5: 1215000,
+    6: 3645000,
+    7: 10935000,
+}
+
+CONTROLLER_DOWNGRADE = {
+    1: 20000,
+    2: 10000,
+    3: 20000,
+    4: 40000,
+    5: 80000,
+    6: 120000,
+    7: 150000,
+    8: 200000,
+}
+
+STRUCTURE_DEFAULTS = {
+    "spawn": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacityResource": {"energy": 300},
+        "hits": 5000,
+        "hitsMax": 5000,
+    },
+    "extension": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacityResource": {"energy": 0},
+        "hits": 1000,
+        "hitsMax": 1000,
+    },
+    "road": {
+        "notifyWhenAttacked": True,
+        "hits": 5000,
+        "hitsMax": 5000,
+        "nextDecayTime": "__GAME_TIME_PLUS__:1000",
+    },
+    "constructedWall": {
+        "notifyWhenAttacked": True,
+        "hits": 1,
+        "hitsMax": 300000000,
+    },
+    "rampart": {
+        "notifyWhenAttacked": True,
+        "hits": 1,
+        "hitsMax": 300000,
+        "nextDecayTime": "__GAME_TIME_PLUS__:100",
+    },
+    "container": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacity": 2000,
+        "hits": 250000,
+        "hitsMax": 250000,
+        "nextDecayTime": "__GAME_TIME_PLUS__:100",
+    },
+    "tower": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacityResource": {"energy": 1000},
+        "hits": 3000,
+        "hitsMax": 3000,
+    },
+    "storage": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacity": 1000000,
+        "hits": 10000,
+        "hitsMax": 10000,
+    },
+    "link": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacityResource": {"energy": 800},
+        "cooldown": 0,
+        "hits": 1000,
+        "hitsMax": 1000,
+    },
+    "terminal": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacity": 300000,
+        "hits": 3000,
+        "hitsMax": 3000,
+    },
+    "extractor": {
+        "notifyWhenAttacked": True,
+        "hits": 500,
+        "hitsMax": 500,
+    },
+    "lab": {
+        "notifyWhenAttacked": True,
+        "hits": 500,
+        "hitsMax": 500,
+        "mineralAmount": 0,
+        "cooldown": 0,
+        "store": {"energy": 0},
+        "storeCapacity": 5000,
+        "storeCapacityResource": {"energy": 2000},
+    },
+    "factory": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0},
+        "storeCapacity": 50000,
+        "hits": 1000,
+        "hitsMax": 1000,
+        "cooldown": 0,
+    },
+    "observer": {
+        "notifyWhenAttacked": True,
+        "hits": 500,
+        "hitsMax": 500,
+    },
+    "powerSpawn": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0, "power": 0},
+        "storeCapacityResource": {"energy": 5000, "power": 100},
+        "hits": 5000,
+        "hitsMax": 5000,
+    },
+    "nuker": {
+        "notifyWhenAttacked": True,
+        "store": {"energy": 0, "G": 0},
+        "storeCapacityResource": {"energy": 300000, "G": 5000},
+        "hits": 1000,
+        "hitsMax": 1000,
+        "cooldownTime": "__GAME_TIME_PLUS__:100000",
+    },
+}
+
+ENERGY_FILL_PRIORITY = [
+    "spawn",
+    "extension",
+    "tower",
+    "link",
+    "storage",
+    "container",
+    "terminal",
+    "lab",
+    "factory",
+    "powerSpawn",
+    "nuker",
+]
+
+FILLABLE_STORE_TYPES = {
+    "spawn",
+    "extension",
+    "tower",
+    "link",
+    "storage",
+    "container",
+    "terminal",
+    "lab",
+    "factory",
+    "powerSpawn",
+    "nuker",
+}
+
 
 def api_request(url: str, payload: dict | None = None, token: str | None = None) -> dict:
     data = None
@@ -34,6 +197,37 @@ def api_request(url: str, payload: dict | None = None, token: str | None = None)
     request = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(request) as response:
         return json.loads(response.read().decode("utf8"))
+
+
+def js_literal(value):
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, dict):
+        parts = []
+        for key, nested in value.items():
+            parts.append(f"{json.dumps(str(key))}: {js_literal(nested)}")
+        return "{" + ", ".join(parts) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(js_literal(item) for item in value) + "]"
+    return json.dumps(value)
+
+
+def defaults_to_js(defaults: dict) -> str:
+    parts: list[str] = []
+
+    for key, value in defaults.items():
+        if isinstance(value, str) and value.startswith("__GAME_TIME_PLUS__:"):
+            offset = int(value.split(":", 1)[1])
+            parts.append(f"{json.dumps(key)}: gameTime + {offset}")
+            continue
+
+        parts.append(f"{json.dumps(key)}: {js_literal(value)}")
+
+    return "{" + ", ".join(parts) + "}"
 
 
 def run_cli(command: str, server_root: Path, host: str, port: int) -> str:
@@ -153,6 +347,27 @@ def iter_spawn_positions(
     return candidates
 
 
+def count_walkable_adjacent_tiles(terrain: str, x: int, y: int) -> int:
+    count = 0
+
+    for dy in range(-1, 2):
+        for dx in range(-1, 2):
+            if dx == 0 and dy == 0:
+                continue
+
+            nx = x + dx
+            ny = y + dy
+
+            if nx < 1 or nx > 48 or ny < 1 or ny > 48:
+                continue
+            if terrain_char_is_wall(terrain[ny * 50 + nx]):
+                continue
+
+            count += 1
+
+    return count
+
+
 def get_room_terrain_and_objects(server_root: Path, room: str) -> tuple[str, list[dict]]:
     db, terrain = wait_for_room_terrain(server_root, room)
     objects = next(c for c in db["collections"] if c["name"] == "rooms.objects")["data"]
@@ -229,6 +444,42 @@ def is_spawn_position_connected(
             queue.append((nx, ny))
 
     return all(any(tile in seen for tile in objective) for objective in objectives)
+
+
+def score_spawn_position(
+    server_root: Path,
+    room: str,
+    spawn_x: int,
+    spawn_y: int,
+    preferred_x: int,
+    preferred_y: int,
+) -> tuple[float, int, int, int]:
+    terrain, room_objects = get_room_terrain_and_objects(server_root, room)
+    objectives = get_walkable_objective_tiles(terrain, room_objects)
+
+    if objectives:
+        objective_distance = 0.0
+        for objective in objectives:
+            objective_distance += min(
+                abs(spawn_x - tile_x) + abs(spawn_y - tile_y)
+                for tile_x, tile_y in objective
+            )
+        objective_distance /= len(objectives)
+    else:
+        objective_distance = 0.0
+
+    open_adjacent = count_walkable_adjacent_tiles(terrain, spawn_x, spawn_y)
+    edge_distance = min(spawn_x - 1, 48 - spawn_x, spawn_y - 1, 48 - spawn_y)
+    preferred_distance = abs(spawn_x - preferred_x) + abs(spawn_y - preferred_y)
+
+    # Lower is better. Prefer good access to controller/sources, enough local
+    # breathing room, and not hugging the room edge.
+    return (
+        objective_distance - (open_adjacent * 1.5) - min(edge_distance, 6),
+        preferred_distance,
+        -open_adjacent,
+        -edge_distance,
+    )
 
 
 def build_reseed_command(room: str, controller: bool, sources: int, terrain_type: int | None) -> str:
@@ -315,6 +566,148 @@ def command_set_user_cpu(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_set_controller_level(args: argparse.Namespace) -> int:
+    ensure_local_user(args.server_url)
+
+    if args.level < 1 or args.level > 8:
+        raise SystemExit("--level must be between 1 and 8")
+
+    progress = args.progress
+    if progress is None:
+        progress = 0
+
+    controller_json = json.dumps(args.room)
+    output = run_cli(
+        "Promise.resolve()"
+        ".then(() => storage.env.get('gameTime'))"
+        f".then(gameTime => storage.db['rooms.objects'].findOne({{room: {controller_json}, type: 'controller'}})"
+        ".then(controller => ({gameTime: parseInt(gameTime || '0', 10) || 0, controller})))"
+        ".then(({gameTime, controller}) => {"
+        " if (!controller) { throw new Error('controller not found'); }"
+        f" const level = {args.level};"
+        f" const progress = {progress};"
+        f" const total = {json.dumps(CONTROLLER_LEVELS)};"
+        f" const downgrade = {json.dumps(CONTROLLER_DOWNGRADE)};"
+        " const update = {"
+        "   level,"
+        "   progress,"
+        "   downgradeTime: gameTime + (downgrade[level] || 200000) + 1"
+        " };"
+        " if (level >= 8) { update.progress = 0; }"
+        " return storage.db['rooms.objects'].update({_id: controller._id}, {$set: update})"
+        "   .then(() => storage.db['rooms.objects'].findOne({_id: controller._id}));"
+        "})"
+        ".then(controller => print(JSON.stringify({room: controller.room, level: controller.level, progress: controller.progress, downgradeTime: controller.downgradeTime})))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+    print(output)
+    return 0
+
+
+def command_complete_owned_sites(args: argparse.Namespace) -> int:
+    ensure_local_user(args.server_url)
+    defaults_by_type = {
+        structure_type: defaults_to_js(defaults)
+        for structure_type, defaults in STRUCTURE_DEFAULTS.items()
+    }
+    output = run_cli(
+        "Promise.resolve()"
+        ".then(() => storage.env.get('gameTime'))"
+        ".then(gameTime => storage.db.users.findOne({username: 'local-dev'})"
+        ".then(user => ({gameTime: parseInt(gameTime || '0', 10) || 0, user})))"
+        ".then(({gameTime, user}) => {"
+        " if (!user) { throw new Error('local-dev user not found'); }"
+        f" const room = {json.dumps(args.room)};"
+        f" const structureDefaults = {js_literal(defaults_by_type)};"
+        " return storage.db['rooms.objects'].find({room, type: 'constructionSite', user: '' + user._id})"
+        "   .then(sites => ({sites, user, gameTime, room, structureDefaults}));"
+        "})"
+        ".then(({sites, user, gameTime, room, structureDefaults}) => {"
+        " let completed = 0;"
+        " const ops = [];"
+        " for (const site of sites) {"
+        "   const defaultSource = structureDefaults[site.structureType];"
+        "   if (!defaultSource) { continue; }"
+        "   const defaults = Function('gameTime', 'return ' + defaultSource)(gameTime);"
+        "   const structure = Object.assign({"
+        "     type: site.structureType,"
+        "     x: site.x,"
+        "     y: site.y,"
+        "     room: site.room"
+        "   }, defaults);"
+        "   if (site.user) { structure.user = site.user; }"
+        "   if (site.name) { structure.name = site.name; }"
+        "   ops.push(storage.db['rooms.objects'].insert(structure));"
+        "   ops.push(storage.db['rooms.objects'].removeWhere({_id: site._id}));"
+        "   completed++;"
+        " }"
+        " return Promise.all(ops).then(() => ({room, completed}));"
+        "})"
+        ".then(result => print(JSON.stringify(result)))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+    print(output)
+    return 0
+
+
+def command_fill_room_energy(args: argparse.Namespace) -> int:
+    ensure_local_user(args.server_url)
+    structure_types = args.types or ENERGY_FILL_PRIORITY
+    for structure_type in structure_types:
+        if structure_type not in FILLABLE_STORE_TYPES:
+            raise SystemExit(f"unsupported structure type for energy fill: {structure_type}")
+
+    output = run_cli(
+        "Promise.resolve()"
+        ".then(() => storage.db.users.findOne({username: 'local-dev'}))"
+        ".then(user => {"
+        " if (!user) { throw new Error('local-dev user not found'); }"
+        f" const room = {json.dumps(args.room)};"
+        f" const fillAmount = {args.amount};"
+        f" const types = {js_literal(structure_types)};"
+        " return storage.db['rooms.objects'].find({room, user: '' + user._id})"
+        "   .then(objects => ({objects, fillAmount, types, room}));"
+        "})"
+        ".then(({objects, fillAmount, types, room}) => {"
+        " let remaining = fillAmount;"
+        " let touched = 0;"
+        " const ops = [];"
+        " for (const type of types) {"
+        "   for (const object of objects) {"
+        "     if (remaining <= 0) { break; }"
+        "     if (object.type !== type) { continue; }"
+        "     if (!object.store) { continue; }"
+        "     const capacityByResource = object.storeCapacityResource || {};"
+        "     const totalCapacity = object.storeCapacity || capacityByResource.energy || 0;"
+        "     const energyCapacity = capacityByResource.energy || totalCapacity;"
+        "     if (!energyCapacity) { continue; }"
+        "     const current = (object.store.energy || 0);"
+        "     const add = Math.max(0, Math.min(energyCapacity - current, remaining));"
+        "     if (!add) { continue; }"
+        "     const nextStore = Object.assign({}, object.store, {energy: current + add});"
+        "     ops.push(storage.db['rooms.objects'].update({_id: object._id}, {$set: {store: nextStore}}));"
+        "     remaining -= add;"
+        "     touched++;"
+        "   }"
+        " }"
+        " return Promise.all(ops).then(() => ({room, touched, remaining}));"
+        "})"
+        ".then(result => print(JSON.stringify(result)))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+    print(output)
+    return 0
+
+
 def command_reseed_room(args: argparse.Namespace) -> int:
     ensure_local_user(args.server_url)
     output = run_cli(
@@ -341,16 +734,32 @@ def command_reseed_room(args: argparse.Namespace) -> int:
         args.spawn_x,
         args.spawn_y,
     )
-    last_result: dict | None = None
+    valid_candidates: list[tuple[int, int]] = []
     for spawn_x, spawn_y in spawn_candidates:
-        if not is_spawn_position_connected(
+        if is_spawn_position_connected(
             args.server_root,
             args.room,
             spawn_x,
             spawn_y,
         ):
-            continue
+            valid_candidates.append((spawn_x, spawn_y))
 
+    if not valid_candidates:
+        raise SystemExit(f"unable to find connected spawn position in {args.room}")
+
+    valid_candidates.sort(
+        key=lambda pos: score_spawn_position(
+            args.server_root,
+            args.room,
+            pos[0],
+            pos[1],
+            args.spawn_x,
+            args.spawn_y,
+        )
+    )
+
+    last_result: dict | None = None
+    for spawn_x, spawn_y in valid_candidates:
         payload = {
             "room": args.room,
             "x": spawn_x,
@@ -424,6 +833,35 @@ def build_parser() -> argparse.ArgumentParser:
     set_cpu.add_argument("--username", default="local-dev")
     set_cpu.add_argument("--user-id")
     set_cpu.set_defaults(func=command_set_user_cpu)
+
+    set_controller = subparsers.add_parser(
+        "set-controller-level",
+        help="set a room controller to a target level for staged testing",
+    )
+    set_controller.add_argument("--room", default="W5N5")
+    set_controller.add_argument("--level", type=int, required=True)
+    set_controller.add_argument("--progress", type=int)
+    set_controller.set_defaults(func=command_set_controller_level)
+
+    complete_sites = subparsers.add_parser(
+        "complete-owned-sites",
+        help="instantly finish local-dev construction sites in a room",
+    )
+    complete_sites.add_argument("--room", default="W5N5")
+    complete_sites.set_defaults(func=command_complete_owned_sites)
+
+    fill_energy = subparsers.add_parser(
+        "fill-room-energy",
+        help="fill owned room structures with energy for faster testing",
+    )
+    fill_energy.add_argument("--room", default="W5N5")
+    fill_energy.add_argument("--amount", type=int, default=300000)
+    fill_energy.add_argument(
+        "--types",
+        nargs="+",
+        choices=sorted(FILLABLE_STORE_TYPES),
+    )
+    fill_energy.set_defaults(func=command_fill_room_energy)
 
     reseed = subparsers.add_parser("reseed-room", help="reset and regenerate a room")
     reseed.add_argument("--room", default="W5N5")

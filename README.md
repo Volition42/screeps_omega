@@ -165,6 +165,18 @@ Common operator tasks:
 - The local browser client for that workflow runs separately on `http://127.0.0.1:8080/`.
 - The repo also includes private-server admin helpers for room reseed, tick-speed changes, and invader injection.
 
+## Deterministic Validation
+
+- `scripts/validation/solo_room_harness.js`
+  Runs a deterministic single-room validation pass against `dev/` without relying on the private server.
+
+Validation notes:
+
+- The harness checks the named room phases from `bootstrap` through `command`.
+- It also validates late-game factory operations and advanced haul task selection.
+- Run it with `node scripts/validation/solo_room_harness.js`.
+- Use it for fast correctness checks, then use the private server for spot-checking live behavior.
+
 ## Memory And Cache Use
 
 - Room runtime state is cached during the tick for reuse by managers.
