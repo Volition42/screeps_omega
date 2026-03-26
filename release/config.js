@@ -167,6 +167,7 @@ module.exports = {
   LOGISTICS: {
     towerEmergencyThreshold: 400,
     towerReserveThreshold: 700,
+    storageEnergyCap: 200000,
   },
 
   /*
@@ -329,13 +330,13 @@ module.exports = {
 
     // Developer note:
     // Performance-aware snapshot settings.
-    SHOW_PERFORMANCE_DIRECTIVES: true,
+    SHOW_PERFORMANCE_DIRECTIVES: false,
     CPU_SPIKE_MULTIPLIER: 1.5,
     BUCKET_WARNING_THRESHOLD: 8000,
     HEALTHY_REPORT_INTERVAL: 100,
     DEBUG_CPU_CONSOLE_ENABLED: false,
     DEBUG_CPU_CONSOLE_INTERVAL: 100,
-    DEBUG_CPU_SHOW_SECTIONS: true,
+    DEBUG_CPU_SHOW_SECTIONS: false,
 
     // Developer note:
     // Progress / ETA directives for controller advancement.

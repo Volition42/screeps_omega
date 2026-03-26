@@ -207,6 +207,12 @@ module.exports = {
 
   getStorageDeliveryTarget(room) {
     if (!room.storage) return null;
+    if (
+      (room.storage.store[RESOURCE_ENERGY] || 0) >=
+      (config.LOGISTICS.storageEnergyCap || Infinity)
+    ) {
+      return null;
+    }
     if (room.storage.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) return null;
     return room.storage;
   },

@@ -840,6 +840,7 @@ const constructionManager = require("construction_manager");
 const constructionStatus = require("construction_status");
 const advancedStructureManager = require("advanced_structure_manager");
 const defenseLayout = require("defense_layout");
+const logisticsManager = require("logistics_manager");
 const utils = require("utils");
 
 function getOccupiedKey(x, y) {
@@ -1136,6 +1137,47 @@ function runBootstrapSpawnCapScenario() {
   );
 }
 
+function runStorageCapScenario() {
+  const room = buildRoomScenario("VAL_STORAGE_CAP", {
+    tick: 290,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    creeps: [{ name: "hauler1", role: "hauler", x: 24, y: 25 }],
+    extraStructures: [
+      {
+        type: STRUCTURE_STORAGE,
+        x: 26,
+        y: 25,
+        options: {
+          store: { energy: 199999 },
+          storeCapacity: 1000000,
+          hits: 10000,
+          hitsMax: 10000,
+        },
+      },
+    ],
+  });
+
+  let state = roomState.collect(room);
+  let target = logisticsManager.getHaulerDeliveryTarget(
+    room,
+    Game.creeps.hauler1,
+    state,
+  );
+  assert(target && target.structureType === STRUCTURE_STORAGE, "storage should accept energy below the cap");
+
+  room.storage.store.energy = 200000;
+  state = roomState.collect(room);
+  target = logisticsManager.getHaulerDeliveryTarget(
+    room,
+    Game.creeps.hauler1,
+    state,
+  );
+  assert(target === null, "storage should stop accepting energy once it reaches the configured cap");
+}
+
 function runDevelopmentScenario() {
   const room = buildRoomScenario("VAL_DEVELOPMENT", {
     tick: 300,
@@ -1392,6 +1434,7 @@ function main() {
     ["foundation", runFoundationScenario],
     ["bootstrap_harvest_spread", runBootstrapHarvestSpreadScenario],
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
+    ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],
