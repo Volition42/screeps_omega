@@ -168,6 +168,8 @@ module.exports = {
     towerEmergencyThreshold: 400,
     towerReserveThreshold: 700,
     storageEnergyCap: 200000,
+    hubContainerTarget: 1000,
+    controllerContainerTarget: 1500,
   },
 
   /*

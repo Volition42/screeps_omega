@@ -51,6 +51,7 @@ module.exports = {
       typeof FIND_HOSTILE_STRUCTURES !== "undefined"
         ? room.find(FIND_HOSTILE_STRUCTURES)
         : [];
+    var minerals = room.find(FIND_MINERALS);
     var structuresByType = this.groupStructuresByType(structures);
     var sitesByType = this.groupStructuresByType(sites);
     var roleMap = this.groupCreepsByRole(homeCreeps);
@@ -58,10 +59,13 @@ module.exports = {
     var sourceRoleMap = this.groupCreepsByKey(homeCreeps, "sourceId");
     var targetRoleMap = this.groupCreepsByKey(homeCreeps, "targetId");
     var creepsByCurrentRoom = this.groupCreepsByCurrentRoom(homeCreeps);
-    var sourceContainers = this.getSourceContainers(structures, sources);
-    var sourceContainersBySourceId = this.getSourceContainersBySourceId(
-      sourceContainers,
+    var containers = structuresByType[STRUCTURE_CONTAINER] || [];
+    var containerLayout = this.classifyContainers(
+      room,
+      containers,
       sources,
+      minerals,
+      spawns,
     );
     var extensions = structuresByType[STRUCTURE_EXTENSION] || [];
 
@@ -77,6 +81,7 @@ module.exports = {
       creepsByCurrentRoom: creepsByCurrentRoom,
       spawns: spawns,
       sources: sources,
+      minerals: minerals,
       sites: sites,
       sitesByType: sitesByType,
       structures: structures,
@@ -84,8 +89,13 @@ module.exports = {
       hostileCreeps: hostileCreeps,
       hostilePowerCreeps: hostilePowerCreeps,
       hostileStructures: hostileStructures,
-      sourceContainers: sourceContainers,
-      sourceContainersBySourceId: sourceContainersBySourceId,
+      containers: containers,
+      sourceContainers: containerLayout.sourceContainers,
+      sourceContainersBySourceId: containerLayout.sourceContainersBySourceId,
+      hubContainer: containerLayout.hubContainer,
+      controllerContainer: containerLayout.controllerContainer,
+      mineralContainer: containerLayout.mineralContainer,
+      supportContainers: containerLayout.supportContainers,
       extensions: extensions,
       roleMap: roleMap,
       roleCounts: roleCounts,
@@ -254,28 +264,127 @@ module.exports = {
     return grouped;
   },
 
-  getSourceContainers(structures, sources) {
-    return _.filter(structures, function (structure) {
-      if (structure.structureType !== STRUCTURE_CONTAINER) return false;
-
-      return _.some(sources, function (source) {
-        return structure.pos.getRangeTo(source) <= 1;
-      });
-    });
-  },
-
-  getSourceContainersBySourceId(sourceContainers, sources) {
-    var bySourceId = {};
+  classifyContainers(room, containers, sources, minerals, spawns) {
+    var sourceContainers = [];
+    var sourceContainersBySourceId = {};
+    var assignedIds = {};
+    var controllerContainer = null;
+    var hubContainer = null;
+    var mineralContainer = null;
+    var primaryAnchor =
+      room.storage || (spawns && spawns[0] ? spawns[0] : null) || null;
 
     for (var i = 0; i < sources.length; i++) {
       var source = sources[i];
-      bySourceId[source.id] =
-        _.find(sourceContainers, function (container) {
-          return container.pos.getRangeTo(source) <= 1;
-        }) || null;
+      var bestSourceContainer = null;
+      var bestSourceRange = Infinity;
+
+      for (var j = 0; j < containers.length; j++) {
+        var sourceContainer = containers[j];
+        if (assignedIds[sourceContainer.id]) continue;
+        if (sourceContainer.pos.getRangeTo(source) > 1) continue;
+
+        var sourceRange = sourceContainer.pos.getRangeTo(primaryAnchor || source);
+        if (sourceRange < bestSourceRange) {
+          bestSourceContainer = sourceContainer;
+          bestSourceRange = sourceRange;
+        }
+      }
+
+      sourceContainersBySourceId[source.id] = bestSourceContainer;
+      if (bestSourceContainer) {
+        sourceContainers.push(bestSourceContainer);
+        assignedIds[bestSourceContainer.id] = true;
+      }
     }
 
-    return bySourceId;
+    if (room.controller) {
+      controllerContainer = this.pickBestContainer(
+        containers,
+        assignedIds,
+        function (container) {
+          return container.pos.getRangeTo(room.controller) <= 4;
+        },
+        function (container) {
+          return container.pos.getRangeTo(room.controller);
+        },
+      );
+      if (controllerContainer) {
+        assignedIds[controllerContainer.id] = true;
+      }
+    }
+
+    if (minerals && minerals.length > 0) {
+      var mineral = minerals[0];
+      mineralContainer = this.pickBestContainer(
+        containers,
+        assignedIds,
+        function (container) {
+          return container.pos.getRangeTo(mineral) <= 1;
+        },
+        function (container) {
+          return container.pos.getRangeTo(primaryAnchor || mineral);
+        },
+      );
+      if (mineralContainer) {
+        assignedIds[mineralContainer.id] = true;
+      }
+    }
+
+    var hubAnchor = primaryAnchor;
+    if (hubAnchor) {
+      hubContainer = this.pickBestContainer(
+        containers,
+        assignedIds,
+        function (container) {
+          if (room.controller && container.pos.getRangeTo(room.controller) <= 4) {
+            return false;
+          }
+          return container.pos.getRangeTo(hubAnchor) <= 4;
+        },
+        function (container) {
+          return container.pos.getRangeTo(hubAnchor);
+        },
+      );
+      if (hubContainer) {
+        assignedIds[hubContainer.id] = true;
+      }
+    }
+
+    var supportContainers = [];
+    for (var k = 0; k < containers.length; k++) {
+      if (!assignedIds[containers[k].id]) {
+        supportContainers.push(containers[k]);
+      }
+    }
+
+    return {
+      sourceContainers: sourceContainers,
+      sourceContainersBySourceId: sourceContainersBySourceId,
+      controllerContainer: controllerContainer,
+      hubContainer: hubContainer,
+      mineralContainer: mineralContainer,
+      supportContainers: supportContainers,
+    };
+  },
+
+  pickBestContainer(containers, assignedIds, filter, scoreFn) {
+    var best = null;
+    var bestScore = Infinity;
+
+    for (var i = 0; i < containers.length; i++) {
+      var container = containers[i];
+      if (assignedIds[container.id]) continue;
+      if (filter && !filter(container)) continue;
+
+      var score = scoreFn ? scoreFn(container) : 0;
+      if (score < bestScore) {
+        best = container;
+        bestScore = score;
+      }
+    }
+
+    return best;
   },
 
   shouldEnterDevelopment(room, state, buildStatus, desiredTotalHaulers) {
@@ -437,6 +546,10 @@ module.exports = {
     return {
       hasStorage: !!storage,
       storageEnergy: storage ? storage.store[RESOURCE_ENERGY] || 0 : 0,
+      hubContainer: state.hubContainer || null,
+      hasHubContainer: !!state.hubContainer,
+      controllerContainer: state.controllerContainer || null,
+      hasControllerContainer: !!state.controllerContainer,
       controllerLink: controllerLink,
       hasControllerLink: !!controllerLink,
       storageLink: storageLink,

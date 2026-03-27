@@ -83,8 +83,14 @@ module.exports = {
     foundation: {
       phase: "foundation",
       focus: "backbone",
-      summary: "Establish source containers and the first durable road network.",
-      buildList: ["sourceContainers", "anchorRoads", "backboneRoads"],
+      summary: "Establish source containers, an early hub, controller feed, and the first durable road network.",
+      buildList: [
+        "sourceContainers",
+        "hubContainer",
+        "controllerContainer",
+        "anchorRoads",
+        "backboneRoads",
+      ],
       goals: {
         logisticsTier: "container_bootstrap",
         linkPlanning: {
@@ -107,6 +113,8 @@ module.exports = {
       summary: "Fill out the first full home-room core with storage, tower coverage, and defenses.",
       buildList: [
         "sourceContainers",
+        "hubContainer",
+        "controllerContainer",
         "anchorRoads",
         "backboneRoads",
         "extensionStamps",
@@ -136,6 +144,8 @@ module.exports = {
       focus: "energy_throughput",
       summary: "Add the first link network so hauling pressure falls and controller supply improves.",
       buildList: [
+        "sourceContainers",
+        "controllerContainer",
         "anchorRoads",
         "backboneRoads",
         "extensionStamps",
@@ -166,6 +176,8 @@ module.exports = {
       focus: "advanced_infrastructure",
       summary: "Bring online terminal, mineral access, and the first lab cluster.",
       buildList: [
+        "sourceContainers",
+        "controllerContainer",
         "anchorRoads",
         "backboneRoads",
         "extensionStamps",

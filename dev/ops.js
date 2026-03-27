@@ -114,6 +114,36 @@ function buildToggleResult(label, enabled) {
   };
 }
 
+function getConsoleCommandHelp() {
+  return [
+    {
+      command: 'view(on|off)',
+      description: "Toggle HUD and reports together.",
+      example: 'view(on)',
+    },
+    {
+      command: 'ops.hud(on|off)',
+      description: "Toggle the HUD overlay.",
+      example: 'ops.hud(on)',
+    },
+    {
+      command: 'ops.reports(on|off)',
+      description: "Toggle directive/report output.",
+      example: 'ops.reports(off)',
+    },
+    {
+      command: "ops.nextRCL([roomName])",
+      description: "Show controller progress and ETA.",
+      example: 'ops.nextRCL(W5N5)',
+    },
+    {
+      command: "ops.cpuStatus([roomName])",
+      description: "Show current CPU and runtime pressure.",
+      example: 'ops.cpuStatus(W5N5)',
+    },
+  ];
+}
+
 module.exports = {
   registerGlobals() {
     global.on = true;
@@ -126,6 +156,9 @@ module.exports = {
       reports: function (mode) {
         return module.exports.reports(mode);
       },
+      help: function () {
+        return module.exports.help();
+      },
       nextRCL: function (roomName) {
         return module.exports.nextRCL(roomName);
       },
@@ -137,6 +170,19 @@ module.exports = {
     global.view = function (mode) {
       return module.exports.view(mode);
     };
+  },
+
+  help() {
+    const rows = getConsoleCommandHelp();
+    const lines = ["[OPS] Available console commands"];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      lines.push(`${row.command} - ${row.description} Example: ${row.example}`);
+    }
+
+    printBlock(lines);
+    return rows;
   },
 
   hud(mode) {

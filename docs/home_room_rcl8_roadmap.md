@@ -16,6 +16,9 @@ These items are no longer active roadmap work:
 - Late structure runtime now includes lab reaction selection, a conservative factory policy, and advanced haul tasks for labs, factory, power spawn, and nuker staging.
 - A deterministic solo-room harness now validates named phases from `bootstrap` through `command`, plus late factory battery task selection.
 - Bootstrap solo-room logic now spreads harvesters across real source-adjacent tiles, caps the emergency RCL1 jrworker count at `2`, and uses the engine `moveTo` path before falling back to direct `PathFinder` stepping.
+- Container usage is now intentional across the room lifecycle: up to `3` source containers, `1` hub container before storage, and `1` controller container until controller-link logistics take over.
+- Shared logistics now uses those typed containers to improve early worker flow and faster controller throughput without adding new expensive room scans.
+- `ops.help()` now prints the available operator console commands with short descriptions and examples.
 
 ## Active Remaining Work
 
@@ -63,6 +66,7 @@ Completed in code:
 Remaining work:
 
 - [ ] Live-validate the haul priority order so advanced tasks do not interfere with core energy flow in awkward rooms.
+- [ ] Live-validate the new hub/controller container fill targets in natural solo-room progression and tune them if they overfeed buffers.
 - [ ] Decide whether terminal balancing needs its own explicit late-ops task layer or should remain an implicit hub only.
 - [ ] Expand factory policy beyond the current conservative home-room baseline if more products become necessary.
 

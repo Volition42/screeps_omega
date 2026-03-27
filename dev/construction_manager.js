@@ -64,6 +64,14 @@ module.exports = {
           this.placeSourceContainers(context);
           break;
 
+        case "hubContainer":
+          this.placeHubContainer(context);
+          break;
+
+        case "controllerContainer":
+          this.placeControllerContainer(context);
+          break;
+
         case "anchorRoads":
           this.placeAnchorRoads(context);
           break;
@@ -784,6 +792,87 @@ module.exports = {
     return null;
   },
 
+  tryPlaceFirstCandidate(context, candidates, structureType, predicate) {
+    for (var i = 0; i < candidates.length; i++) {
+      if (this.isSiteCapReached(context)) return false;
+      var pos = candidates[i];
+      if (predicate && !predicate(pos)) continue;
+      if (this.tryPlaceStructureSite(context, pos, structureType)) {
+        return true;
+      }
+    }
+
+    return false;
+  },
+
+  isHubContainerCandidate(context, pos, hubAnchorPos) {
+    if (!pos || !hubAnchorPos) return false;
+    if (!this.matchesHubContainerProfile(context, pos, hubAnchorPos)) return false;
+    if (!this.isPlanningPositionOpen(context, pos, {})) return false;
+    return true;
+  },
+
+  isControllerContainerCandidate(context, pos) {
+    if (!pos || !context.room.controller) return false;
+    if (!this.matchesControllerContainerProfile(context, pos)) return false;
+    if (!this.isPlanningPositionOpen(context, pos, {})) return false;
+    return true;
+  },
+
+  matchesHubContainerProfile(context, pos, hubAnchorPos) {
+    if (!pos || !hubAnchorPos) return false;
+    if (pos.getRangeTo(hubAnchorPos) > 4) return false;
+    if (context.room.controller && pos.getRangeTo(context.room.controller) <= 4) {
+      return false;
+    }
+
+    var sources = context.state.sources || [];
+    for (var i = 0; i < sources.length; i++) {
+      if (pos.getRangeTo(sources[i]) <= 1) return false;
+    }
+
+    return true;
+  },
+
+  matchesControllerContainerProfile(context, pos) {
+    if (!pos || !context.room.controller) return false;
+    if (pos.getRangeTo(context.room.controller) > 4) return false;
+
+    var sources = context.state.sources || [];
+    for (var i = 0; i < sources.length; i++) {
+      if (pos.getRangeTo(sources[i]) <= 1) return false;
+    }
+
+    return true;
+  },
+
+  findPlannedHubContainer(context) {
+    var spawn = context.state.spawns && context.state.spawns[0] ? context.state.spawns[0] : null;
+    if (!spawn || context.room.storage) return null;
+
+    var sites = this.getSitesByType(context, STRUCTURE_CONTAINER);
+    for (var i = 0; i < sites.length; i++) {
+      if (this.matchesHubContainerProfile(context, sites[i].pos, spawn.pos)) {
+        return sites[i];
+      }
+    }
+
+    return null;
+  },
+
+  findPlannedControllerContainer(context) {
+    if (!context.room.controller) return null;
+
+    var sites = this.getSitesByType(context, STRUCTURE_CONTAINER);
+    for (var i = 0; i < sites.length; i++) {
+      if (this.matchesControllerContainerProfile(context, sites[i].pos)) {
+        return sites[i];
+      }
+    }
+
+    return null;
+  },
+
   pickClusterPositions(context, centerPos, count, maxRange, used) {
     if (!centerPos || count <= 0) return [];
 
@@ -1372,6 +1461,86 @@ module.exports = {
     }
   },
 
+  placeHubContainer(context) {
+    var room = context.room;
+    var state = context.state;
+    var hubAnchor = state.spawns && state.spawns[0] ? state.spawns[0] : null;
+    var self = this;
+    if (!hubAnchor) return;
+    if (room.storage) return;
+    if (state.hubContainer) return;
+
+    var existingSite = _.find(
+      this.getSitesByType(context, STRUCTURE_CONTAINER),
+      function (site) {
+        return self.matchesHubContainerProfile(context, site.pos, hubAnchor.pos);
+      },
+    );
+    if (existingSite) return;
+
+    var candidates = [];
+    var preferredHub = this.pickPreferredAnchorSlot(
+      context,
+      hubAnchor.pos,
+      {},
+      "hub_slot",
+    );
+    var preferredUtility = this.pickPreferredAnchorSlot(
+      context,
+      hubAnchor.pos,
+      {},
+      "utility_slot",
+    );
+
+    if (preferredHub) candidates.push(preferredHub);
+    if (preferredUtility) candidates.push(preferredUtility);
+
+    var nearby = this.getNearbyPositions(hubAnchor.pos, 1, 4);
+    for (var i = 0; i < nearby.length; i++) {
+      candidates.push(nearby[i]);
+    }
+
+    this.tryPlaceFirstCandidate(
+      context,
+      candidates,
+      STRUCTURE_CONTAINER,
+      function (pos) {
+        return this.isHubContainerCandidate(context, pos, hubAnchor.pos);
+      }.bind(this),
+    );
+  },
+
+  placeControllerContainer(context) {
+    var room = context.room;
+    var state = context.state;
+    var self = this;
+    if (!room.controller || room.controller.level < 2) return;
+    if (
+      state.infrastructure &&
+      state.infrastructure.hasControllerLink
+    ) {
+      return;
+    }
+    if (state.controllerContainer) return;
+
+    var existingSite = _.find(
+      this.getSitesByType(context, STRUCTURE_CONTAINER),
+      function (site) {
+        return self.matchesControllerContainerProfile(context, site.pos);
+      },
+    );
+    if (existingSite) return;
+
+    this.tryPlaceFirstCandidate(
+      context,
+      this.getNearbyPositions(room.controller.pos, 2, 4),
+      STRUCTURE_CONTAINER,
+      function (pos) {
+        return this.isControllerContainerCandidate(context, pos);
+      }.bind(this),
+    );
+  },
+
   placeAnchorRoads(context) {
     var origin = this.getAnchorOrigin(context);
     if (!origin) return;
@@ -1396,6 +1565,17 @@ module.exports = {
 
     if (room.controller && !this.isSiteCapReached(context)) {
       this.placeRoadPath(context, spawn.pos, room.controller.pos, 2);
+    }
+
+    var controllerContainer =
+      state.controllerContainer || this.findPlannedControllerContainer(context);
+    if (controllerContainer && !this.isSiteCapReached(context)) {
+      this.placeRoadPath(context, spawn.pos, controllerContainer.pos, 0);
+    }
+
+    var hubContainer = state.hubContainer || this.findPlannedHubContainer(context);
+    if (hubContainer && !this.isSiteCapReached(context)) {
+      this.placeRoadPath(context, spawn.pos, hubContainer.pos, 0);
     }
   },
 

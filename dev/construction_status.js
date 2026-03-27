@@ -29,10 +29,16 @@ module.exports = {
     var anchor = stamps.getAnchorOrigin(room, state);
     var futurePlan = this.getFuturePlan(room);
 
-    var sourceContainersBuilt = state.sourceContainers
-      ? state.sourceContainers.length
-      : 0;
+    var sourceContainersBuilt = this.getSourceContainerCount(room, state);
     var sourceContainersNeeded = state.sources ? state.sources.length : 0;
+    var hubContainersNeeded = this.getHubContainerGoal(room, state, plan);
+    var hubContainersBuilt = this.getHubContainerCount(room, state);
+    var controllerContainersNeeded = this.getControllerContainerGoal(
+      room,
+      state,
+      plan,
+    );
+    var controllerContainersBuilt = this.getControllerContainerCount(room, state);
 
     var extensionsNeeded = roadmap.getDesiredExtensionCount(
       room.controller.level,
@@ -118,6 +124,10 @@ module.exports = {
 
       sourceContainersBuilt: sourceContainersBuilt,
       sourceContainersNeeded: sourceContainersNeeded,
+      hubContainersBuilt: hubContainersBuilt,
+      hubContainersNeeded: hubContainersNeeded,
+      controllerContainersBuilt: controllerContainersBuilt,
+      controllerContainersNeeded: controllerContainersNeeded,
       extensionsBuilt: extensionsBuilt,
       extensionsNeeded: extensionsNeeded,
 
@@ -171,6 +181,8 @@ module.exports = {
 
     status.foundationComplete =
       status.sourceContainersBuilt >= status.sourceContainersNeeded &&
+      status.hubContainersBuilt >= status.hubContainersNeeded &&
+      status.controllerContainersBuilt >= status.controllerContainersNeeded &&
       this.hasEnoughRoadsForFoundation(status, room);
 
     status.developmentComplete =
@@ -227,6 +239,10 @@ module.exports = {
 
       sourceContainersBuilt: 0,
       sourceContainersNeeded: 0,
+      hubContainersBuilt: 0,
+      hubContainersNeeded: 0,
+      controllerContainersBuilt: 0,
+      controllerContainersNeeded: 0,
       extensionsBuilt: 0,
       extensionsNeeded: 0,
 
@@ -333,6 +349,94 @@ module.exports = {
           }).length;
 
     return built + sites;
+  },
+
+  countContainerSites(room, state, predicate) {
+    var sites =
+      state.sitesByType && state.sitesByType[STRUCTURE_CONTAINER]
+        ? state.sitesByType[STRUCTURE_CONTAINER]
+        : room.find(FIND_CONSTRUCTION_SITES, {
+            filter: function (site) {
+              return site.structureType === STRUCTURE_CONTAINER;
+            },
+          });
+
+    var total = 0;
+    for (var i = 0; i < sites.length; i++) {
+      if (predicate(sites[i])) total++;
+    }
+
+    return total;
+  },
+
+  getSourceContainerCount(room, state) {
+    var built = state.sourceContainers ? state.sourceContainers.length : 0;
+    var sources = state.sources || [];
+
+    return (
+      built +
+      this.countContainerSites(room, state, function (site) {
+        for (var i = 0; i < sources.length; i++) {
+          if (site.pos.getRangeTo(sources[i]) <= 1) return true;
+        }
+        return false;
+      })
+    );
+  },
+
+  getHubContainerGoal(room, state, plan) {
+    if (!this.hasAction(plan, "hubContainer")) return 0;
+    if (state.infrastructure && state.infrastructure.hasStorage) return 0;
+    return 1;
+  },
+
+  getHubContainerCount(room, state) {
+    var built = state.hubContainer ? 1 : 0;
+    var anchor = room.storage || (state.spawns && state.spawns[0]) || null;
+    var sources = state.sources || [];
+    var controller = room.controller || null;
+
+    if (!anchor) return built;
+
+    return (
+      built +
+      this.countContainerSites(room, state, function (site) {
+        if (controller && site.pos.getRangeTo(controller) <= 4) return false;
+        for (var i = 0; i < sources.length; i++) {
+          if (site.pos.getRangeTo(sources[i]) <= 1) return false;
+        }
+        return site.pos.getRangeTo(anchor) <= 4;
+      })
+    );
+  },
+
+  getControllerContainerGoal(room, state, plan) {
+    if (!room.controller || room.controller.level < 2) return 0;
+    if (!this.hasAction(plan, "controllerContainer")) return 0;
+    if (
+      state.infrastructure &&
+      state.infrastructure.hasControllerLink
+    ) {
+      return 0;
+    }
+    return 1;
+  },
+
+  getControllerContainerCount(room, state) {
+    if (!room.controller) return 0;
+    var built = state.controllerContainer ? 1 : 0;
+    var sources = state.sources || [];
+
+    return (
+      built +
+      this.countContainerSites(room, state, function (site) {
+        if (site.pos.getRangeTo(room.controller) > 4) return false;
+        for (var i = 0; i < sources.length; i++) {
+          if (site.pos.getRangeTo(sources[i]) <= 1) return false;
+        }
+        return true;
+      })
+    );
   },
 
   getRoadGoal(room, state, plan, anchor, futurePlan) {

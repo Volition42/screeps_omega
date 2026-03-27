@@ -64,7 +64,7 @@ module.exports = {
       return cached;
     }
 
-    const target = utils.getGeneralEnergyWithdrawalTarget(creep.room, creep);
+    const target = utils.getUpgraderEnergyWithdrawalTarget(creep.room, creep);
 
     if (target && target.id) {
       creep.memory.withdrawTargetId = target.id;

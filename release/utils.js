@@ -9,10 +9,10 @@ Purpose:
 
 Important Notes:
 - General withdrawal logic now prefers storage first, then source containers,
-  then direct harvesting as a fallback.
+  then hub/source containers, then direct harvesting as a fallback.
 - Hauler delivery logic now supports conditional tower priority:
-  - Threat mode or low tower energy: spawn -> towers -> extensions -> storage
-  - Normal mode: spawn -> extensions -> storage -> towers below reserve
+  - Threat mode or low tower energy: spawn -> towers -> extensions -> controller/hub -> storage
+  - Normal mode: spawn -> extensions -> controller/hub -> storage -> towers below reserve
 */
 
 const config = require("config");
@@ -91,6 +91,25 @@ function getSourceContainersBySourceId(sourceContainers, sources) {
   return bySourceId;
 }
 
+function pickBestContainer(containers, assignedIds, filter, scoreFn) {
+  var best = null;
+  var bestScore = Infinity;
+
+  for (var i = 0; i < containers.length; i++) {
+    var container = containers[i];
+    if (assignedIds && assignedIds[container.id]) continue;
+    if (filter && !filter(container)) continue;
+
+    var score = scoreFn ? scoreFn(container) : 0;
+    if (score < bestScore) {
+      best = container;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
 function getWithdrawUsersByTargetId(creeps) {
   var usersByTargetId = {};
 
@@ -157,6 +176,7 @@ function buildRuntimeCache(room) {
     state && state.structuresByType
       ? state.structuresByType
       : groupObjectsByType(structures);
+  var containers = structuresByType[STRUCTURE_CONTAINER] || [];
   var sourceContainers =
     state && state.sourceContainers
       ? state.sourceContainers
@@ -165,7 +185,82 @@ function buildRuntimeCache(room) {
     state && state.sourceContainersBySourceId
       ? state.sourceContainersBySourceId
       : getSourceContainersBySourceId(sourceContainers, sources);
+  var assignedContainerIds = {};
+  var controllerContainer =
+    state && Object.prototype.hasOwnProperty.call(state, "controllerContainer")
+      ? state.controllerContainer
+      : null;
+  var hubContainer =
+    state && Object.prototype.hasOwnProperty.call(state, "hubContainer")
+      ? state.hubContainer
+      : null;
+  var mineralContainer =
+    state && Object.prototype.hasOwnProperty.call(state, "mineralContainer")
+      ? state.mineralContainer
+      : null;
+  var supportContainers =
+    state && state.supportContainers ? state.supportContainers.slice() : null;
   var homeCreeps = getHomeCreeps(room, state);
+
+  for (var i = 0; i < sourceContainers.length; i++) {
+    assignedContainerIds[sourceContainers[i].id] = true;
+  }
+
+  if (!state) {
+    if (room.controller) {
+      controllerContainer = pickBestContainer(
+        containers,
+        assignedContainerIds,
+        function (container) {
+          return container.pos.getRangeTo(room.controller) <= 4;
+        },
+        function (container) {
+          return container.pos.getRangeTo(room.controller);
+        },
+      );
+      if (controllerContainer) assignedContainerIds[controllerContainer.id] = true;
+    }
+
+    var hubAnchor = room.storage || room.find(FIND_MY_SPAWNS)[0] || null;
+    if (hubAnchor) {
+      hubContainer = pickBestContainer(
+        containers,
+        assignedContainerIds,
+        function (container) {
+          if (room.controller && container.pos.getRangeTo(room.controller) <= 4) {
+            return false;
+          }
+          return container.pos.getRangeTo(hubAnchor) <= 4;
+        },
+        function (container) {
+          return container.pos.getRangeTo(hubAnchor);
+        },
+      );
+      if (hubContainer) assignedContainerIds[hubContainer.id] = true;
+    }
+
+    var minerals = room.find(FIND_MINERALS);
+    if (minerals.length > 0) {
+      mineralContainer = pickBestContainer(
+        containers,
+        assignedContainerIds,
+        function (container) {
+          return container.pos.getRangeTo(minerals[0]) <= 1;
+        },
+        function (container) {
+          return room.storage ? container.pos.getRangeTo(room.storage) : 0;
+        },
+      );
+      if (mineralContainer) assignedContainerIds[mineralContainer.id] = true;
+    }
+
+    supportContainers = [];
+    for (var j = 0; j < containers.length; j++) {
+      if (!assignedContainerIds[containers[j].id]) {
+        supportContainers.push(containers[j]);
+      }
+    }
+  }
 
   return {
     state: state,
@@ -177,8 +272,13 @@ function buildRuntimeCache(room) {
     hostileCreeps: hostileCreeps,
     hostilePowerCreeps: hostilePowerCreeps,
     hostileStructures: hostileStructures,
+    containers: containers,
     sourceContainers: sourceContainers,
     sourceContainersBySourceId: sourceContainersBySourceId,
+    hubContainer: hubContainer,
+    controllerContainer: controllerContainer,
+    mineralContainer: mineralContainer,
+    supportContainers: supportContainers || [],
     homeCreeps: homeCreeps,
   };
 }
@@ -506,9 +606,11 @@ module.exports = {
   },
 
   getControllerContainers(room) {
-    if (!room.controller) return [];
-
     const cache = getRuntimeCache(room);
+    if (cache.controllerContainer) {
+      return [cache.controllerContainer];
+    }
+    if (!room.controller) return [];
 
     return _.filter(cache.structures, function (structure) {
       return (
@@ -520,6 +622,14 @@ module.exports = {
 
   getSourceContainers(room) {
     return getRuntimeCache(room).sourceContainers;
+  },
+
+  getHubContainer(room) {
+    return getRuntimeCache(room).hubContainer || null;
+  },
+
+  getControllerContainer(room) {
+    return getRuntimeCache(room).controllerContainer || null;
   },
 
   getBalancedSourceContainer(room, creep) {
@@ -689,6 +799,11 @@ module.exports = {
   getGeneralEnergyWithdrawalTarget(room, creep) {
     const state = getRegisteredState(room) || getRuntimeCache(room).state;
     return logisticsManager.getGeneralEnergyWithdrawalTarget(room, creep, state);
+  },
+
+  getUpgraderEnergyWithdrawalTarget(room, creep) {
+    const state = getRegisteredState(room) || getRuntimeCache(room).state;
+    return logisticsManager.getUpgraderEnergyWithdrawalTarget(room, creep, state);
   },
 
   getLowTowerTarget(room, threshold, creep) {

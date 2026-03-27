@@ -10,8 +10,9 @@ Purpose:
 
 Important Notes:
 - Workers and repairers use storage first whenever it has energy
-- Upgraders now self-supply, so haulers no longer reserve energy for a
-  controller-side container
+- Typed containers are used deliberately:
+  - hub container smooths early spawn/worker flow before storage
+  - controller container accelerates upgrading until a controller link exists
 - All helpers consume room/state inputs and avoid extra global scans
 */
 
@@ -22,15 +23,32 @@ module.exports = {
     const storage = room.storage;
     const storageEnergy = storage ? storage.store[RESOURCE_ENERGY] || 0 : 0;
     const useStorageFirst = !!storage && storageEnergy > 0;
+    const useControllerBuffer =
+      !!(
+        state &&
+        state.controllerContainer &&
+        !(
+          state.infrastructure &&
+          state.infrastructure.hasControllerLink
+        )
+      );
+    const useHubBuffer = !!(state && state.hubContainer && !storage);
 
     return {
       mode: useStorageFirst ? "storage_first" : "container_first",
       storageEnergy: storageEnergy,
       hasStorage: !!storage,
-      withdrawPriority: ["storage", "source_container", "active_source"],
+      withdrawPriority: [
+        "storage",
+        "hub_container",
+        "source_container",
+        "active_source",
+      ],
       haulerMode: this.shouldUseThreatTowerPriority(room, state)
         ? "emergency"
         : "normal",
+      useControllerBuffer: useControllerBuffer,
+      useHubBuffer: useHubBuffer,
     };
   },
 
@@ -38,6 +56,11 @@ module.exports = {
     const storage = this.getStorageEnergyTarget(room);
     if (storage) {
       return storage;
+    }
+
+    const hubContainer = this.getHubContainerEnergyTarget(state);
+    if (hubContainer) {
+      return hubContainer;
     }
 
     const sourceContainer = this.getBalancedSourceContainer(state, creep);
@@ -51,6 +74,15 @@ module.exports = {
     }
 
     return source;
+  },
+
+  getUpgraderEnergyWithdrawalTarget(room, creep, state) {
+    const controllerContainer = this.getControllerContainerEnergyTarget(state);
+    if (controllerContainer) {
+      return controllerContainer;
+    }
+
+    return this.getGeneralEnergyWithdrawalTarget(room, creep, state);
   },
 
   getStorageEnergyTarget(room) {
@@ -95,6 +127,24 @@ module.exports = {
     });
 
     return scored[0].container;
+  },
+
+  getHubContainerEnergyTarget(state) {
+    if (!state || !state.hubContainer) return null;
+    if ((state.hubContainer.store[RESOURCE_ENERGY] || 0) <= 0) return null;
+    return state.hubContainer;
+  },
+
+  getControllerContainerEnergyTarget(state) {
+    if (!state || !state.controllerContainer) return null;
+    if (
+      state.infrastructure &&
+      state.infrastructure.hasControllerLink
+    ) {
+      return null;
+    }
+    if ((state.controllerContainer.store[RESOURCE_ENERGY] || 0) <= 0) return null;
+    return state.controllerContainer;
   },
 
   getWithdrawUsersByTargetId(creeps) {
@@ -149,6 +199,12 @@ module.exports = {
       const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
       if (extensionTarget) return extensionTarget;
 
+      const controllerContainer = this.getControllerContainerDeliveryTarget(state);
+      if (controllerContainer) return controllerContainer;
+
+      const hubContainer = this.getHubContainerDeliveryTarget(state);
+      if (hubContainer) return hubContainer;
+
       const storageTarget = this.getStorageDeliveryTarget(room);
       if (storageTarget) return storageTarget;
 
@@ -157,6 +213,12 @@ module.exports = {
 
     const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
     if (extensionTarget) return extensionTarget;
+
+    const controllerContainer = this.getControllerContainerDeliveryTarget(state);
+    if (controllerContainer) return controllerContainer;
+
+    const hubContainer = this.getHubContainerDeliveryTarget(state);
+    if (hubContainer) return hubContainer;
 
     const storageTarget = this.getStorageDeliveryTarget(room);
     if (storageTarget) return storageTarget;
@@ -215,5 +277,44 @@ module.exports = {
     }
     if (room.storage.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) return null;
     return room.storage;
+  },
+
+  getHubContainerDeliveryTarget(state) {
+    if (!state || !state.hubContainer) return null;
+    if (state.infrastructure && state.infrastructure.hasStorage) return null;
+    if (
+      state.hubContainer.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+    ) {
+      return null;
+    }
+    if (
+      (state.hubContainer.store[RESOURCE_ENERGY] || 0) >=
+      (config.LOGISTICS.hubContainerTarget || 0)
+    ) {
+      return null;
+    }
+    return state.hubContainer;
+  },
+
+  getControllerContainerDeliveryTarget(state) {
+    if (!state || !state.controllerContainer) return null;
+    if (
+      state.infrastructure &&
+      state.infrastructure.hasControllerLink
+    ) {
+      return null;
+    }
+    if (
+      state.controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+    ) {
+      return null;
+    }
+    if (
+      (state.controllerContainer.store[RESOURCE_ENERGY] || 0) >=
+      (config.LOGISTICS.controllerContainerTarget || 0)
+    ) {
+      return null;
+    }
+    return state.controllerContainer;
   },
 };

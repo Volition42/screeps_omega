@@ -747,6 +747,57 @@ function addContainersForSources(room, sources) {
   return containers;
 }
 
+function addContainer(room, x, y, energy) {
+  return room.addStructure(
+    createStructure(STRUCTURE_CONTAINER, x, y, {
+      roomName: room.name,
+      hits: 250000,
+      hitsMax: 250000,
+      store: { energy: energy !== undefined ? energy : 1000 },
+      storeCapacity: 2000,
+    }),
+  );
+}
+
+function addSupportContainers(room) {
+  const support = {};
+
+  const hubCandidates = [
+    [24, 28],
+    [26, 28],
+    [24, 22],
+    [26, 22],
+  ];
+  for (let i = 0; i < hubCandidates.length; i++) {
+    if (!isOccupied(room, hubCandidates[i][0], hubCandidates[i][1])) {
+      support.hub = addContainer(room, hubCandidates[i][0], hubCandidates[i][1], 600);
+      break;
+    }
+  }
+
+  const controller = room.controller;
+  const controllerCandidates = controller
+    ? [
+        [controller.pos.x - 1, controller.pos.y - 2],
+        [controller.pos.x, controller.pos.y - 2],
+        [controller.pos.x + 1, controller.pos.y - 2],
+        [controller.pos.x - 2, controller.pos.y],
+        [controller.pos.x + 2, controller.pos.y],
+      ]
+    : [];
+
+  for (let i = 0; i < controllerCandidates.length; i++) {
+    const x = controllerCandidates[i][0];
+    const y = controllerCandidates[i][1];
+    if (!isOccupied(room, x, y)) {
+      support.controller = addContainer(room, x, y, 400);
+      break;
+    }
+  }
+
+  return support;
+}
+
 function buildRoomScenario(name, options) {
   resetRuntime(options.tick);
 
@@ -772,13 +823,36 @@ function buildRoomScenario(name, options) {
 
   const sources = [
     room.addSource(createSource(options.sourceAX || 15, options.sourceAY || 25, { roomName: name })),
-    room.addSource(createSource(options.sourceBX || 35, options.sourceBY || 25, { roomName: name })),
   ];
+
+  if ((options.sourceCount || 2) >= 2) {
+    sources.push(
+      room.addSource(
+        createSource(options.sourceBX || 35, options.sourceBY || 25, {
+          roomName: name,
+        }),
+      ),
+    );
+  }
+
+  if ((options.sourceCount || 2) >= 3) {
+    sources.push(
+      room.addSource(
+        createSource(options.sourceCX || 25, options.sourceCY || 38, {
+          roomName: name,
+        }),
+      ),
+    );
+  }
 
   room.addMineral(createMineral(options.mineralX || 40, options.mineralY || 10, { roomName: name }));
 
   if (options.sourceContainers) {
     addContainersForSources(room, sources);
+  }
+
+  if (options.supportContainers) {
+    addSupportContainers(room);
   }
 
   if (options.foundationRoads) {
@@ -1079,7 +1153,10 @@ function runFoundationScenario() {
     },
   });
 
-  assert(containerSites.length === 2, `expected 2 source container sites, got ${containerSites.length}`);
+  assert(
+    containerSites.length >= 4,
+    `expected source, hub, and controller container sites, got ${containerSites.length}`,
+  );
   assert(siteTypes.includes(STRUCTURE_ROAD), "foundation should also place road sites");
 }
 
@@ -1186,6 +1263,7 @@ function runDevelopmentScenario() {
     energyAvailable: 300,
     energyCapacityAvailable: 550,
     sourceContainers: true,
+    supportContainers: true,
     foundationRoads: true,
     backboneRoads: true,
     creeps: [
@@ -1215,6 +1293,84 @@ function runDevelopmentScenario() {
   );
 }
 
+function runContainerUsageScenario() {
+  const room = buildRoomScenario("VAL_CONTAINER_USAGE", {
+    tick: 305,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    sourceCount: 3,
+    sourceContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      {
+        type: STRUCTURE_CONTAINER,
+        x: 24,
+        y: 28,
+        options: {
+          store: { energy: 600 },
+          storeCapacity: 2000,
+          hits: 250000,
+          hitsMax: 250000,
+        },
+      },
+      {
+        type: STRUCTURE_CONTAINER,
+        x: 19,
+        y: 18,
+        options: {
+          store: { energy: 400 },
+          storeCapacity: 2000,
+          hits: 250000,
+          hitsMax: 250000,
+        },
+      },
+    ],
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "upgrader1", role: "upgrader", x: 19, y: 19 },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const status = constructionStatus.getStatus(room, state);
+  const workerTarget = logisticsManager.getGeneralEnergyWithdrawalTarget(
+    room,
+    Game.creeps.worker1,
+    state,
+  );
+  const upgraderTarget = logisticsManager.getUpgraderEnergyWithdrawalTarget(
+    room,
+    Game.creeps.upgrader1,
+    state,
+  );
+  const haulerTarget = logisticsManager.getHaulerDeliveryTarget(
+    room,
+    Game.creeps.hauler1,
+    state,
+  );
+
+  assert(status.sourceContainersNeeded === 3, "three-source room should plan three source containers");
+  assert(status.sourceContainersBuilt >= 3, "three-source room should count all built source containers");
+  assert(state.hubContainer, "hub container should be classified");
+  assert(state.controllerContainer, "controller container should be classified");
+  assert(
+    workerTarget && workerTarget.id === state.hubContainer.id,
+    "workers should prefer the hub container before draining source containers when storage is absent",
+  );
+  assert(
+    upgraderTarget && upgraderTarget.id === state.controllerContainer.id,
+    "upgraders should prefer the controller container when it has energy",
+  );
+  assert(
+    haulerTarget && haulerTarget.id === state.controllerContainer.id,
+    "haulers should refill the controller container before generic storage work",
+  );
+}
+
 function runLogisticsScenario() {
   const room = buildRoomScenario("VAL_LOGISTICS", {
     tick: 400,
@@ -1223,6 +1379,7 @@ function runLogisticsScenario() {
     energyAvailable: 550,
     energyCapacityAvailable: 550,
     sourceContainers: true,
+    supportContainers: true,
     foundationRoads: true,
     backboneRoads: true,
     creeps: [
@@ -1252,6 +1409,7 @@ function runSpecializationScenario() {
     energyAvailable: 800,
     energyCapacityAvailable: 800,
     sourceContainers: true,
+    supportContainers: true,
     foundationRoads: true,
     backboneRoads: true,
     creeps: [
@@ -1288,6 +1446,7 @@ function runFortificationScenario() {
     energyAvailable: 1200,
     energyCapacityAvailable: 1200,
     sourceContainers: true,
+    supportContainers: true,
     foundationRoads: true,
     backboneRoads: true,
     creeps: [
@@ -1336,6 +1495,7 @@ function runCommandScenario() {
     energyAvailable: 1300,
     energyCapacityAvailable: 1300,
     sourceContainers: true,
+    supportContainers: true,
     foundationRoads: true,
     backboneRoads: true,
     creeps: [
@@ -1394,6 +1554,7 @@ function runFactoryOpsScenario() {
     energyAvailable: 1300,
     energyCapacityAvailable: 1300,
     sourceContainers: true,
+    supportContainers: true,
     foundationRoads: true,
     backboneRoads: true,
     creeps: [
@@ -1436,6 +1597,7 @@ function main() {
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
+    ["container_usage", runContainerUsageScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],
     ["fortification", runFortificationScenario],
