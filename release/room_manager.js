@@ -1,6 +1,7 @@
 const roomState = require("room_state");
 const utils = require("utils");
 const constructionManager = require("construction_manager");
+const linkManager = require("link_manager");
 const spawnManager = require("spawn_manager");
 const creepManager = require("creep_manager");
 const towerManager = require("tower_manager");
@@ -46,6 +47,7 @@ module.exports = {
       detailCpu ? profiler : null,
       detailCpu ? roomLabel : null,
     );
+    runStep("links", linkManager.run, linkManager, room, state);
     runStep("towers", towerManager.run, towerManager, room, state);
     state.advancedOps = runStep(
       "advancedOps",

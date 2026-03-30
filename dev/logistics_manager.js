@@ -77,6 +77,11 @@ module.exports = {
   },
 
   getUpgraderEnergyWithdrawalTarget(room, creep, state) {
+    const controllerLink = this.getControllerLinkEnergyTarget(state);
+    if (controllerLink) {
+      return controllerLink;
+    }
+
     const controllerContainer = this.getControllerContainerEnergyTarget(state);
     if (controllerContainer) {
       return controllerContainer;
@@ -89,6 +94,16 @@ module.exports = {
     if (!room.storage) return null;
     if ((room.storage.store[RESOURCE_ENERGY] || 0) <= 0) return null;
     return room.storage;
+  },
+
+  getControllerLinkEnergyTarget(state) {
+    if (!state || !state.infrastructure || !state.infrastructure.controllerLink) {
+      return null;
+    }
+
+    const controllerLink = state.infrastructure.controllerLink;
+    if ((controllerLink.store[RESOURCE_ENERGY] || 0) <= 0) return null;
+    return controllerLink;
   },
 
   getBalancedSourceContainer(state, creep) {
@@ -214,6 +229,9 @@ module.exports = {
     const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
     if (extensionTarget) return extensionTarget;
 
+    const sourceLink = this.getSourceLinkDeliveryTarget(state, creep);
+    if (sourceLink) return sourceLink;
+
     const controllerContainer = this.getControllerContainerDeliveryTarget(state);
     if (controllerContainer) return controllerContainer;
 
@@ -231,6 +249,56 @@ module.exports = {
     if (reserveTower) return reserveTower;
 
     return null;
+  },
+
+  getSourceLinkDeliveryTarget(state, creep) {
+    if (!state || !state.infrastructure || !creep) return null;
+
+    const infrastructure = state.infrastructure;
+    if (!this.shouldFillSourceLinks(infrastructure)) {
+      return null;
+    }
+
+    const bySourceId = infrastructure.sourceLinksBySourceId || {};
+    const candidates = [];
+
+    for (const sourceId in bySourceId) {
+      if (!Object.prototype.hasOwnProperty.call(bySourceId, sourceId)) continue;
+
+      const link = bySourceId[sourceId];
+      if (!link) continue;
+      if (link.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) continue;
+      candidates.push(link);
+    }
+
+    if (candidates.length === 0) return null;
+
+    return (
+      creep.pos.findClosestByPath(candidates) ||
+      creep.pos.findClosestByRange(candidates)
+    );
+  },
+
+  shouldFillSourceLinks(infrastructure) {
+    if (!infrastructure) return false;
+
+    const storageLink = infrastructure.storageLink || null;
+    if (
+      storageLink &&
+      storageLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      return true;
+    }
+
+    const controllerLink = infrastructure.controllerLink || null;
+    if (
+      controllerLink &&
+      controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      return true;
+    }
+
+    return false;
   },
 
   getLowTowerTarget(room, threshold, creep) {

@@ -33,7 +33,8 @@ module.exports = {
 
       if (
         target.structureType === STRUCTURE_STORAGE ||
-        target.structureType === STRUCTURE_CONTAINER
+        target.structureType === STRUCTURE_CONTAINER ||
+        target.structureType === STRUCTURE_LINK
       ) {
         if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
           utils.moveTo(creep, target, MOVE_OPTIONS);
@@ -86,7 +87,8 @@ module.exports = {
 
     if (
       (target.structureType === STRUCTURE_STORAGE ||
-        target.structureType === STRUCTURE_CONTAINER) &&
+        target.structureType === STRUCTURE_CONTAINER ||
+        target.structureType === STRUCTURE_LINK) &&
       (target.store[RESOURCE_ENERGY] || 0) <= 0
     ) {
       delete creep.memory.withdrawTargetId;
