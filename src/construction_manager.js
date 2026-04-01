@@ -1607,6 +1607,10 @@ module.exports = {
         remainingExtensions,
       );
     }
+
+    if (remainingExtensions > 0 && !this.isSiteCapReached(context)) {
+      this.placeFallbackExtensions(context, remainingExtensions);
+    }
   },
 
   placeTowerStamp(context) {
@@ -1723,6 +1727,46 @@ module.exports = {
     return placed;
   },
 
+  placeFallbackExtensions(context, limit) {
+    var anchor = this.getAnchorOrigin(context);
+    if (!anchor || limit <= 0) return 0;
+
+    var placed = 0;
+    var centerPos = new RoomPosition(anchor.x, anchor.y, anchor.roomName);
+    var candidates = this.getNearbyPositions(centerPos, 4, 12);
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (this.isSiteCapReached(context)) return placed;
+      if (placed >= limit) return placed;
+      if (!this.isFallbackExtensionCandidate(context, candidates[i])) continue;
+
+      if (this.tryPlaceStructureSite(context, candidates[i], STRUCTURE_EXTENSION)) {
+        placed++;
+      }
+    }
+
+    return placed;
+  },
+
+  isFallbackExtensionCandidate(context, pos) {
+    if (!pos) return false;
+
+    var room = context.room;
+    var state = context.state;
+    var storage = room.storage || null;
+    var controller = room.controller || null;
+    var sources = state.sources || [];
+
+    for (var i = 0; i < sources.length; i++) {
+      if (pos.getRangeTo(sources[i]) <= 1) return false;
+    }
+
+    if (controller && pos.getRangeTo(controller) <= 2) return false;
+    if (storage && pos.getRangeTo(storage) <= 1) return false;
+
+    return true;
+  },
+
   placeRoadPath(context, fromPos, toPos, range) {
     var room = context.room;
     var path = fromPos.findPathTo(toPos, {
@@ -1764,19 +1808,16 @@ module.exports = {
 
     if (hasSameStructure || hasSameSite) return false;
 
+    var self = this;
     var blocked = _.some(structures, function (s) {
-      if (structureType === STRUCTURE_ROAD) {
-        return (
-          s.structureType !== STRUCTURE_ROAD &&
-          s.structureType !== STRUCTURE_CONTAINER
-        );
-      }
-
-      return (
-        s.structureType !== STRUCTURE_ROAD &&
-        s.structureType !== STRUCTURE_CONTAINER
-      );
+      return !self.canStructureTypesShareTile(structureType, s.structureType);
     });
+
+    if (!blocked) {
+      blocked = _.some(sites, function (s) {
+        return !self.canStructureTypesShareTile(structureType, s.structureType);
+      });
+    }
 
     if (blocked) return false;
 
@@ -1784,6 +1825,25 @@ module.exports = {
 
     this.recordSitePlacement(context, pos, structureType);
     return true;
+  },
+
+  canStructureTypesShareTile(plannedType, existingType) {
+    if (plannedType === existingType) return true;
+    if (!plannedType || !existingType) return false;
+
+    if (plannedType === STRUCTURE_RAMPART || existingType === STRUCTURE_RAMPART) {
+      return true;
+    }
+
+    if (plannedType === STRUCTURE_ROAD) {
+      return existingType === STRUCTURE_CONTAINER;
+    }
+
+    if (plannedType === STRUCTURE_CONTAINER) {
+      return existingType === STRUCTURE_ROAD;
+    }
+
+    return false;
   },
 
   getDefenseRing(context) {

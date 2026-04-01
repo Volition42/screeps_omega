@@ -112,11 +112,12 @@ module.exports = {
     var desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
     phase = this.resolveRoomPhase(room, sharedState, phase, desiredTotalHaulers);
 
-    var finalState = this.createState(sharedState, phase);
+    var finalState = this.hydrateDerivedState(
+      room,
+      this.createState(sharedState, phase),
+    );
     finalState.defense = defenseManager.collect(room, finalState);
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
-    finalState.buildStatus = constructionStatus.getStatus(room, finalState);
-    finalState.infrastructure = this.getInfrastructureState(room, finalState);
 
     return finalState;
   },
@@ -132,8 +133,11 @@ module.exports = {
     var planningPhase = room.controller
       ? roadmap.getHighestPhaseForControllerLevel(room.controller.level)
       : phase;
-    var provisionalState = this.createState(sharedState, planningPhase);
-    var buildStatus = constructionStatus.getStatus(room, provisionalState);
+    var provisionalState = this.hydrateDerivedState(
+      room,
+      this.createState(sharedState, planningPhase),
+    );
+    var buildStatus = provisionalState.buildStatus;
 
     if (
       phase === "foundation" &&
@@ -181,6 +185,20 @@ module.exports = {
     }
 
     return phase;
+  },
+
+  hydrateDerivedState(room, state) {
+    if (!state) return state;
+
+    // Developer note:
+    // Build status depends on infrastructure (for example storage/link-aware
+    // container goals), and infrastructure exposes a few status-derived fields.
+    // Run this in two passes so both views stay in sync for ops/HUD/planning.
+    state.infrastructure = this.getInfrastructureState(room, state);
+    state.buildStatus = constructionStatus.getStatus(room, state);
+    state.infrastructure = this.getInfrastructureState(room, state);
+
+    return state;
   },
 
   getHomeCreeps(roomName) {
