@@ -38,8 +38,8 @@ def main() -> int:
     parser.add_argument(
         "source",
         nargs="?",
-        default=str(repo_root / "dev"),
-        help="source directory to upload, default is repo dev/",
+        default=str(repo_root / "src"),
+        help="source directory to upload, default is repo src/",
     )
     parser.add_argument(
         "--server-url",

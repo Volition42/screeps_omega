@@ -5,11 +5,11 @@ const path = require("path");
 const Module = require("module");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
-const devRoot = path.join(repoRoot, "dev");
+const srcRoot = path.join(repoRoot, "src");
 
 process.env.NODE_PATH = process.env.NODE_PATH
-  ? `${devRoot}${path.delimiter}${process.env.NODE_PATH}`
-  : devRoot;
+  ? `${srcRoot}${path.delimiter}${process.env.NODE_PATH}`
+  : srcRoot;
 Module._initPaths();
 
 const OK = 0;

@@ -157,8 +157,9 @@ module.exports = {
   Logistics Controls
 
   towerEmergencyThreshold
-  If any tower drops below this level, or if hostiles are present,
-  haulers switch to threat mode and towers move ahead of storage reserve work.
+  If any tower drops below this level, haulers top towers up to this threshold
+  after spawn/extensions are safe. Under hostile pressure, towers are filled
+  more aggressively toward capacity.
 
   towerReserveThreshold
   In normal mode, towers are only topped up after storage and only if they are

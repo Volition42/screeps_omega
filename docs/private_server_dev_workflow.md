@@ -1,9 +1,8 @@
 # Private Server Dev Workflow
 
-Current split:
+Current layout:
 
-- `dev/` is the primary development source tree for the local `screeps@ptr` private server.
-- `release/` is the current live-compatible source tree for the existing online deployment path.
+- `src/` is the single Screeps source tree used for local `screeps@ptr` validation and live deployment uploads.
 
 As of March 24, 2026:
 
@@ -56,9 +55,9 @@ The private server stays outside the repo on purpose. Only the helper scripts an
 - `scripts/private_server/world_tool.py`
   Private-server admin entry point for world reset, room reseed, tick control, and invader creation.
 - `scripts/private_server/reseed_dev_room.sh`
-  Rebuilds the default test room, uploads `dev/`, and restores browser login.
+  Rebuilds the default test room, uploads `src/`, and restores browser login.
 - `scripts/private_server/reset_dev_world.sh`
-  Wipes the world, recreates `local-dev`, uploads `dev/`, and reseeds the default test room.
+  Wipes the world, recreates `local-dev`, uploads `src/`, and reseeds the default test room.
 - `scripts/private_server/set_fast_tick.sh`
   Lowers tick duration for faster local progression.
 - `scripts/private_server/set_test_cpu.sh`
@@ -69,10 +68,8 @@ The private server stays outside the repo on purpose. Only the helper scripts an
   Resumes the simulation loop.
 - `scripts/private_server/spawn_test_invader.sh`
   Spawns a hostile in the test room for defense validation.
-- `scripts/private_server/upload_dev.sh`
-  Uploads `dev/` to the private server active world branch.
-- `scripts/private_server/upload_release.sh`
-  Uploads `release/` to the private server active world branch.
+- `scripts/private_server/upload_src.sh`
+  Uploads `src/` to the private server active world branch.
 - `scripts/private_server/upload_code.py`
   Generic uploader for any Screeps source directory.
 - `scripts/private_server/load_server_profile.sh`
@@ -96,13 +93,13 @@ scripts/private_server/start_dev_server.sh
 scripts/private_server/check_dev_server.sh
 ```
 
-3. Upload current `dev/`:
+3. Upload current `src/`:
 
 ```bash
-scripts/private_server/upload_dev.sh
+scripts/private_server/upload_src.sh
 ```
 
-4. Validate behavior against the private server before promoting anything toward `release/`.
+4. Validate behavior against the private server before pushing online changes.
 
 ## Browser Use
 
@@ -156,7 +153,7 @@ scripts/private_server/stop_dev_server.sh
 scripts/private_server/start_dev_server.sh
 ```
 
-Full world reset back to a fresh `dev/` room:
+Full world reset back to a fresh `src/` room:
 
 ```bash
 scripts/private_server/reset_dev_world.sh
@@ -169,11 +166,10 @@ scripts/private_server/pause_simulation.sh
 scripts/private_server/resume_simulation.sh
 ```
 
-## Release Role
+## Deployment Role
 
-- Keep `release/` as the conservative live-online source.
-- Keep `dev/` as the place where new behavior is introduced and validated against the private server first.
-- Promote from `dev/` to `release/` intentionally, not automatically.
+- Keep `src/` as the single source of truth.
+- Validate in PTR first, then push the same code online intentionally.
 
 ## Current Validation State
 
@@ -181,9 +177,9 @@ The private server has already been bootstrapped successfully enough to:
 
 - start the current PTR server
 - authenticate with the local dev token
-- upload the repo `dev/` modules
+- upload the repo `src/` modules
 - create a local user
 - place a first spawn in `W5N5`
 - observe the uploaded code spawning a `jrworker`
 
-That means `dev/` is now executing on the private PTR server instead of being limited to syntax checks.
+That means `src/` is now executing on the private PTR server instead of being limited to syntax checks.

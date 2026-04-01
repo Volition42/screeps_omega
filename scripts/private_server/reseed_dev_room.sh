@@ -15,5 +15,5 @@ python3 "${ROOT_DIR}/scripts/private_server/world_tool.py" reseed-room \
   --spawn-name "${SPAWN_NAME}" \
   --spawn-x "${SPAWN_X}" \
   --spawn-y "${SPAWN_Y}"
-zsh "${ROOT_DIR}/scripts/private_server/upload_dev.sh"
+zsh "${ROOT_DIR}/scripts/private_server/upload_src.sh"
 zsh "${ROOT_DIR}/scripts/private_server/set_browser_password.sh"

@@ -38,8 +38,7 @@ Constraints:
 
 Relevant Architecture Notes:
 
-- dev/\* is for devdelopment
-- release/\* is for syncing changes from dev/ and live testing
+- src/\* is the single source tree for development and live testing
 - docs/\* is for reference documentation
 - docs/ai_project_bootstrap_kid.md is critical source to always remember
 - docs/ai_project_bootstrap_prompts.md is critical source to always remember

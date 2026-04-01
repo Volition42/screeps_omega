@@ -8,15 +8,18 @@ Purpose:
 - Support emergency defense and spawn recovery first
 
 Delivery priority:
-Threat mode or low tower energy:
+Hostile pressure:
 - spawn
 - towers
 - extensions
+- controller / hub buffers
 - storage
 
 Normal mode:
 - spawn
 - extensions
+- emergency towers below threshold
+- controller / hub buffers
 - storage
 - towers below reserve threshold
 

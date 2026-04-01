@@ -8,6 +8,6 @@ TOKEN="${SCREEPS_LOCAL_TOKEN}"
 SERVER_URL="${SCREEPS_SERVER_URL}"
 
 exec python3 "${ROOT_DIR}/scripts/private_server/upload_code.py" \
-  "${ROOT_DIR}/dev" \
+  "${ROOT_DIR}/src" \
   --server-url "${SERVER_URL}" \
   --token "${TOKEN}"

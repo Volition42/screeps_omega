@@ -1,10 +1,10 @@
 # Home Room RCL8 Upgrade Roadmap
 
-Reality-based roadmap for the current `dev/` build.
+Reality-based roadmap for the current `src/` build.
 
 The home-room construction path now reaches `command` / `RCL8` on paper and in code. This file tracks what is still missing before the single-room RCL8 path should be considered stable, validated, and feature-complete in live play.
 
-## Already Completed In Dev
+## Already Completed In Source
 
 These items are no longer active roadmap work:
 
@@ -48,7 +48,7 @@ Done when:
 
 ## 2. Harden Late-Structure Operations
 
-Status: [~] Partially implemented in `dev/`
+Status: [~] Partially implemented in `src/`
 
 Purpose:
 

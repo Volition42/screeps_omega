@@ -351,6 +351,27 @@ module.exports = {
       }
     }
 
+    if (!hubContainer && controllerContainer && hubAnchor) {
+      var canReuseControllerContainer =
+        controllerContainer.pos.getRangeTo(hubAnchor) <= 4;
+
+      for (
+        var controllerSourceIndex = 0;
+        canReuseControllerContainer && controllerSourceIndex < sources.length;
+        controllerSourceIndex++
+      ) {
+        if (
+          controllerContainer.pos.getRangeTo(sources[controllerSourceIndex]) <= 1
+        ) {
+          canReuseControllerContainer = false;
+        }
+      }
+
+      if (canReuseControllerContainer) {
+        hubContainer = controllerContainer;
+      }
+    }
+
     var supportContainers = [];
     for (var k = 0; k < containers.length; k++) {
       if (!assignedIds[containers[k].id]) {

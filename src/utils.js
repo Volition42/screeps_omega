@@ -239,6 +239,25 @@ function buildRuntimeCache(room) {
       if (hubContainer) assignedContainerIds[hubContainer.id] = true;
     }
 
+    if (!hubContainer && controllerContainer && hubAnchor) {
+      var canReuseControllerContainer =
+        controllerContainer.pos.getRangeTo(hubAnchor) <= 4;
+
+      for (
+        var sourceIndex = 0;
+        canReuseControllerContainer && sourceIndex < sources.length;
+        sourceIndex++
+      ) {
+        if (controllerContainer.pos.getRangeTo(sources[sourceIndex]) <= 1) {
+          canReuseControllerContainer = false;
+        }
+      }
+
+      if (canReuseControllerContainer) {
+        hubContainer = controllerContainer;
+      }
+    }
+
     var minerals = room.find(FIND_MINERALS);
     if (minerals.length > 0) {
       mineralContainer = pickBestContainer(

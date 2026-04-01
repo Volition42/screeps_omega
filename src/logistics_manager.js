@@ -44,9 +44,11 @@ module.exports = {
         "source_container",
         "active_source",
       ],
-      haulerMode: this.shouldUseThreatTowerPriority(room, state)
-        ? "emergency"
-        : "normal",
+      haulerMode: this.hasHostilePressure(room, state)
+        ? "hostile"
+        : this.hasEmergencyTowerNeed(room, state)
+          ? "tower_emergency"
+          : "normal",
       useControllerBuffer: useControllerBuffer,
       useHubBuffer: useHubBuffer,
     };
@@ -176,11 +178,11 @@ module.exports = {
     return usersByTargetId;
   },
 
-  shouldUseThreatTowerPriority(room, state) {
-    if (state && state.hostileCreeps && state.hostileCreeps.length > 0) {
-      return true;
-    }
+  hasHostilePressure(room, state) {
+    return !!(state && state.hostileCreeps && state.hostileCreeps.length > 0);
+  },
 
+  hasEmergencyTowerNeed(room, state) {
     const towers =
       state && state.structuresByType
         ? state.structuresByType[STRUCTURE_TOWER] || []
@@ -197,37 +199,44 @@ module.exports = {
     });
   },
 
+  shouldUseThreatTowerPriority(room, state) {
+    return (
+      this.hasHostilePressure(room, state) ||
+      this.hasEmergencyTowerNeed(room, state)
+    );
+  },
+
+  getTowerCapacityTarget() {
+    return typeof TOWER_CAPACITY === "number" ? TOWER_CAPACITY : 1000;
+  },
+
   getHaulerDeliveryTarget(room, creep, state) {
     const spawnTarget = this.getSpawnDeliveryTarget(room, creep);
     if (spawnTarget) return spawnTarget;
 
-    const threatMode = this.shouldUseThreatTowerPriority(room, state);
+    const hostilePressure = this.hasHostilePressure(room, state);
+    const towerEmergency = this.hasEmergencyTowerNeed(room, state);
 
-    if (threatMode) {
+    if (hostilePressure) {
       const emergencyTower = this.getLowTowerTarget(
         room,
-        room.energyCapacityAvailable,
+        this.getTowerCapacityTarget(),
         creep,
       );
       if (emergencyTower) return emergencyTower;
-
-      const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
-      if (extensionTarget) return extensionTarget;
-
-      const controllerContainer = this.getControllerContainerDeliveryTarget(state);
-      if (controllerContainer) return controllerContainer;
-
-      const hubContainer = this.getHubContainerDeliveryTarget(state);
-      if (hubContainer) return hubContainer;
-
-      const storageTarget = this.getStorageDeliveryTarget(room);
-      if (storageTarget) return storageTarget;
-
-      return null;
     }
 
     const extensionTarget = this.getExtensionDeliveryTarget(room, creep);
     if (extensionTarget) return extensionTarget;
+
+    if (!hostilePressure && towerEmergency) {
+      const emergencyTower = this.getLowTowerTarget(
+        room,
+        config.LOGISTICS.towerEmergencyThreshold,
+        creep,
+      );
+      if (emergencyTower) return emergencyTower;
+    }
 
     const sourceLink = this.getSourceLinkDeliveryTarget(state, creep);
     if (sourceLink) return sourceLink;
@@ -243,7 +252,9 @@ module.exports = {
 
     const reserveTower = this.getLowTowerTarget(
       room,
-      config.LOGISTICS.towerReserveThreshold,
+      hostilePressure
+        ? this.getTowerCapacityTarget()
+        : config.LOGISTICS.towerReserveThreshold,
       creep,
     );
     if (reserveTower) return reserveTower;
