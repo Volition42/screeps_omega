@@ -5,13 +5,14 @@ PROFILE="${SCREEPS_SERVER_PROFILE:-ptr}"
 case "${PROFILE}" in
   ptr)
     : "${SCREEPS_PRIVATE_SERVER_DIR:=/Users/jaysheldon/screeps_private_server_ptr}"
-    : "${SCREEPS_NODE_BIN:=/opt/homebrew/opt/node@22/bin}"
+    : "${SCREEPS_NODE_BIN:=/opt/homebrew/opt/node@24/bin}"
     : "${SCREEPS_SERVER_HOST:=127.0.0.1}"
     : "${SCREEPS_SERVER_PORT:=21035}"
     : "${SCREEPS_CLI_HOST:=localhost}"
     : "${SCREEPS_CLI_PORT:=21036}"
     ;;
   feat-node24)
+    # Backward-compatible alternate local install profile.
     : "${SCREEPS_PRIVATE_SERVER_DIR:=/Users/jaysheldon/screeps_private_server}"
     : "${SCREEPS_NODE_BIN:=/opt/homebrew/opt/node@24/bin}"
     : "${SCREEPS_SERVER_HOST:=127.0.0.1}"

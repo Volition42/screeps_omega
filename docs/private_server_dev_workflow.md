@@ -4,19 +4,20 @@ Current layout:
 
 - `src/` is the single Screeps source tree used for local `screeps@ptr` validation and live deployment uploads.
 
-As of March 24, 2026:
+As of April 2, 2026:
 
-- `screeps@ptr` is `4.3.0-beta` and declares `node >=22.9.0`.
-- `screeps@feat-node24` remains available as a secondary preview profile for comparison work.
+- Live-world testing has moved to Node 24, so local validation should use Node 24 by default.
+- `npm view screeps` currently reports `latest=4.3.0`, `ptr=4.3.0-beta`, and package engines `node >=22.9.0`.
+- The repo `ptr` profile now defaults to Node 24 even though the published package metadata still advertises a lower minimum.
 - The default private-server target is now `ptr`.
 
 ## Local Paths
 
 - PTR private server root: `/Users/jaysheldon/screeps_private_server_ptr`
-- Optional Node 24 preview server root: `/Users/jaysheldon/screeps_private_server`
+- Optional alternate local server root: `/Users/jaysheldon/screeps_private_server`
 - Browser client root: `/Users/jaysheldon/screeps_browser_client`
-- PTR Node binary path: `/opt/homebrew/opt/node@22/bin`
-- Preview Node binary path: `/opt/homebrew/opt/node@24/bin`
+- PTR Node binary path: `/opt/homebrew/opt/node@24/bin`
+- Alternate local Node binary path: `/opt/homebrew/opt/node@24/bin`
 - PTR server URL: `http://127.0.0.1:21035`
 - PTR CLI port: `21036`
 - Local dev auth token: `screeps-omega-dev-token`
@@ -34,7 +35,7 @@ The private server stays outside the repo on purpose. Only the helper scripts an
 - The local no-auth patch now also bridges `/api/auth/steam-ticket`, so the Screeps client login flow can complete without live Steam auth against this private server.
 - Browser access is provided by a separate `screepers-steamless-client` install on `http://127.0.0.1:8080/`, not by the private server itself.
 - The private server also loads `node_modules/screepsmod-auth`, which provides `/api/auth/signin` and password auth for the browser client.
-- All repo helper scripts source `scripts/private_server/load_server_profile.sh`. Set `SCREEPS_SERVER_PROFILE=feat-node24` only when you intentionally want the older preview server.
+- All repo helper scripts source `scripts/private_server/load_server_profile.sh`. The default `ptr` profile now uses Node 24. Set `SCREEPS_SERVER_PROFILE=feat-node24` only when you intentionally want the alternate local install.
 
 ## Repo Helpers
 
@@ -73,7 +74,7 @@ The private server stays outside the repo on purpose. Only the helper scripts an
 - `scripts/private_server/upload_code.py`
   Generic uploader for any Screeps source directory.
 - `scripts/private_server/load_server_profile.sh`
-  Central profile switch between the default `ptr` server and the optional `feat-node24` preview server.
+  Central profile switch between the default `ptr` server and the optional `feat-node24` alternate local install.
 - `scripts/private_server/patch_private_server.py`
   Reapplies the external private-server bootstrap and local auth/browser patches after a reinstall or package update.
 - `scripts/private_server/patch_feat_node24_server.py`
