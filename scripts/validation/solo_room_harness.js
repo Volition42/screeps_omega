@@ -1446,6 +1446,42 @@ function runSpecializationScenario() {
   );
 }
 
+function runSpecializationTransitionScenario() {
+  const room = buildRoomScenario("VAL_SPECIALIZATION_TRANSITION", {
+    tick: 525,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 120000;
+
+  const state = roomState.collect(room);
+
+  assert(
+    state.phase === "specialization",
+    `expected specialization transition at RCL6 after logistics links, got ${state.phase}`,
+  );
+}
+
 function runMineralOpsScenario() {
   const room = buildRoomScenario("VAL_MINERAL_OPS", {
     tick: 550,
@@ -1653,6 +1689,7 @@ function main() {
     ["container_usage", runContainerUsageScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],
+    ["specialization_transition", runSpecializationTransitionScenario],
     ["mineral_ops", runMineralOpsScenario],
     ["fortification", runFortificationScenario],
     ["command", runCommandScenario],
