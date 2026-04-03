@@ -44,6 +44,9 @@ module.exports = {
       case "miner":
         return this.planMinerBody(energyCapacity, request, room, state);
 
+      case "mineral_miner":
+        return this.planMineralMinerBody(energyCapacity, request, room, state);
+
       case "hauler":
         return this.planHaulerBody(energyCapacity, request, room, state);
 
@@ -134,6 +137,44 @@ module.exports = {
     return this.finalizePlan(
       "miner",
       sourceContainer ? "source_container" : "mobile_harvest",
+      this.buildEconomicBody(counts),
+    );
+  },
+
+  planMineralMinerBody(energyCapacity, request, room, state) {
+    const maxWork = this.getConfiguredLimit("mineralMinerMaxWork", 5);
+    const mineralContainer =
+      state && Object.prototype.hasOwnProperty.call(state, "mineralContainer")
+        ? state.mineralContainer
+        : null;
+    const counts = {
+      work: Math.min(
+        maxWork,
+        2 + Math.floor(Math.max(0, energyCapacity - 300) / 125),
+      ),
+      carry: mineralContainer ? 2 : 3,
+      move: mineralContainer ? 2 : 3,
+    };
+    const minimums = {
+      work: 2,
+      carry: mineralContainer ? 2 : 3,
+      move: mineralContainer ? 2 : 3,
+    };
+
+    if (!mineralContainer) {
+      counts.carry = Math.max(3, Math.ceil(counts.work / 2));
+      counts.move = Math.max(3, Math.ceil((counts.work + counts.carry) / 2));
+    }
+
+    this.fitEconomicCounts(counts, minimums, energyCapacity, [
+      "move",
+      "carry",
+      "work",
+    ]);
+
+    return this.finalizePlan(
+      "mineral_miner",
+      mineralContainer ? "extractor_stationary" : "extractor_mobile",
       this.buildEconomicBody(counts),
     );
   },

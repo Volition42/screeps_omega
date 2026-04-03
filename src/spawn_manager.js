@@ -302,6 +302,8 @@ module.exports = {
       }
     }
 
+    this.addMineralRequests(room, state, requests);
+
     if (!settings.includeRepairs) return;
 
     var desiredRepairs = this.getDesiredRepairs(room, state);
@@ -535,6 +537,55 @@ module.exports = {
     var carryPerCreep = Math.max(1, plan.carryParts || 1);
 
     return Math.max(1, Math.ceil(carryDemand / carryPerCreep));
+  },
+
+  addMineralRequests(room, state, requests) {
+    var minerals = state && state.minerals ? state.minerals : [];
+    var mineral = minerals.length > 0 ? minerals[0] : null;
+
+    if (!this.shouldSpawnMineralMiner(room, state, mineral)) {
+      return;
+    }
+
+    var desiredMiners = Math.max(0, config.CREEPS.mineralMinersPerRoom || 0);
+    var existingMiners = this.getRoleTargetCount(state, "mineral_miner", mineral.id);
+    var queuedMiners = this.countQueuedForTarget(room, "mineral_miner", mineral.id);
+
+    for (
+      var minerIndex = existingMiners + queuedMiners;
+      minerIndex < desiredMiners;
+      minerIndex++
+    ) {
+      requests.push({
+        role: "mineral_miner",
+        priority: 65,
+        targetId: mineral.id,
+      });
+    }
+  },
+
+  shouldSpawnMineralMiner(room, state, mineral) {
+    if (!room.controller || room.controller.level < 6) return false;
+    if (!room.storage) return false;
+    if (!mineral || mineral.mineralAmount <= 0) return false;
+    if (!state || !state.mineralContainer) return false;
+    if (state.hostileCreeps && state.hostileCreeps.length > 0) return false;
+
+    var storageEnergy = room.storage.store[RESOURCE_ENERGY] || 0;
+    var minimumEnergy =
+      config.ADVANCED &&
+      typeof config.ADVANCED.MINERAL_MINING_MIN_STORAGE_ENERGY === "number"
+        ? config.ADVANCED.MINERAL_MINING_MIN_STORAGE_ENERGY
+        : 20000;
+    if (storageEnergy < minimumEnergy) return false;
+
+    var structuresByType = state.structuresByType || {};
+    var extractors = structuresByType[STRUCTURE_EXTRACTOR] || [];
+    if (extractors.length <= 0) return false;
+
+    return _.some(extractors, function (extractor) {
+      return extractor.pos.isEqualTo(mineral.pos);
+    });
   },
 
   getDesiredRepairs(room, state) {

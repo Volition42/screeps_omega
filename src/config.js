@@ -57,6 +57,7 @@ module.exports = {
     //
     // Miners are always one per source.
     minersPerSource: 1,
+    mineralMinersPerRoom: 1,
 
     // Developer note:
     // Optional per-source overrides.
@@ -190,6 +191,7 @@ module.exports = {
       "lab_cleanup",
       "lab_output",
       "lab_input",
+      "mineral_output",
       "factory_output",
       "factory_input",
       "factory_energy",
@@ -220,6 +222,8 @@ module.exports = {
         "ZO",
       ],
     },
+    MINERAL_MINING_MIN_STORAGE_ENERGY: 20000,
+    MINERAL_EXPORT_AT: 100,
     FACTORY: {
       ENABLED: true,
       PRODUCT_PRIORITY: ["battery"],
@@ -288,6 +292,7 @@ module.exports = {
     // infrastructure state instead of a single shared tier ladder.
     workerMaxWork: 8,
     minerMaxWork: 5,
+    mineralMinerMaxWork: 5,
     haulerMaxCarry: 16,
     upgraderMaxWork: 8,
     repairMaxWork: 6,
