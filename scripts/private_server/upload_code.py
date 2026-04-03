@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -16,6 +18,42 @@ def load_modules(source_dir: Path) -> dict[str, str]:
     if not modules:
         raise SystemExit(f"no .js modules found in {source_dir}")
     return modules
+
+
+def run_git(repo_root: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+    return result.stdout.strip()
+
+
+def build_info_payload(repo_root: Path, branch: str, source_dir: Path) -> dict[str, str | None]:
+    commit = run_git(repo_root, "rev-parse", "--short", "HEAD") or "unknown"
+    dirty = bool(run_git(repo_root, "status", "--porcelain"))
+    branch_name = run_git(repo_root, "branch", "--show-current") or branch or "unknown"
+    deployed_at = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat()
+    source_name = source_dir.name
+    build_id = f"{commit}{'-dirty' if dirty else ''}"
+
+    return {
+        "buildId": build_id,
+        "gitCommit": commit,
+        "gitBranch": branch_name,
+        "deployedAt": deployed_at,
+        "source": source_name,
+    }
+
+
+def build_info_module(payload: dict[str, str | None]) -> str:
+    return "module.exports = " + json.dumps(payload, indent=2) + ";\n"
 
 
 def api_request(url: str, token: str, payload: dict | None = None) -> dict:
@@ -60,6 +98,8 @@ def main() -> int:
 
     source_dir = Path(args.source).resolve()
     modules = load_modules(source_dir)
+    build_info = build_info_payload(repo_root, args.branch, source_dir)
+    modules["build_info"] = build_info_module(build_info)
     payload = {"branch": args.branch, "modules": modules}
 
     try:
@@ -80,6 +120,7 @@ def main() -> int:
                 "uploaded_modules": len(modules),
                 "source": str(source_dir),
                 "branch": args.branch,
+                "build_id": build_info.get("buildId"),
                 "timestamp": result.get("timestamp"),
                 "user": me.get("username"),
             },

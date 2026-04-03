@@ -1,0 +1,20 @@
+{
+  "name": "screeps_omega",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Screeps World bot tooling and validation scripts.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "npm run check:syntax && npm run test",
+    "check:node24": "npm run check:syntax:node24 && npm run test:node24",
+    "check:syntax": "node tools/check_syntax.mjs",
+    "check:syntax:node24": "npx -y node@24 tools/check_syntax.mjs",
+    "test": "node scripts/validation/solo_room_harness.js",
+    "test:node24": "npx -y node@24 scripts/validation/solo_room_harness.js",
+    "upload:ptr": "bash -lc 'source scripts/private_server/load_server_profile.sh && python3 scripts/private_server/upload_code.py src --server-url \"$SCREEPS_SERVER_URL\" --token \"$SCREEPS_LOCAL_TOKEN\"'",
+    "upload:alt": "bash -lc 'export SCREEPS_SERVER_PROFILE=feat-node24 && source scripts/private_server/load_server_profile.sh && python3 scripts/private_server/upload_code.py src --server-url \"$SCREEPS_SERVER_URL\" --token \"$SCREEPS_LOCAL_TOKEN\"'",
+    "version": "node -e \"console.log(JSON.stringify(require('./src/build_info'), null, 2))\""
+  }
+}
