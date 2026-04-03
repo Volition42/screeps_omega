@@ -1,9 +1,9 @@
 {
   "folders": [
-    {
-      "path": ".",
-    },
-  ],
+	{
+		"path": "/home/vadmin/lan-share/src/screeps_omega"
+	}
+],
   "settings": {
     "files.autoSave": "afterDelay",
     "files.autoSaveDelay": 1500,
