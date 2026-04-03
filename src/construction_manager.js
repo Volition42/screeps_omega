@@ -330,6 +330,7 @@ module.exports = {
           1,
           config.CONSTRUCTION.FUTURE_INFRA.LINK_CONTROLLER_RANGE || 2,
           used,
+          STRUCTURE_LINK,
         )
       : null;
 
@@ -355,6 +356,7 @@ module.exports = {
         1,
         config.CONSTRUCTION.FUTURE_INFRA.LINK_SOURCE_RANGE || 2,
         used,
+        STRUCTURE_LINK,
       );
 
       if (linkPos) {
@@ -376,6 +378,7 @@ module.exports = {
         storagePos,
         used,
         "storage_link_slot",
+        STRUCTURE_LINK,
       );
 
       if (!storageLinkPos) {
@@ -385,6 +388,7 @@ module.exports = {
           1,
           config.CONSTRUCTION.FUTURE_INFRA.STORAGE_LINK_RANGE || 2,
           used,
+          STRUCTURE_LINK,
         );
       }
     }
@@ -433,6 +437,7 @@ module.exports = {
         storagePos,
         used,
         "terminal_slot",
+        STRUCTURE_TERMINAL,
       ) ||
       this.pickOpenPositionNear(
         context,
@@ -440,6 +445,7 @@ module.exports = {
         1,
         config.CONSTRUCTION.FUTURE_INFRA.TERMINAL_RANGE_FROM_STORAGE || 2,
         used,
+        STRUCTURE_TERMINAL,
       );
 
     return {
@@ -483,7 +489,14 @@ module.exports = {
     var minerals = context.state.minerals || context.room.find(FIND_MINERALS);
     var mineral = minerals && minerals.length > 0 ? minerals[0] : null;
     var pos = mineral
-      ? this.pickOpenPositionNear(context, mineral.pos, 1, 1, {})
+      ? this.pickOpenPositionNear(
+          context,
+          mineral.pos,
+          1,
+          1,
+          {},
+          STRUCTURE_CONTAINER,
+        )
       : null;
 
     return {
@@ -523,6 +536,7 @@ module.exports = {
           storagePos,
           used,
           "lab_anchor_slot",
+          STRUCTURE_LAB,
         )
       : null;
 
@@ -546,6 +560,7 @@ module.exports = {
         targetCount,
         config.CONSTRUCTION.FUTURE_INFRA.LAB_RANGE_FROM_STORAGE || 6,
         used,
+        STRUCTURE_LAB,
       );
       stampOrigin = null;
     }
@@ -567,6 +582,7 @@ module.exports = {
       storagePos,
       used,
       {
+        structureType: STRUCTURE_FACTORY,
         storageTag: "utility_slot",
         storageRange:
           config.CONSTRUCTION.FUTURE_INFRA.FACTORY_RANGE_FROM_STORAGE || 3,
@@ -586,6 +602,7 @@ module.exports = {
       storagePos,
       used,
       {
+        structureType: STRUCTURE_POWER_SPAWN,
         storageTag: "utility_slot",
         storageRange:
           config.CONSTRUCTION.FUTURE_INFRA.POWER_SPAWN_RANGE_FROM_STORAGE || 4,
@@ -607,6 +624,7 @@ module.exports = {
       "observer",
       used,
       {
+        structureType: STRUCTURE_OBSERVER,
         anchorTag: "hub_slot",
         anchorRange:
           config.CONSTRUCTION.FUTURE_INFRA.OBSERVER_RANGE_FROM_ANCHOR || 6,
@@ -621,6 +639,7 @@ module.exports = {
       "nuker",
       used,
       {
+        structureType: STRUCTURE_NUKER,
         anchorTag: "hub_slot",
         anchorRange:
           config.CONSTRUCTION.FUTURE_INFRA.NUKER_RANGE_FROM_ANCHOR || 7,
@@ -652,6 +671,7 @@ module.exports = {
           storagePos,
           used,
           options.storageTag,
+          options.structureType,
         )
       : null;
 
@@ -662,6 +682,7 @@ module.exports = {
         1,
         options.storageRange || 3,
         used,
+        options.structureType,
       );
     }
 
@@ -674,6 +695,7 @@ module.exports = {
         fallbackCenter,
         used,
         options.anchorTag,
+        options.structureType,
       );
     }
 
@@ -686,6 +708,7 @@ module.exports = {
             2,
             options.anchorRange,
             used,
+            options.structureType,
           )
         : null;
     }
@@ -722,6 +745,7 @@ module.exports = {
       anchorPos,
       used,
       options.anchorTag,
+      options.structureType,
     );
 
     if (!pos && anchorPos) {
@@ -731,6 +755,7 @@ module.exports = {
         2,
         options.anchorRange || 6,
         used,
+        options.structureType,
       );
     }
 
@@ -760,7 +785,14 @@ module.exports = {
       : [];
 
     for (var i = 0; i < candidates.length; i++) {
-      if (this.isPlanningPositionOpen(context, candidates[i], {})) {
+      if (
+        this.isStructurePlanningPositionOpen(
+          context,
+          candidates[i],
+          STRUCTURE_STORAGE,
+          {},
+        )
+      ) {
         return candidates[i];
       }
     }
@@ -768,7 +800,7 @@ module.exports = {
     return null;
   },
 
-  pickPreferredStorageSlot(context, storagePos, used, tag) {
+  pickPreferredStorageSlot(context, storagePos, used, tag, structureType) {
     if (!storagePos) return null;
 
     var reserved = stamps.getReservedPositions(
@@ -778,7 +810,14 @@ module.exports = {
     );
 
     for (var i = 0; i < reserved.length; i++) {
-      if (this.isPlanningPositionOpen(context, reserved[i], used)) {
+      if (
+        this.isStructurePlanningPositionOpen(
+          context,
+          reserved[i],
+          structureType,
+          used,
+        )
+      ) {
         this.markPosUsed(used, reserved[i]);
         return reserved[i];
       }
@@ -787,7 +826,7 @@ module.exports = {
     return null;
   },
 
-  pickPreferredAnchorSlot(context, fallbackCenterPos, used, tag) {
+  pickPreferredAnchorSlot(context, fallbackCenterPos, used, tag, structureType) {
     var anchor = this.getAnchorOrigin(context);
     if (!anchor) return null;
 
@@ -799,7 +838,14 @@ module.exports = {
     });
 
     for (var i = 0; i < reserved.length; i++) {
-      if (this.isPlanningPositionOpen(context, reserved[i], used)) {
+      if (
+        this.isStructurePlanningPositionOpen(
+          context,
+          reserved[i],
+          structureType,
+          used,
+        )
+      ) {
         this.markPosUsed(used, reserved[i]);
         return reserved[i];
       }
@@ -808,13 +854,20 @@ module.exports = {
     return null;
   },
 
-  pickOpenPositionNear(context, centerPos, minRange, maxRange, used) {
+  pickOpenPositionNear(context, centerPos, minRange, maxRange, used, structureType) {
     if (!centerPos) return null;
 
     var positions = this.getNearbyPositions(centerPos, minRange, maxRange);
 
     for (var i = 0; i < positions.length; i++) {
-      if (this.isPlanningPositionOpen(context, positions[i], used)) {
+      if (
+        this.isStructurePlanningPositionOpen(
+          context,
+          positions[i],
+          structureType,
+          used,
+        )
+      ) {
         this.markPosUsed(used, positions[i]);
         return positions[i];
       }
@@ -931,14 +984,21 @@ module.exports = {
     return null;
   },
 
-  pickClusterPositions(context, centerPos, count, maxRange, used) {
+  pickClusterPositions(context, centerPos, count, maxRange, used, structureType) {
     if (!centerPos || count <= 0) return [];
 
     var candidates = this.getNearbyPositions(centerPos, 1, maxRange);
     var open = [];
 
     for (var i = 0; i < candidates.length; i++) {
-      if (this.isPlanningPositionOpen(context, candidates[i], used)) {
+      if (
+        this.isStructurePlanningPositionOpen(
+          context,
+          candidates[i],
+          structureType,
+          used,
+        )
+      ) {
         open.push(candidates[i]);
       }
     }
@@ -971,17 +1031,31 @@ module.exports = {
     return fallback;
   },
 
-  pickLabCompoundPositions(context, centerPos, count, maxRange, used) {
+  pickLabCompoundPositions(context, centerPos, count, maxRange, used, structureType) {
     if (!centerPos || count <= 0) return [];
     if (count <= 3) {
-      return this.pickClusterPositions(context, centerPos, count, maxRange, used);
+      return this.pickClusterPositions(
+        context,
+        centerPos,
+        count,
+        maxRange,
+        used,
+        structureType,
+      );
     }
 
     var candidates = this.getNearbyPositions(centerPos, 1, maxRange);
     var open = [];
 
     for (var i = 0; i < candidates.length; i++) {
-      if (this.isPlanningPositionOpen(context, candidates[i], used)) {
+      if (
+        this.isStructurePlanningPositionOpen(
+          context,
+          candidates[i],
+          structureType,
+          used,
+        )
+      ) {
         open.push(candidates[i]);
       }
     }
@@ -1024,7 +1098,14 @@ module.exports = {
     }
 
     if (!bestPair) {
-      return this.pickClusterPositions(context, centerPos, count, maxRange, used);
+      return this.pickClusterPositions(
+        context,
+        centerPos,
+        count,
+        maxRange,
+        used,
+        structureType,
+      );
     }
 
     bestFollowers.sort(function (left, right) {
@@ -1064,7 +1145,16 @@ module.exports = {
       stampName,
       function (pos) {
         if (positions.length >= count) return;
-        if (!this.isPlanningPositionOpen(context, pos, used)) return;
+        if (
+          !this.isStructurePlanningPositionOpen(
+            context,
+            pos,
+            STRUCTURE_LAB,
+            used,
+          )
+        ) {
+          return;
+        }
 
         this.markPosUsed(used, pos);
         positions.push(pos);
@@ -1128,6 +1218,16 @@ module.exports = {
         structure.structureType !== STRUCTURE_RAMPART
       );
     });
+  },
+
+  isStructurePlanningPositionOpen(context, pos, structureType, used) {
+    if (!structureType) {
+      return this.isPlanningPositionOpen(context, pos, used);
+    }
+    if (!pos) return false;
+    if (this.isPosUsed(used, pos)) return false;
+
+    return this.canPlaceStructureSite(context, pos, structureType, true);
   },
 
   isPosUsed(used, pos) {
@@ -1901,12 +2001,20 @@ module.exports = {
   },
 
   tryPlaceStructureSite(context, pos, structureType) {
-    var room = context.room;
+    if (!this.canPlaceStructureSite(context, pos, structureType)) return false;
+    if (pos.createConstructionSite(structureType) !== OK) return false;
+
+    this.recordSitePlacement(context, pos, structureType);
+    return true;
+  },
+
+  canPlaceStructureSite(context, pos, structureType, allowExistingSame) {
     var isDefenseStructure =
       structureType === STRUCTURE_WALL || structureType === STRUCTURE_RAMPART;
     var minCoord = isDefenseStructure ? 1 : 2;
     var maxCoord = isDefenseStructure ? 48 : 47;
 
+    if (!pos) return false;
     if (pos.x < minCoord || pos.x > maxCoord || pos.y < minCoord || pos.y > maxCoord) {
       return false;
     }
@@ -1923,7 +2031,9 @@ module.exports = {
       return s.structureType === structureType;
     });
 
-    if (hasSameStructure || hasSameSite) return false;
+    if (hasSameStructure || hasSameSite) {
+      return !!allowExistingSame;
+    }
 
     var self = this;
     var blocked = _.some(structures, function (s) {
@@ -1936,12 +2046,7 @@ module.exports = {
       });
     }
 
-    if (blocked) return false;
-
-    if (pos.createConstructionSite(structureType) !== OK) return false;
-
-    this.recordSitePlacement(context, pos, structureType);
-    return true;
+    return !blocked;
   },
 
   canStructureTypesShareTile(plannedType, existingType) {

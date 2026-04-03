@@ -513,6 +513,34 @@ def command_reset_world(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_status(args: argparse.Namespace) -> int:
+    output = run_cli(
+        "Promise.resolve()"
+        ".then(() => Promise.all(["
+        " storage.env.get('gameTime'),"
+        " storage.env.get(storage.env.keys.MAIN_LOOP_PAUSED),"
+        " storage.env.get(storage.env.keys.MAIN_LOOP_MIN_DURATION),"
+        " storage.db.users.findOne({username: 'local-dev'})"
+        "]))"
+        ".then(([gameTime, paused, tickDuration, user]) => Promise.resolve("
+        " user ? storage.db['users.code'].findOne({user: user._id, activeWorld: true}) : null"
+        ").then(code => ({gameTime, paused, tickDuration, user, code})))"
+        ".then(({gameTime, paused, tickDuration, user, code}) => print(JSON.stringify({"
+        " gameTime: parseInt(gameTime || '0', 10) || 0,"
+        " paused: paused === '1',"
+        " tickDuration: parseInt(tickDuration || '0', 10) || 0,"
+        " user: user ? {username: user.username, cpu: user.cpu, cpuAvailable: user.cpuAvailable || 0} : null,"
+        " activeBranch: code ? code.branch : null"
+        "})))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+    print(output)
+    return 0
+
+
 def command_pause(args: argparse.Namespace) -> int:
     print(run_cli("system.pauseSimulation()", args.server_root, args.cli_host, args.cli_port))
     return 0
@@ -811,6 +839,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(cli_port=DEFAULT_CLI_PORT)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    status = subparsers.add_parser("status", help="show private-server runtime status")
+    status.set_defaults(func=command_status)
 
     reset_world = subparsers.add_parser("reset-world", help="wipe the private server world")
     reset_world.set_defaults(func=command_reset_world)

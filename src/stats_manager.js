@@ -111,7 +111,7 @@ module.exports = {
         : snapshot.cpu.used;
 
     console.log(
-      `[CPU DEBUG] tick=${snapshot.tick} used=${snapshot.cpu.used.toFixed(2)} ` +
+      `[DBG][CPU] tick=${snapshot.tick} used=${snapshot.cpu.used.toFixed(2)} ` +
         `avg=${avgCpu.toFixed(3)} bucket=${snapshot.cpu.bucket} creeps=${Object.keys(Game.creeps).length}`,
     );
 
@@ -127,7 +127,7 @@ module.exports = {
     }
 
     if (sectionParts.length > 0) {
-      console.log(`[CPU DEBUG:sections] ${sectionParts.join(" | ")}`);
+      console.log(`[DBG][CPU][SECTIONS] ${sectionParts.join(" | ")}`);
     }
 
     this.printDetailedSections(sections);
@@ -179,7 +179,7 @@ module.exports = {
       }
 
       if (parts.length > 0) {
-        console.log(`[CPU DEBUG:room ${roomName}] ${parts.join(" | ")}`);
+        console.log(`[DBG][CPU][ROOM ${roomName}] ${parts.join(" | ")}`);
       }
 
       if (roomGroup.roles && roomGroup.roles.length > 0) {
@@ -191,7 +191,7 @@ module.exports = {
           );
         }
 
-        console.log(`[CPU DEBUG:roles ${roomName}] ${roleParts.join(" | ")}`);
+        console.log(`[DBG][CPU][ROLES ${roomName}] ${roleParts.join(" | ")}`);
       }
     }
   },

@@ -73,7 +73,7 @@ module.exports = {
       Game.time % 25 === 0
     ) {
       console.log(
-        "[SPAWN " +
+        "[DBG][SPAWN " +
           spawn.name +
           "] failed role=" +
           request.role +

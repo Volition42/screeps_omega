@@ -20,30 +20,15 @@ Major sections:
 Important Notes:
 - Keep the hauler override example in place for future tuning.
 - HUD options should stay easy to toggle during testing.
-- Directive settings control both recurring reports and one-time milestone announcements.
-- Directive output should read like an analyst snapshot, not executive narration.
+- Directive settings now control critical event reporting rather than recurring narration.
+- Detailed room reads should live behind ops utilities, not passive console spam.
 */
 
 module.exports = {
   HUD: {
     ENABLED: true,
-    LEAN_MODE: true,
-    SUMMARY_INTERVAL: 1,
     CREEP_LABELS: true,
     LABEL_INTERVAL: 1,
-    CONSOLE_ENABLED: false,
-    CONSOLE_INTERVAL: 50,
-
-    // Developer note:
-    // Show a tiny performance line using Memory.stats from stats_manager.
-    SHOW_PERFORMANCE: false,
-
-    // Developer note:
-    // Construction checklist shown in the top-left home-room panel.
-    // This now includes roadmap phase, future-plan readiness, and advanced
-    // structure progress so construction status can be read quickly.
-    SHOW_CONSTRUCTION_CHECKLIST: true,
-    CONSTRUCTION_CHECKLIST_MODE: "detailed",
   },
 
   CREEPS: {
@@ -324,41 +309,29 @@ module.exports = {
 
   DIRECTIVES: {
     // Developer note:
-    // Controls how often the room snapshot system logs updates.
+    // Keep console output event-driven:
+    // alerts, RCL changes, phase transitions, and milestone completions.
     ENABLED: true,
-    INTERVAL: 50,
 
     // Developer note:
-    // Keep directive output easy to scan in the console.
-    // HEADER_LABEL sets the snapshot prefix and SEPARATOR_LINE prints after
-    // each directive block so later console messages do not run together.
-    HEADER_LABEL: "Room Snapshot",
+    // Print after each critical update so console utility output stays readable.
     SEPARATOR_LINE:
       "------------------------------------------------------------",
 
     // Developer note:
-    // Performance-aware snapshot settings.
-    SHOW_PERFORMANCE_DIRECTIVES: false,
-    CPU_SPIKE_MULTIPLIER: 1.5,
-    BUCKET_WARNING_THRESHOLD: 8000,
-    HEALTHY_REPORT_INTERVAL: 100,
+    // Debug CPU output remains opt-in and separate from critical room reports.
     DEBUG_CPU_CONSOLE_ENABLED: false,
     DEBUG_CPU_CONSOLE_INTERVAL: 100,
     DEBUG_CPU_SHOW_SECTIONS: false,
 
     // Developer note:
-    // Progress / ETA directives for controller advancement.
-    SHOW_PROGRESS_DIRECTIVES: true,
+    // Sampling cadence for next-RCL estimates shown in HUD and ops.room(...).
     PROGRESS_SAMPLE_INTERVAL: 100,
-    PROGRESS_REPORT_INTERVAL: 300,
 
     // Developer note:
-    // Construction checklist directives.
-    SHOW_CONSTRUCTION_DIRECTIVES: true,
-    CONSTRUCTION_REPORT_INTERVAL: 75,
-
-    // Developer note:
-    // One-time snapshot announcements.
+    // Critical room updates only.
+    SHOW_ALERT_DIRECTIVES: true,
+    SHOW_RCL_DIRECTIVES: true,
     SHOW_PHASE_TRANSITION_DIRECTIVES: true,
     SHOW_MILESTONE_DIRECTIVES: true,
   },

@@ -11,7 +11,7 @@ module.exports.loop = function () {
       Memory.runtime.lastBuildId = buildInfo.buildId;
       Memory.runtime.lastBuildInfo = buildInfo;
       console.log(
-        `[BUILD] id=${buildInfo.buildId} commit=${buildInfo.gitCommit} branch=${buildInfo.gitBranch} source=${buildInfo.source}`,
+        `[CRIT][BUILD] id=${buildInfo.buildId} commit=${buildInfo.gitCommit} branch=${buildInfo.gitBranch} source=${buildInfo.source}`,
       );
     }
 
@@ -29,7 +29,7 @@ module.exports.loop = function () {
     };
 
     console.log(
-      `[MAIN ERROR] tick=${Game.time} ${
+      `[ERR][MAIN] tick=${Game.time} ${
         error && error.stack ? error.stack : error
       }`,
     );

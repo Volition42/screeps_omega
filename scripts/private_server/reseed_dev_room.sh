@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -15,5 +15,5 @@ python3 "${ROOT_DIR}/scripts/private_server/world_tool.py" reseed-room \
   --spawn-name "${SPAWN_NAME}" \
   --spawn-x "${SPAWN_X}" \
   --spawn-y "${SPAWN_Y}"
-zsh "${ROOT_DIR}/scripts/private_server/upload_src.sh"
-zsh "${ROOT_DIR}/scripts/private_server/set_browser_password.sh"
+bash "${ROOT_DIR}/scripts/private_server/upload_src.sh"
+bash "${ROOT_DIR}/scripts/private_server/set_browser_password.sh"

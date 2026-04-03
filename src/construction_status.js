@@ -54,7 +54,9 @@ module.exports = {
     var towersNeeded = roadmap.getDesiredTowerCount(room.controller.level);
     var towersBuilt = this.countBuiltAndSites(room, state, STRUCTURE_TOWER);
 
-    var storageNeeded = this.hasAction(plan, "storage") ? 1 : 0;
+    var storageNeeded = this.hasAction(plan, "storage")
+      ? roadmap.getDesiredStructureCount(room.controller.level, STRUCTURE_STORAGE)
+      : 0;
     var storageBuilt = this.countBuiltAndSites(room, state, STRUCTURE_STORAGE);
     var linkGoal = this.getLinkGoal(room, state, plan);
     var linksBuilt = this.countBuiltAndSites(room, state, STRUCTURE_LINK);

@@ -1293,6 +1293,70 @@ function runDevelopmentScenario() {
   );
 }
 
+function runDevelopmentStorageGateScenario() {
+  const room = buildRoomScenario("VAL_DEVELOPMENT_STORAGE_GATE", {
+    tick: 301,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+  });
+
+  const state = roomState.collect(room);
+  state.phase = "development";
+
+  const status = constructionStatus.getStatus(room, state);
+
+  assert(
+    status.storageNeeded === 0,
+    `storage should stay gated until RCL4, got ${status.storageNeeded}`,
+  );
+}
+
+function runStoragePlanningRoadConflictScenario() {
+  const room = buildRoomScenario("VAL_STORAGE_ROAD_CONFLICT", {
+    tick: 302,
+    controllerLevel: 4,
+    spawnX: 18,
+    spawnY: 15,
+    controllerX: 23,
+    controllerY: 42,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    extraStructures: [
+      { type: STRUCTURE_ROAD, x: 18, y: 20 },
+      { type: STRUCTURE_ROAD, x: 23, y: 15 },
+      { type: STRUCTURE_ROAD, x: 18, y: 10 },
+      { type: STRUCTURE_ROAD, x: 12, y: 14 },
+      { type: STRUCTURE_ROAD, x: 13, y: 14 },
+      { type: STRUCTURE_ROAD, x: 14, y: 14 },
+      { type: STRUCTURE_ROAD, x: 12, y: 15 },
+      { type: STRUCTURE_ROAD, x: 14, y: 15 },
+      { type: STRUCTURE_ROAD, x: 12, y: 16 },
+      { type: STRUCTURE_ROAD, x: 13, y: 16 },
+      { type: STRUCTURE_ROAD, x: 14, y: 16 },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+
+  constructionManager.placeStorage(context);
+
+  const storageSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter: function (site) {
+      return site.structureType === STRUCTURE_STORAGE;
+    },
+  });
+
+  assert(storageSites.length === 1, `expected one storage site, got ${storageSites.length}`);
+  assert(
+    storageSites[0].pos.x === 13 && storageSites[0].pos.y === 15,
+    `expected storage at 13,15, got ${storageSites[0].pos.x},${storageSites[0].pos.y}`,
+  );
+}
+
 function runContainerUsageScenario() {
   const room = buildRoomScenario("VAL_CONTAINER_USAGE", {
     tick: 305,
@@ -1686,6 +1750,8 @@ function main() {
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
+    ["development_storage_gate", runDevelopmentStorageGateScenario],
+    ["storage_planning_road_conflict", runStoragePlanningRoadConflictScenario],
     ["container_usage", runContainerUsageScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],

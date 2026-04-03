@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Omega Admin</title>
+  <link rel="stylesheet" href="/omega-admin/style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Local Screeps Control</p>
+        <h1>Omega Admin Panel</h1>
+        <p class="subcopy">Quick local-server controls for testing, resets, room prep, and code sync.</p>
+      </div>
+      <div class="hero-actions">
+        <a class="button secondary" id="open-client-link" href="/">Open Portal</a>
+        <a class="button" id="open-game-link" href="/">Open Game</a>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Status</h2>
+        <dl class="stats">
+          <div><dt>State</dt><dd id="status-state">Loading</dd></div>
+          <div><dt>Game Time</dt><dd id="status-game-time">-</dd></div>
+          <div><dt>Tick</dt><dd id="status-tick">-</dd></div>
+          <div><dt>User</dt><dd id="status-user">-</dd></div>
+          <div><dt>CPU</dt><dd id="status-cpu">-</dd></div>
+          <div><dt>Branch</dt><dd id="status-branch">-</dd></div>
+        </dl>
+        <div class="inline-actions">
+          <button class="button" data-action="resume">Resume</button>
+          <button class="button secondary" data-action="pause">Pause</button>
+          <button class="button secondary" id="refresh-status">Refresh</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Tick Speed</h2>
+        <div class="pill-row">
+          <button class="pill" data-tick="50">50 ms</button>
+          <button class="pill" data-tick="100">100 ms</button>
+          <button class="pill" data-tick="200">200 ms</button>
+          <button class="pill" data-tick="500">500 ms</button>
+          <button class="pill" data-tick="1000">1000 ms</button>
+        </div>
+        <form id="tick-form" class="stack-form">
+          <label>
+            <span>Custom Tick (ms)</span>
+            <input id="tick-input" type="number" min="10" step="10" value="200">
+          </label>
+          <button class="button" type="submit">Set Tick</button>
+        </form>
+      </article>
+
+      <article class="card">
+        <h2>Room Tools</h2>
+        <form id="room-form" class="stack-form">
+          <label>
+            <span>Room</span>
+            <input id="room-input" type="text" value="W5N5" spellcheck="false">
+          </label>
+          <div class="inline-actions">
+            <button class="button" type="button" data-action="reseed-room">Reseed Room</button>
+            <button class="button secondary" type="button" data-action="complete-sites">Complete Sites</button>
+            <button class="button secondary" type="button" data-action="fill-energy">Fill Energy</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="card">
+        <h2>Controller / Threat</h2>
+        <div class="stack-form">
+          <label>
+            <span>Set Controller Level</span>
+            <div class="split">
+              <select id="rcl-select">
+                <option value="1">RCL 1</option>
+                <option value="2">RCL 2</option>
+                <option value="3">RCL 3</option>
+                <option value="4">RCL 4</option>
+                <option value="5">RCL 5</option>
+                <option value="6">RCL 6</option>
+                <option value="7">RCL 7</option>
+                <option value="8">RCL 8</option>
+              </select>
+              <button class="button" id="set-rcl" type="button">Apply</button>
+            </div>
+          </label>
+          <label>
+            <span>Spawn Test Invader</span>
+            <div class="split">
+              <select id="invader-type">
+                <option value="Melee">Melee</option>
+                <option value="Ranged">Ranged</option>
+                <option value="Healer">Healer</option>
+              </select>
+              <select id="invader-size">
+                <option value="small">Small</option>
+                <option value="big">Big</option>
+              </select>
+              <button class="button secondary" id="spawn-invader" type="button">Spawn</button>
+            </div>
+          </label>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Code / World</h2>
+        <div class="inline-actions stack-mobile">
+          <button class="button" data-action="upload-code">Upload Current Code</button>
+          <button class="button danger" data-action="reset-world">Reset Dev World</button>
+        </div>
+        <p class="help">Reset world will rebuild the local dev room, restore the test user, upload current code, and reset the browser password.</p>
+      </article>
+
+      <article class="card log-card">
+        <div class="card-header">
+          <h2>Action Log</h2>
+          <button class="button secondary" id="clear-log" type="button">Clear</button>
+        </div>
+        <pre id="action-log">Waiting for commands...</pre>
+      </article>
+    </section>
+  </main>
+
+  <script src="/omega-admin/app.js"></script>
+</body>
+</html>
