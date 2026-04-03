@@ -176,6 +176,17 @@ Validation notes:
 - Run it with `node scripts/validation/solo_room_harness.js`.
 - Use it for fast correctness checks, then use the private server for spot-checking live behavior.
 
+## Tooling
+
+- `npm run check`
+  Runs syntax checks and the solo-room harness with the local Node version.
+- `npm run check:node24`
+  Runs the same validation flow explicitly on Node 24.
+- `npm run upload:ptr`
+  Uploads `src/` to the default private-server profile.
+- `npm run version`
+  Prints the current build metadata module used by runtime logs.
+
 ## Memory And Cache Use
 
 - Room runtime state is cached during the tick for reuse by managers.

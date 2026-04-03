@@ -42,6 +42,7 @@ const PHASE_BUILD_FIELDS = {
   specialization: [
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
     { label: "terminal", built: "terminalBuilt", needed: "terminalNeeded" },
+    { label: "minCtr", built: "mineralContainersBuilt", needed: "mineralContainersNeeded" },
     { label: "extractor", built: "extractorBuilt", needed: "extractorNeeded" },
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
   ],
@@ -118,7 +119,7 @@ const PHASE_TASK_PRIORITY = {
     "haulers",
   ],
   logistics: ["links", "rcl6"],
-  specialization: ["terminal", "extractor", "labs", "rcl7"],
+  specialization: ["terminal", "mineralContainer", "extractor", "labs", "rcl7"],
   fortification: ["factory", "rcl8"],
   command: ["observer", "powerSpawn", "nuker"],
 };
@@ -145,6 +146,7 @@ const MISSING_SUMMARY = {
   ramparts: "ramparts below target",
   links: "link network incomplete",
   terminal: "terminal missing",
+  mineralContainer: "mineral container missing",
   extractor: "extractor missing",
   labs: "labs incomplete",
   factory: "factory missing",
@@ -175,6 +177,7 @@ const NEXT_TASK_LABEL = {
   ramparts: "finish the rampart baseline",
   links: "finish planned links",
   terminal: "place or finish the terminal",
+  mineralContainer: "place or finish the mineral container",
   extractor: "place or finish the extractor",
   labs: "place or finish the lab cluster",
   factory: "place or finish the factory",
@@ -448,6 +451,7 @@ function getPhaseCompletionMissing(phase, buildStatus) {
 
   if (phase === "specialization") {
     pushIfShort(buildStatus.terminalBuilt, buildStatus.terminalNeeded, "terminal", missing);
+    pushIfShort(buildStatus.mineralContainersBuilt, buildStatus.mineralContainersNeeded, "mineralContainer", missing);
     pushIfShort(buildStatus.extractorBuilt, buildStatus.extractorNeeded, "extractor", missing);
     pushIfShort(buildStatus.labsBuilt, buildStatus.labsNeeded, "labs", missing);
     return uniqueLabels(missing);

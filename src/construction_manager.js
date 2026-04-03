@@ -103,6 +103,10 @@ module.exports = {
           this.placeTerminal(context);
           break;
 
+        case "mineralContainer":
+          this.placeMineralContainer(context);
+          break;
+
         case "extractor":
           this.placeExtractor(context);
           break;
@@ -244,6 +248,7 @@ module.exports = {
       linkPlan,
       used,
     );
+    var mineralContainerPlan = this.buildMineralContainerPlan(context, plan);
     var extractorPlan = this.buildExtractorPlan(context, plan);
     var labPlan = this.buildLabPlan(
       context,
@@ -277,6 +282,7 @@ module.exports = {
       storagePos: this.serializePos(storagePos),
       linkPlanReady: !!linkPlan.ready,
       terminalPlanReady: !!terminalPlan.ready,
+      mineralContainerPlanReady: !!mineralContainerPlan.ready,
       extractorPlanReady: !!extractorPlan.ready,
       labPlanReady: !!labPlan.ready,
       factoryPlanReady: !!factoryPlan.ready,
@@ -285,6 +291,7 @@ module.exports = {
       nukerPlanReady: !!nukerPlan.ready,
       links: linkPlan,
       terminal: terminalPlan,
+      mineralContainer: mineralContainerPlan,
       extractor: extractorPlan,
       labs: labPlan,
       factory: factoryPlan,
@@ -460,6 +467,30 @@ module.exports = {
       ready: !!mineral,
       mineralId: mineral ? mineral.id : null,
       pos: this.serializePos(mineral ? mineral.pos : null),
+    };
+  },
+
+  buildMineralContainerPlan(context, plan) {
+    if (!this.hasPlanAction(plan, "mineralContainer")) {
+      return {
+        enabled: false,
+        ready: false,
+        mineralId: null,
+        pos: null,
+      };
+    }
+
+    var minerals = context.state.minerals || context.room.find(FIND_MINERALS);
+    var mineral = minerals && minerals.length > 0 ? minerals[0] : null;
+    var pos = mineral
+      ? this.pickOpenPositionNear(context, mineral.pos, 1, 1, {})
+      : null;
+
+    return {
+      enabled: !!mineral,
+      ready: !!pos,
+      mineralId: mineral ? mineral.id : null,
+      pos: this.serializePos(pos),
     };
   },
 
@@ -819,6 +850,13 @@ module.exports = {
     return true;
   },
 
+  isMineralContainerCandidate(context, pos) {
+    if (!pos) return false;
+    if (!this.matchesMineralContainerProfile(context, pos)) return false;
+    if (!this.isPlanningPositionOpen(context, pos, {})) return false;
+    return true;
+  },
+
   matchesHubContainerProfile(context, pos, hubAnchorPos) {
     if (!pos || !hubAnchorPos) return false;
     if (pos.getRangeTo(hubAnchorPos) > 4) return false;
@@ -846,6 +884,15 @@ module.exports = {
     return true;
   },
 
+  matchesMineralContainerProfile(context, pos) {
+    if (!pos) return false;
+
+    var minerals = context.state.minerals || context.room.find(FIND_MINERALS);
+    if (!minerals || minerals.length === 0) return false;
+
+    return pos.getRangeTo(minerals[0]) <= 1;
+  },
+
   findPlannedHubContainer(context) {
     var spawn = context.state.spawns && context.state.spawns[0] ? context.state.spawns[0] : null;
     if (!spawn || context.room.storage) return null;
@@ -866,6 +913,17 @@ module.exports = {
     var sites = this.getSitesByType(context, STRUCTURE_CONTAINER);
     for (var i = 0; i < sites.length; i++) {
       if (this.matchesControllerContainerProfile(context, sites[i].pos)) {
+        return sites[i];
+      }
+    }
+
+    return null;
+  },
+
+  findPlannedMineralContainer(context) {
+    var sites = this.getSitesByType(context, STRUCTURE_CONTAINER);
+    for (var i = 0; i < sites.length; i++) {
+      if (this.matchesMineralContainerProfile(context, sites[i].pos)) {
         return sites[i];
       }
     }
@@ -1197,6 +1255,65 @@ module.exports = {
       STRUCTURE_TERMINAL,
       status.terminalNeeded - status.terminalBuilt,
     );
+  },
+
+  placeMineralContainer(context) {
+    var room = context.room;
+    var state = context.state;
+    var self = this;
+    var minerals = state.minerals || room.find(FIND_MINERALS);
+    var mineral = minerals && minerals.length > 0 ? minerals[0] : null;
+
+    if (!room.controller || room.controller.level < 6) return;
+    if (!mineral || state.mineralContainer) return;
+
+    var existingSite = _.find(
+      this.getSitesByType(context, STRUCTURE_CONTAINER),
+      function (site) {
+        return self.matchesMineralContainerProfile(context, site.pos);
+      },
+    );
+    if (existingSite) return;
+
+    var futurePlan = this.getCachedFuturePlan(context);
+    var mineralContainerPlan = futurePlan && futurePlan.mineralContainer
+      ? futurePlan.mineralContainer
+      : null;
+    var candidates = [];
+
+    if (mineralContainerPlan && mineralContainerPlan.pos) {
+      candidates.push(this.deserializePos(mineralContainerPlan.pos));
+    }
+
+    var nearby = this.getNearbyPositions(mineral.pos, 1, 1);
+    for (var i = 0; i < nearby.length; i++) {
+      candidates.push(nearby[i]);
+    }
+
+    var placed = this.tryPlaceFirstCandidate(
+      context,
+      candidates,
+      STRUCTURE_CONTAINER,
+      function (pos) {
+        return this.isMineralContainerCandidate(context, pos);
+      }.bind(this),
+    );
+
+    if (!placed || this.isSiteCapReached(context)) return;
+
+    var roadAnchor = room.storage || (state.spawns && state.spawns[0]
+      ? state.spawns[0].pos
+      : null);
+    var mineralContainer = state.mineralContainer || this.findPlannedMineralContainer(context);
+
+    if (roadAnchor && mineralContainer) {
+      this.placeRoadPath(
+        context,
+        roadAnchor.pos ? roadAnchor.pos : roadAnchor,
+        mineralContainer.pos,
+        1,
+      );
+    }
   },
 
   placeExtractor(context) {

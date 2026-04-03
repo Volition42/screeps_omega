@@ -39,6 +39,8 @@ module.exports = {
       plan,
     );
     var controllerContainersBuilt = this.getControllerContainerCount(room, state);
+    var mineralContainersNeeded = this.getMineralContainerGoal(room, state, plan);
+    var mineralContainersBuilt = this.getMineralContainerCount(room, state);
 
     var extensionsNeeded = roadmap.getDesiredExtensionCount(
       room.controller.level,
@@ -128,6 +130,8 @@ module.exports = {
       hubContainersNeeded: hubContainersNeeded,
       controllerContainersBuilt: controllerContainersBuilt,
       controllerContainersNeeded: controllerContainersNeeded,
+      mineralContainersBuilt: mineralContainersBuilt,
+      mineralContainersNeeded: mineralContainersNeeded,
       extensionsBuilt: extensionsBuilt,
       extensionsNeeded: extensionsNeeded,
 
@@ -199,6 +203,7 @@ module.exports = {
     status.specializationComplete =
       status.logisticsComplete &&
       status.terminalBuilt >= status.terminalNeeded &&
+      status.mineralContainersBuilt >= status.mineralContainersNeeded &&
       status.extractorBuilt >= status.extractorNeeded &&
       status.labsBuilt >= status.labsNeeded;
     status.fortificationComplete =
@@ -222,6 +227,7 @@ module.exports = {
       !!futurePlan &&
       (!status.linksNeeded || !!futurePlan.linkPlanReady) &&
       (!status.terminalNeeded || !!futurePlan.terminalPlanReady) &&
+      (!status.mineralContainersNeeded || !!futurePlan.mineralContainerPlanReady) &&
       (!status.extractorNeeded || !!futurePlan.extractorPlanReady) &&
       (!status.labsNeeded || !!futurePlan.labPlanReady) &&
       (!status.factoryNeeded || !!futurePlan.factoryPlanReady) &&
@@ -243,6 +249,8 @@ module.exports = {
       hubContainersNeeded: 0,
       controllerContainersBuilt: 0,
       controllerContainersNeeded: 0,
+      mineralContainersBuilt: 0,
+      mineralContainersNeeded: 0,
       extensionsBuilt: 0,
       extensionsNeeded: 0,
 
@@ -435,6 +443,28 @@ module.exports = {
           if (site.pos.getRangeTo(sources[i]) <= 1) return false;
         }
         return true;
+      })
+    );
+  },
+
+  getMineralContainerGoal(room, state, plan) {
+    if (!this.hasAction(plan, "mineralContainer")) return 0;
+
+    var minerals = state.minerals || room.find(FIND_MINERALS);
+    return minerals && minerals.length > 0 ? 1 : 0;
+  },
+
+  getMineralContainerCount(room, state) {
+    var minerals = state.minerals || room.find(FIND_MINERALS);
+    if (!minerals || minerals.length === 0) return 0;
+
+    var mineral = minerals[0];
+    var built = state.mineralContainer ? 1 : 0;
+
+    return (
+      built +
+      this.countContainerSites(room, state, function (site) {
+        return site.pos.getRangeTo(mineral) <= 1;
       })
     );
   },
@@ -676,6 +706,7 @@ module.exports = {
       roadmapPhase: "bootstrap",
       linkPlanReady: false,
       terminalPlanReady: false,
+      mineralContainerPlanReady: false,
       extractorPlanReady: false,
       labPlanReady: false,
       factoryPlanReady: false,
@@ -684,6 +715,7 @@ module.exports = {
       nukerPlanReady: false,
       links: null,
       terminal: null,
+      mineralContainer: null,
       extractor: null,
       labs: null,
       factory: null,

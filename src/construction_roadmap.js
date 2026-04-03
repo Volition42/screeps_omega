@@ -187,6 +187,7 @@ module.exports = {
         "defense",
         "links",
         "terminal",
+        "mineralContainer",
         "extractor",
         "labs",
       ],
@@ -213,6 +214,7 @@ module.exports = {
       buildList: [
         "factory",
         "terminal",
+        "mineralContainer",
         "extractor",
         "labs",
         "links",
@@ -256,6 +258,7 @@ module.exports = {
         "nuker",
         "factory",
         "terminal",
+        "mineralContainer",
         "extractor",
         "labs",
         "links",

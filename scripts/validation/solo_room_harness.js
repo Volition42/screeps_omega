@@ -1431,11 +1431,62 @@ function runSpecializationScenario() {
   room.storage.store.energy = 120000;
 
   const state = roomState.collect(room);
-  const status = constructionStatus.getStatus(room, state);
+  let status = constructionStatus.getStatus(room, state);
   assert(state.phase === "specialization", `expected specialization, got ${state.phase}`);
   assert(status.terminalNeeded === 1, "specialization should require a terminal");
+  assert(status.mineralContainersNeeded === 1, "specialization should require a mineral container");
   assert(status.extractorNeeded === 1, "specialization should require an extractor");
   assert(status.labsNeeded === 3, "specialization should require an initial lab cluster");
+
+  constructionManager.plan(room, state);
+  status = constructionStatus.getStatus(room, state);
+  assert(
+    status.futurePlan && status.futurePlan.mineralContainerPlanReady,
+    "specialization should produce a ready mineral container plan",
+  );
+}
+
+function runMineralOpsScenario() {
+  const room = buildRoomScenario("VAL_MINERAL_OPS", {
+    tick: 550,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "hauler1", role: "hauler", x: 25, y: 24, store: {}, storeCapacity: 200 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: { H: 150 }, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 120000;
+
+  const state = roomState.collect(room);
+  const requests = spawnManager.getSpawnRequests(room, state);
+  const task = advancedStructureManager.getHaulerTask(room, Game.creeps.hauler1, state);
+
+  assert(state.mineralContainer, "mineral ops scenario should classify the mineral container");
+  assert(
+    requests.some((request) => request.role === "mineral_miner"),
+    `expected a mineral_miner request, got ${JSON.stringify(requests)}`,
+  );
+  assert(
+    task && task.label === "mineral_output",
+    `expected mineral_output advanced haul task, got ${task ? task.label : "none"}`,
+  );
 }
 
 function runFortificationScenario() {
@@ -1459,6 +1510,7 @@ function runFortificationScenario() {
     ],
     extraStructures: [
       { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
       { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
       { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
       { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
@@ -1508,6 +1560,7 @@ function runCommandScenario() {
     ],
     extraStructures: [
       { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 30000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
       { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
       { type: STRUCTURE_FACTORY, x: 27, y: 30, options: { store: { energy: 0 }, storeCapacity: 50000, hits: 1000, hitsMax: 1000, cooldown: 0 } },
       { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
@@ -1600,6 +1653,7 @@ function main() {
     ["container_usage", runContainerUsageScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],
+    ["mineral_ops", runMineralOpsScenario],
     ["fortification", runFortificationScenario],
     ["command", runCommandScenario],
     ["factory_ops", runFactoryOpsScenario],

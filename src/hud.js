@@ -242,6 +242,10 @@ module.exports = {
           status.terminalBuilt +
           "/" +
           status.terminalNeeded +
+          " MC:" +
+          status.mineralContainersBuilt +
+          "/" +
+          status.mineralContainersNeeded +
           " LB:" +
           status.labsBuilt +
           "/" +

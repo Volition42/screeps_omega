@@ -81,6 +81,10 @@ module.exports = {
           runRole("miner", roleMiner.run.bind(roleMiner), creep);
           break;
 
+        case "mineral_miner":
+          runRole("mineral_miner", roleMiner.runMineral.bind(roleMiner), creep);
+          break;
+
         case "hauler":
           runRole(
             "hauler",

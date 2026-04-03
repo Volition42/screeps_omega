@@ -116,6 +116,10 @@ module.exports = {
       state: state,
       storage: storage,
       terminal: terminal,
+      mineralContainer:
+        state && Object.prototype.hasOwnProperty.call(state, "mineralContainer")
+          ? state.mineralContainer
+          : null,
       labs: labs,
       factory: factory,
       powerSpawn: powerSpawn,
@@ -462,6 +466,7 @@ module.exports = {
   buildTaskCandidates(plan) {
     var tasks = {};
     this.addLabTaskCandidates(tasks, plan);
+    this.addMineralTaskCandidates(tasks, plan);
     this.addFactoryTaskCandidates(tasks, plan);
     this.addPowerSpawnTaskCandidates(tasks, plan);
     this.addNukerTaskCandidates(tasks, plan);
@@ -528,6 +533,10 @@ module.exports = {
     this.addTaskCandidate(tasks, this.getFactoryOutputTask(plan));
     this.addTaskCandidate(tasks, this.getFactoryInputTask(plan));
     this.addTaskCandidate(tasks, this.getFactoryEnergyTask(plan));
+  },
+
+  addMineralTaskCandidates(tasks, plan) {
+    this.addTaskCandidate(tasks, this.getMineralOutputTask(plan));
   },
 
   addPowerSpawnTaskCandidates(tasks, plan) {
@@ -639,6 +648,28 @@ module.exports = {
       lab,
       resourceType,
       Math.min(target - current, available),
+    );
+  },
+
+  getMineralOutputTask(plan) {
+    var mineralContainer = plan.mineralContainer || null;
+    var delivery = this.getOutputHub(plan.storage, plan.terminal);
+    if (!mineralContainer || !delivery || mineralContainer.id === delivery.id) {
+      return null;
+    }
+
+    var resourceType = this.getPrimaryStoredResource(mineralContainer);
+    if (!resourceType) return null;
+
+    var amount = this.getStoredAmount(mineralContainer, resourceType);
+    if (amount < this.getMineralExportAt()) return null;
+
+    return this.createTask(
+      "mineral_output",
+      mineralContainer,
+      delivery,
+      resourceType,
+      amount,
     );
   },
 
@@ -1108,6 +1139,7 @@ module.exports = {
       "lab_cleanup",
       "lab_output",
       "lab_input",
+      "mineral_output",
       "factory_output",
       "factory_input",
       "factory_energy",
@@ -1210,6 +1242,12 @@ module.exports = {
     return config.ADVANCED
       ? config.ADVANCED.TASK_LOCK_TTL || 10
       : 10;
+  },
+
+  getMineralExportAt() {
+    return config.ADVANCED
+      ? config.ADVANCED.MINERAL_EXPORT_AT || 100
+      : 100;
   },
 
   getLabReactionAmount() {
