@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -81,12 +82,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--server-url",
-        default="http://127.0.0.1:21025",
+        default=os.environ.get("SCREEPS_SERVER_URL", "http://127.0.0.1:21035"),
         help="private server base URL",
     )
     parser.add_argument(
         "--token",
-        default="screeps-omega-dev-token",
+        default=os.environ.get("SCREEPS_LOCAL_TOKEN", "screeps-omega-dev-token"),
         help="local dev auth token",
     )
     parser.add_argument(

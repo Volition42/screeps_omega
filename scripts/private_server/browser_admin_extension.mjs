@@ -139,6 +139,18 @@ export async function register({ koa }) {
             process.env.SCREEPS_BROWSER_PUBLIC_URL && (process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL)
               ? `${process.env.SCREEPS_BROWSER_PUBLIC_URL}/(${process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL})/`
               : "/",
+          clientOverviewUrl:
+            process.env.SCREEPS_BROWSER_PUBLIC_URL && (process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL)
+              ? `${process.env.SCREEPS_BROWSER_PUBLIC_URL}/(${process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL})/#!/overview`
+              : "/",
+          dashboardUrl:
+            process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL
+              ? `${process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL}/web/`
+              : "/web/",
+          maptoolUrl:
+            process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL
+              ? `${process.env.SCREEPS_SERVER_PUBLIC_URL || process.env.SCREEPS_SERVER_URL}/maptool/`
+              : "/maptool/",
           adminUrl: process.env.SCREEPS_BROWSER_PUBLIC_URL
             ? `${process.env.SCREEPS_BROWSER_PUBLIC_URL}/omega-admin/`
             : "/omega-admin/",
@@ -191,6 +203,24 @@ export async function register({ koa }) {
         const milliseconds = Number(body.milliseconds || 200);
         result = await runWorldTool(["set-tick-duration", `${milliseconds}`]);
         data = { milliseconds };
+        break;
+      }
+      case "/omega-admin/api/set-cpu": {
+        const cpu = Number(body.cpu || 20);
+        result = await runWorldTool(["set-user-cpu", `${cpu}`]);
+        data = { cpu };
+        break;
+      }
+      case "/omega-admin/api/set-gcl": {
+        const level = Number(body.level || 1);
+        result = await runWorldTool(["set-user-gcl", `${level}`]);
+        data = { level };
+        break;
+      }
+      case "/omega-admin/api/set-pcl": {
+        const level = Number(body.level || 0);
+        result = await runWorldTool(["set-user-pcl", `${level}`]);
+        data = { level };
         break;
       }
       case "/omega-admin/api/reseed-room":

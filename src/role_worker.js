@@ -18,6 +18,8 @@ Important Notes:
 - Shared helper keeps worker energy logic aligned with repair creeps
 */
 
+const reservePolicy = require("economy_reserve_policy");
+const logisticsManager = require("logistics_manager");
 const utils = require("utils");
 
 const MOVE_OPTIONS = {
@@ -53,31 +55,7 @@ module.exports = {
     }
 
     if (!creep.memory.working) {
-      let target = null;
-
-      if (creep.memory.withdrawTargetId) {
-        target = Game.getObjectById(creep.memory.withdrawTargetId);
-
-        if (
-          !target ||
-          ((target.structureType === STRUCTURE_STORAGE ||
-            target.structureType === STRUCTURE_CONTAINER) &&
-            (target.store[RESOURCE_ENERGY] || 0) <= 0)
-        ) {
-          target = null;
-          delete creep.memory.withdrawTargetId;
-        }
-      }
-
-      if (!target) {
-        target = utils.getGeneralEnergyWithdrawalTarget(creep.room, creep);
-
-        if (target && target.id) {
-          creep.memory.withdrawTargetId = target.id;
-        } else {
-          delete creep.memory.withdrawTargetId;
-        }
-      }
+      let target = this.getWithdrawalTarget(creep);
 
       if (!target) return;
 
@@ -129,7 +107,27 @@ module.exports = {
     }
   },
 
+  getWithdrawalTarget(creep) {
+    const state = this.getRuntimeState(creep.room);
+    let target = this.getCachedWithdrawalTarget(creep);
+
+    if (!target) {
+      target = reservePolicy.shouldBankStorageEnergy(creep.room, state)
+        ? this.getReserveWithdrawalTarget(creep, state)
+        : utils.getGeneralEnergyWithdrawalTarget(creep.room, creep);
+
+      if (target && target.id) {
+        creep.memory.withdrawTargetId = target.id;
+      } else {
+        delete creep.memory.withdrawTargetId;
+      }
+    }
+
+    return target;
+  },
+
   getWorkTarget(creep, thinkInterval) {
+    const state = this.getRuntimeState(creep.room);
     const cached = this.getCachedWorkTarget(creep);
 
     if (cached && !this.shouldThink(creep, thinkInterval, "workerWork")) {
@@ -149,7 +147,48 @@ module.exports = {
       target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
     }
 
+    if (!target && reservePolicy.shouldBankStorageEnergy(creep.room, state)) {
+      target = utils.getStorageDeliveryTarget(creep.room);
+    }
+
     this.storeWorkTarget(creep, target);
+    return target;
+  },
+
+  getRuntimeState(room) {
+    const cache = room ? utils.getRoomRuntimeCache(room) : null;
+    return cache && cache.state ? cache.state : null;
+  },
+
+  getCachedWithdrawalTarget(creep) {
+    if (!creep.memory.withdrawTargetId) return null;
+
+    const target = Game.getObjectById(creep.memory.withdrawTargetId);
+    if (!target) {
+      delete creep.memory.withdrawTargetId;
+      return null;
+    }
+
+    if (
+      (target.structureType === STRUCTURE_STORAGE ||
+        target.structureType === STRUCTURE_CONTAINER) &&
+      (target.store[RESOURCE_ENERGY] || 0) <= 0
+    ) {
+      delete creep.memory.withdrawTargetId;
+      return null;
+    }
+
+    if (
+      target.structureType === STRUCTURE_STORAGE &&
+      reservePolicy.shouldBankStorageEnergy(
+        creep.room,
+        this.getRuntimeState(creep.room),
+      )
+    ) {
+      delete creep.memory.withdrawTargetId;
+      return null;
+    }
+
     return target;
   },
 
@@ -170,7 +209,43 @@ module.exports = {
       return null;
     }
 
+    if (
+      target.structureType === STRUCTURE_STORAGE &&
+      (
+        !reservePolicy.shouldBankStorageEnergy(
+          creep.room,
+          this.getRuntimeState(creep.room),
+        ) ||
+        target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
+      )
+    ) {
+      delete creep.memory.workTargetId;
+      return null;
+    }
+
     return target;
+  },
+
+  getReserveWithdrawalTarget(creep, state) {
+    const hubContainer = logisticsManager.getHubContainerEnergyTarget(state);
+    if (hubContainer) {
+      return hubContainer;
+    }
+
+    const sourceContainer = logisticsManager.getBalancedSourceContainer(
+      state,
+      creep,
+    );
+    if (sourceContainer) {
+      return sourceContainer;
+    }
+
+    let source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
+    if (!source) {
+      source = creep.pos.findClosestByRange(FIND_SOURCES);
+    }
+
+    return source;
   },
 
   storeWorkTarget(creep, target) {

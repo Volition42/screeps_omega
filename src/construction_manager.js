@@ -44,21 +44,29 @@ module.exports = {
     if (Game.time - mem.lastPlan < planInterval) return;
     mem.lastPlan = Game.time;
 
+    this.updateOperationalUnlocks(room, state, mem);
     var context = this.createPlanContext(room, state);
+    context.constructionMemory = mem;
+    context.mineralAccessRoadUnlocked = this.isMineralAccessRoadUnlocked(
+      room,
+      state,
+      mem,
+    );
     var plan = roadmap.getPlan(
       state.phase,
       room.controller ? room.controller.level : 0,
     );
-    if (!plan || !plan.buildList) return;
+    var planningPlan = this.getPlanningPlan(room, state, plan);
+    if (!planningPlan || !planningPlan.buildList) return;
+    context.planningPlan = planningPlan;
 
-    this.refreshFuturePlan(context, plan, mem);
+    this.refreshFuturePlan(context, planningPlan, mem);
     context.futurePlan = mem.futurePlan || null;
 
-    for (var i = 0; i < plan.buildList.length; i++) {
+    for (var i = 0; i < planningPlan.buildList.length; i++) {
       if (this.isSiteCapReached(context)) break;
 
-      var action = plan.buildList[i];
-
+      var action = planningPlan.buildList[i];
       switch (action) {
         case "sourceContainers":
           this.placeSourceContainers(context);
@@ -95,6 +103,10 @@ module.exports = {
           this.placeStorage(context);
           break;
 
+        case "spawns":
+          this.placeSpawns(context);
+          break;
+
         case "links":
           this.placeLinks(context);
           break;
@@ -113,6 +125,10 @@ module.exports = {
 
         case "labs":
           this.placeLabs(context);
+          break;
+
+        case "mineralAccessRoad":
+          this.placeMineralAccessRoad(context);
           break;
 
         case "factory":
@@ -139,6 +155,90 @@ module.exports = {
 
   },
 
+  getPlanningPlan(room, state, basePlan) {
+    var planningPlan = {
+      phase: basePlan.phase,
+      roadmapPhase: basePlan.roadmapPhase,
+      focus: basePlan.focus,
+      summary: basePlan.summary,
+      buildList: basePlan.buildList.slice(),
+      goals: roadmap.cloneGoals(basePlan.goals || {}),
+    };
+    var buildStatus = state && state.buildStatus ? state.buildStatus : null;
+    var unlockedLabGoal = buildStatus
+      ? buildStatus.unlockedLabsNeeded || buildStatus.labsNeeded || 0
+      : 0;
+    var currentLabGoal =
+      planningPlan.goals &&
+      planningPlan.goals.advancedStructures &&
+      typeof planningPlan.goals.advancedStructures.labs === "number"
+        ? planningPlan.goals.advancedStructures.labs
+        : 0;
+
+    if (unlockedLabGoal > currentLabGoal) {
+      if (!planningPlan.goals.advancedStructures) {
+        planningPlan.goals.advancedStructures = {};
+      }
+
+      planningPlan.goals.advancedStructures.labs = unlockedLabGoal;
+      if (planningPlan.buildList.indexOf("labs") === -1) {
+        planningPlan.buildList.push("labs");
+      }
+    }
+
+    planningPlan.buildList = this.prioritizeCatchupBuildActions(
+      planningPlan.buildList,
+      state,
+      unlockedLabGoal,
+    );
+
+    return planningPlan;
+  },
+
+  prioritizeCatchupBuildActions(buildList, state, unlockedLabGoal) {
+    if (!buildList || buildList.length === 0 || !state || !state.buildStatus) {
+      return buildList;
+    }
+
+    var status = state.buildStatus;
+    var priorityActions = [];
+
+    if ((status.towersNeeded || 0) >= 3 && status.towersBuilt < status.towersNeeded) {
+      priorityActions.push("towerStamp");
+    }
+    if (unlockedLabGoal > (status.labsBuilt || 0)) {
+      priorityActions.push("labs");
+    }
+    if (priorityActions.length === 0) return buildList;
+
+    var ordered = [];
+    var seen = {};
+    var bootstrapActions = [
+      "sourceContainers",
+      "hubContainer",
+      "controllerContainer",
+    ];
+
+    function pushAction(action) {
+      if (!action || seen[action]) return;
+      if (buildList.indexOf(action) === -1) return;
+      ordered.push(action);
+      seen[action] = true;
+    }
+
+    for (var i = 0; i < bootstrapActions.length; i++) {
+      pushAction(bootstrapActions[i]);
+    }
+    for (var j = 0; j < priorityActions.length; j++) {
+      pushAction(priorityActions[j]);
+    }
+    for (var k = 0; k < buildList.length; k++) {
+      pushAction(buildList[k]);
+    }
+
+    return ordered;
+  },
+
   getRoomConstructionMemory(room) {
     if (!Memory.rooms) Memory.rooms = {};
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
@@ -147,6 +247,39 @@ module.exports = {
     }
 
     return Memory.rooms[room.name].construction;
+  },
+
+  updateOperationalUnlocks(room, state, memory) {
+    memory = memory || this.getRoomConstructionMemory(room);
+    if (!memory || !state) return;
+
+    if (constructionStatus.isMineralProgramUnlocked(room, state)) {
+      memory.mineralProgramUnlocked = true;
+    }
+    if (this.getActiveMineralMinerCount(room, state) > 0) {
+      memory.mineralProgramUnlocked = true;
+      memory.mineralAccessRoadUnlocked = true;
+    }
+  },
+
+  isMineralAccessRoadUnlocked(room, state, memory) {
+    if (this.getActiveMineralMinerCount(room, state) > 0) return true;
+
+    memory = memory || this.getRoomConstructionMemory(room);
+    return !!(memory && memory.mineralAccessRoadUnlocked);
+  },
+
+  getActiveMineralMinerCount(room, state) {
+    var roleCounts = state && state.roleCounts ? state.roleCounts : {};
+    if ((roleCounts.mineral_miner || 0) > 0) {
+      return roleCounts.mineral_miner;
+    }
+
+    return room.find(FIND_MY_CREEPS, {
+      filter: function (creep) {
+        return creep.memory && creep.memory.role === "mineral_miner";
+      },
+    }).length;
   },
 
   createPlanContext(room, state) {
@@ -223,12 +356,20 @@ module.exports = {
         : 0;
     var sourceCount = context.state.sources ? context.state.sources.length : 0;
     var anchor = this.getAnchorOrigin(context);
+    var labGoal =
+      plan &&
+      plan.goals &&
+      plan.goals.advancedStructures &&
+      typeof plan.goals.advancedStructures.labs === "number"
+        ? plan.goals.advancedStructures.labs
+        : 0;
 
     return [
       plan.roadmapPhase,
       controllerLevel,
       storageCount,
       sourceCount,
+      labGoal,
       storagePos ? storagePos.x : "na",
       storagePos ? storagePos.y : "na",
       anchor ? anchor.x : "na",
@@ -467,10 +608,17 @@ module.exports = {
 
     var minerals = context.room.find(FIND_MINERALS);
     var mineral = minerals && minerals.length > 0 ? minerals[0] : null;
+    var ready = !!mineral
+      && this.canPlaceStructureSite(
+        context,
+        mineral ? mineral.pos : null,
+        STRUCTURE_EXTRACTOR,
+        true,
+      );
 
     return {
       enabled: !!mineral,
-      ready: !!mineral,
+      ready: ready,
       mineralId: mineral ? mineral.id : null,
       pos: this.serializePos(mineral ? mineral.pos : null),
     };
@@ -1398,22 +1546,7 @@ module.exports = {
         return this.isMineralContainerCandidate(context, pos);
       }.bind(this),
     );
-
     if (!placed || this.isSiteCapReached(context)) return;
-
-    var roadAnchor = room.storage || (state.spawns && state.spawns[0]
-      ? state.spawns[0].pos
-      : null);
-    var mineralContainer = state.mineralContainer || this.findPlannedMineralContainer(context);
-
-    if (roadAnchor && mineralContainer) {
-      this.placeRoadPath(
-        context,
-        roadAnchor.pos ? roadAnchor.pos : roadAnchor,
-        mineralContainer.pos,
-        1,
-      );
-    }
   },
 
   placeExtractor(context) {
@@ -1442,10 +1575,17 @@ module.exports = {
     if (!room.controller || room.controller.level < 6) return;
 
     var status = context.buildStatus;
-    if (!status || status.labsBuilt >= status.labsNeeded) return;
-
     var futurePlan = this.getCachedFuturePlan(context);
     var labPlan = futurePlan && futurePlan.labs ? futurePlan.labs : null;
+    var targetLabs = labPlan && typeof labPlan.targetCount === "number"
+      ? labPlan.targetCount
+      : status && typeof status.unlockedLabsNeeded === "number"
+        ? status.unlockedLabsNeeded
+        : status && typeof status.labsNeeded === "number"
+          ? status.labsNeeded
+          : 0;
+
+    if (!status || status.labsBuilt >= targetLabs) return;
     var roadAnchor = null;
     if (!labPlan || !labPlan.enabled || !labPlan.positions) return;
 
@@ -1468,7 +1608,7 @@ module.exports = {
       context,
       labPlan.positions,
       STRUCTURE_LAB,
-      status.labsNeeded - status.labsBuilt,
+      targetLabs - status.labsBuilt,
     );
 
     if (!labPlan.origin && !this.isSiteCapReached(context)) {
@@ -1482,6 +1622,43 @@ module.exports = {
         }
       }
     }
+  },
+
+  getMineralRoadAnchor(context) {
+    var room = context.room;
+    var state = context.state;
+    var structuresByType = state.structuresByType || {};
+    var storage = room.storage || (structuresByType[STRUCTURE_STORAGE] || [])[0] || null;
+    var terminal = room.terminal || (structuresByType[STRUCTURE_TERMINAL] || [])[0] || null;
+    var spawn = state.spawns && state.spawns[0] ? state.spawns[0] : null;
+
+    return storage || terminal || spawn || null;
+  },
+
+  placeMineralAccessRoad(context) {
+    var room = context.room;
+    var state = context.state;
+    var minerals = state.minerals || room.find(FIND_MINERALS);
+    var mineral = minerals && minerals.length > 0 ? minerals[0] : null;
+    var mineralContainer = state.mineralContainer || null;
+    var extractors = state.structuresByType
+      ? state.structuresByType[STRUCTURE_EXTRACTOR] || []
+      : [];
+    var hasExtractor = !!mineral && _.some(extractors, function (extractor) {
+      return extractor.pos.isEqualTo(mineral.pos);
+    });
+    var roadAnchor = this.getMineralRoadAnchor(context);
+
+    if (!room.controller || room.controller.level < 6) return;
+    if (!context.mineralAccessRoadUnlocked) return;
+    if (!mineralContainer || !hasExtractor || !roadAnchor) return;
+
+    this.placeRoadPath(
+      context,
+      roadAnchor.pos ? roadAnchor.pos : roadAnchor,
+      mineralContainer.pos,
+      1,
+    );
   },
 
   placeFactory(context) {
@@ -1649,6 +1826,33 @@ module.exports = {
       },
       this,
     );
+  },
+
+  placeSpawns(context) {
+    var room = context.room;
+    if (!room.controller || room.controller.level < 7) return;
+
+    var status = context.buildStatus;
+    if (!status || status.spawnsBuilt >= status.spawnsNeeded) return;
+
+    var anchor = this.getAnchorOrigin(context);
+    if (!anchor) return;
+
+    var remainingSpawns = status.spawnsNeeded - status.spawnsBuilt;
+    var reserved = stamps.getReservedPositions(anchor, "anchor_v1", "spawn_slot");
+
+    for (var i = 0; i < reserved.length; i++) {
+      if (this.isSiteCapReached(context)) return;
+      if (remainingSpawns <= 0) return;
+
+      if (this.tryPlaceStructureSite(context, reserved[i], STRUCTURE_SPAWN)) {
+        remainingSpawns--;
+      }
+    }
+
+    if (remainingSpawns > 0 && !this.isSiteCapReached(context)) {
+      this.placeFallbackSpawns(context, remainingSpawns);
+    }
   },
 
   placeSourceContainers(context) {
@@ -1847,13 +2051,16 @@ module.exports = {
       if (this.isSiteCapReached(context)) return;
       if (remainingTowers <= 0) return;
 
-      this.placeStampRoads(context, towerOrigins[i], "tower_cluster_v1");
       remainingTowers -= this.placeStampTowers(
         context,
         towerOrigins[i],
         "tower_cluster_v1",
         remainingTowers,
       );
+    }
+
+    if (remainingTowers > 0 && !this.isSiteCapReached(context)) {
+      this.placeFallbackTowers(context, remainingTowers);
     }
   },
 
@@ -1944,6 +2151,102 @@ module.exports = {
     return placed;
   },
 
+  placeFallbackTowers(context, limit) {
+    var anchor = this.getAnchorOrigin(context);
+    if (!anchor || limit <= 0) return 0;
+
+    var placed = 0;
+    var centerPos = new RoomPosition(anchor.x, anchor.y, anchor.roomName);
+    var candidates = this.getNearbyPositions(centerPos, 3, 8);
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (this.isSiteCapReached(context)) return placed;
+      if (placed >= limit) return placed;
+      if (!this.isFallbackTowerCandidate(context, candidates[i])) continue;
+
+      if (this.tryPlaceStructureSite(context, candidates[i], STRUCTURE_TOWER)) {
+        placed++;
+      }
+    }
+
+    return placed;
+  },
+
+  placeFallbackSpawns(context, limit) {
+    var anchor = this.getAnchorOrigin(context);
+    if (!anchor || limit <= 0) return 0;
+
+    var placed = 0;
+    var centerPos = new RoomPosition(anchor.x, anchor.y, anchor.roomName);
+    var candidates = this.getNearbyPositions(centerPos, 2, 6);
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (this.isSiteCapReached(context)) return placed;
+      if (placed >= limit) return placed;
+      if (!this.isFallbackSpawnCandidate(context, candidates[i])) continue;
+
+      if (this.tryPlaceStructureSite(context, candidates[i], STRUCTURE_SPAWN)) {
+        placed++;
+      }
+    }
+
+    return placed;
+  },
+
+  isFallbackTowerCandidate(context, pos) {
+    if (!pos) return false;
+
+    var room = context.room;
+    var state = context.state;
+    var spawn = state.spawns && state.spawns[0] ? state.spawns[0] : null;
+    var storage = room.storage || null;
+    var controller = room.controller || null;
+    var sources = state.sources || [];
+    var minerals = state.minerals || [];
+
+    if (spawn && pos.getRangeTo(spawn) <= 1) return false;
+    if (controller && pos.getRangeTo(controller) <= 2) return false;
+    if (storage && pos.getRangeTo(storage) <= 1) return false;
+
+    for (var i = 0; i < sources.length; i++) {
+      if (pos.getRangeTo(sources[i]) <= 1) return false;
+    }
+
+    for (var j = 0; j < minerals.length; j++) {
+      if (pos.isEqualTo(minerals[j].pos)) return false;
+    }
+
+    return this.canPlaceStructureSite(context, pos, STRUCTURE_TOWER);
+  },
+
+  isFallbackSpawnCandidate(context, pos) {
+    if (!pos) return false;
+
+    var room = context.room;
+    var state = context.state;
+    var spawns = state.spawns || [];
+    var storage = room.storage || null;
+    var controller = room.controller || null;
+    var sources = state.sources || [];
+    var minerals = state.minerals || [];
+
+    for (var i = 0; i < spawns.length; i++) {
+      if (pos.getRangeTo(spawns[i]) <= 1) return false;
+    }
+    if (controller && pos.getRangeTo(controller) <= 2) return false;
+    if (storage && pos.getRangeTo(storage) <= 1) return false;
+
+    for (var j = 0; j < sources.length; j++) {
+      if (pos.getRangeTo(sources[j]) <= 1) return false;
+    }
+
+    for (var k = 0; k < minerals.length; k++) {
+      if (pos.isEqualTo(minerals[k].pos)) return false;
+    }
+
+    return this.canPlaceStructureSite(context, pos, STRUCTURE_SPAWN);
+  },
+
   placeFallbackExtensions(context, limit) {
     var anchor = this.getAnchorOrigin(context);
     if (!anchor || limit <= 0) return 0;
@@ -2008,9 +2311,26 @@ module.exports = {
     return true;
   },
 
+  hasMineralAt(context, pos) {
+    if (!context || !pos) return false;
+
+    var minerals =
+      context.state && context.state.minerals
+        ? context.state.minerals
+        : context.room.find(FIND_MINERALS);
+
+    for (var i = 0; i < minerals.length; i++) {
+      if (minerals[i].pos.isEqualTo(pos)) return true;
+    }
+
+    return false;
+  },
+
   canPlaceStructureSite(context, pos, structureType, allowExistingSame) {
     var isDefenseStructure =
       structureType === STRUCTURE_WALL || structureType === STRUCTURE_RAMPART;
+    var extractorOnMineral =
+      structureType === STRUCTURE_EXTRACTOR && this.hasMineralAt(context, pos);
     var minCoord = isDefenseStructure ? 1 : 2;
     var maxCoord = isDefenseStructure ? 48 : 47;
 
@@ -2018,7 +2338,10 @@ module.exports = {
     if (pos.x < minCoord || pos.x > maxCoord || pos.y < minCoord || pos.y > maxCoord) {
       return false;
     }
-    if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) return false;
+    if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL && !extractorOnMineral) {
+      return false;
+    }
+    if (structureType === STRUCTURE_EXTRACTOR && !extractorOnMineral) return false;
 
     var structures = pos.lookFor(LOOK_STRUCTURES);
     var sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
@@ -2037,6 +2360,15 @@ module.exports = {
 
     var self = this;
     var blocked = _.some(structures, function (s) {
+      // Legacy road coverage should not block later catch-up placement for the
+      // major permanent structures that commonly arrive after the road grid.
+      if (
+        s.structureType === STRUCTURE_ROAD &&
+        self.canReplaceRoadWithStructure(structureType)
+      ) {
+        return false;
+      }
+
       return !self.canStructureTypesShareTile(structureType, s.structureType);
     });
 
@@ -2066,6 +2398,20 @@ module.exports = {
     }
 
     return false;
+  },
+
+  canReplaceRoadWithStructure(structureType) {
+    return (
+      structureType === STRUCTURE_TOWER ||
+      structureType === STRUCTURE_SPAWN ||
+      structureType === STRUCTURE_LINK ||
+      structureType === STRUCTURE_TERMINAL ||
+      structureType === STRUCTURE_LAB ||
+      structureType === STRUCTURE_FACTORY ||
+      structureType === STRUCTURE_OBSERVER ||
+      structureType === STRUCTURE_POWER_SPAWN ||
+      structureType === STRUCTURE_NUKER
+    );
   },
 
   getDefenseRing(context) {

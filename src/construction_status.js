@@ -58,6 +58,13 @@ module.exports = {
       ? roadmap.getDesiredStructureCount(room.controller.level, STRUCTURE_STORAGE)
       : 0;
     var storageBuilt = this.countBuiltAndSites(room, state, STRUCTURE_STORAGE);
+    var spawnsNeeded = this.getStructureGoal(
+      room,
+      plan,
+      "spawns",
+      STRUCTURE_SPAWN,
+    );
+    var spawnsBuilt = this.countBuiltAndSites(room, state, STRUCTURE_SPAWN);
     var linkGoal = this.getLinkGoal(room, state, plan);
     var linksBuilt = this.countBuiltAndSites(room, state, STRUCTURE_LINK);
     var terminalNeeded = this.hasAction(plan, "terminal")
@@ -66,6 +73,13 @@ module.exports = {
     var terminalBuilt = this.countBuiltAndSites(room, state, STRUCTURE_TERMINAL);
     var extractorNeeded = this.getExtractorGoal(room, plan);
     var extractorBuilt = this.countBuiltAndSites(room, state, STRUCTURE_EXTRACTOR);
+    var mineralAccessRoadPath = this.getMineralAccessRoadPath(room, state, plan);
+    var mineralAccessRoadsNeeded = mineralAccessRoadPath.length;
+    var mineralAccessRoadsBuilt = this.countRoadCoverageOnPath(
+      room,
+      state,
+      mineralAccessRoadPath,
+    );
     var labsNeeded = this.hasAction(plan, "labs")
       ? Math.min(
           goals.advancedStructures && goals.advancedStructures.labs
@@ -143,6 +157,9 @@ module.exports = {
       storageBuilt: storageBuilt,
       storageNeeded: storageNeeded,
 
+      spawnsBuilt: spawnsBuilt,
+      spawnsNeeded: spawnsNeeded,
+
       linksBuilt: linksBuilt,
       linksNeeded: linkGoal.total,
       controllerLinksNeeded: linkGoal.controller,
@@ -154,6 +171,9 @@ module.exports = {
 
       extractorBuilt: extractorBuilt,
       extractorNeeded: extractorNeeded,
+
+      mineralAccessRoadsBuilt: mineralAccessRoadsBuilt,
+      mineralAccessRoadsNeeded: mineralAccessRoadsNeeded,
 
       labsBuilt: labsBuilt,
       labsNeeded: labsNeeded,
@@ -181,6 +201,13 @@ module.exports = {
 
       futurePlan: futurePlan,
     };
+
+    status.unlockedLabsNeeded = this.getUnlockedLabGoal(
+      room,
+      state,
+      plan,
+      status,
+    );
 
     status.roadCompletionRatio =
       status.roadsNeeded > 0 ? status.roadsBuilt / status.roadsNeeded : 1;
@@ -213,6 +240,7 @@ module.exports = {
       status.factoryBuilt >= status.factoryNeeded;
     status.commandComplete =
       status.fortificationComplete &&
+      status.spawnsBuilt >= status.spawnsNeeded &&
       status.observerBuilt >= status.observerNeeded &&
       status.powerSpawnBuilt >= status.powerSpawnNeeded &&
       status.nukerBuilt >= status.nukerNeeded;
@@ -262,6 +290,9 @@ module.exports = {
       storageBuilt: 0,
       storageNeeded: 0,
 
+      spawnsBuilt: 0,
+      spawnsNeeded: 0,
+
       linksBuilt: 0,
       linksNeeded: 0,
       controllerLinksNeeded: 0,
@@ -274,8 +305,12 @@ module.exports = {
       extractorBuilt: 0,
       extractorNeeded: 0,
 
+      mineralAccessRoadsBuilt: 0,
+      mineralAccessRoadsNeeded: 0,
+
       labsBuilt: 0,
       labsNeeded: 0,
+      unlockedLabsNeeded: 0,
 
       factoryBuilt: 0,
       factoryNeeded: 0,
@@ -541,6 +576,60 @@ module.exports = {
     return total;
   },
 
+  getMineralAccessRoadPath(room, state, plan) {
+    if (!room.controller || room.controller.level < 6) return [];
+    if (!this.hasAction(plan, "mineralAccessRoad")) return [];
+    if (!this.isMineralAccessRoadUnlocked(room, state)) return [];
+
+    var mineralContainer = state.mineralContainer || null;
+    var anchor = this.getMineralRoadAnchor(room, state);
+
+    if (!mineralContainer || !anchor) return [];
+
+    return anchor.pos.findPathTo(mineralContainer.pos, {
+      ignoreCreeps: true,
+      range: 1,
+    });
+  },
+
+  countRoadCoverageOnPath(room, state, path) {
+    if (!path || path.length === 0) return 0;
+
+    var roads =
+      state.structuresByType && state.structuresByType[STRUCTURE_ROAD]
+        ? state.structuresByType[STRUCTURE_ROAD]
+        : room.find(FIND_STRUCTURES, {
+            filter: function (structure) {
+              return structure.structureType === STRUCTURE_ROAD;
+            },
+          });
+    var roadSites =
+      state.sitesByType && state.sitesByType[STRUCTURE_ROAD]
+        ? state.sitesByType[STRUCTURE_ROAD]
+        : room.find(FIND_CONSTRUCTION_SITES, {
+            filter: function (site) {
+              return site.structureType === STRUCTURE_ROAD;
+            },
+          });
+    var covered = {};
+    var total = 0;
+
+    for (var i = 0; i < roads.length; i++) {
+      covered[this.getPosKey(roads[i].pos)] = true;
+    }
+    for (var j = 0; j < roadSites.length; j++) {
+      covered[this.getPosKey(roadSites[j].pos)] = true;
+    }
+
+    for (var k = 0; k < path.length; k++) {
+      if (covered[path[k].x + ":" + path[k].y]) {
+        total++;
+      }
+    }
+
+    return total;
+  },
+
   getBackboneRoadGoal(room, state) {
     var spawn = state.spawns && state.spawns[0];
     if (!spawn) return 0;
@@ -578,10 +667,93 @@ module.exports = {
     return count;
   },
 
+  getPosKey(pos) {
+    return pos.x + ":" + pos.y;
+  },
+
   deserializePos(pos) {
     if (!pos) return null;
 
     return new RoomPosition(pos.x, pos.y, pos.roomName);
+  },
+
+  getMineralRoadAnchor(room, state) {
+    var storage = room.storage || null;
+    var terminal = room.terminal || null;
+    var spawn = state.spawns && state.spawns[0] ? state.spawns[0] : null;
+
+    return storage || terminal || spawn || null;
+  },
+
+  isMineralAccessRoadUnlocked(room, state) {
+    if (this.getActiveMineralMinerCount(room, state) > 0) return true;
+
+    return !!(
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].construction &&
+      Memory.rooms[room.name].construction.mineralAccessRoadUnlocked
+    );
+  },
+
+  hasMatureMineralInfrastructure(room, state) {
+    if (!room.controller || room.controller.level < 6) return false;
+    if (!room.storage || !state || !state.mineralContainer) return false;
+
+    var minerals = state.minerals || room.find(FIND_MINERALS);
+    if (!minerals || minerals.length === 0) return false;
+
+    var mineral = minerals[0];
+    var structuresByType = state.structuresByType || {};
+    var extractors = structuresByType[STRUCTURE_EXTRACTOR] || [];
+    var labs = structuresByType[STRUCTURE_LAB] || [];
+    var terminals = structuresByType[STRUCTURE_TERMINAL] || [];
+    var factories = structuresByType[STRUCTURE_FACTORY] || [];
+    var observers = structuresByType[STRUCTURE_OBSERVER] || [];
+    var powerSpawns = structuresByType[STRUCTURE_POWER_SPAWN] || [];
+    var nukers = structuresByType[STRUCTURE_NUKER] || [];
+
+    var hasExtractor = _.some(extractors, function (extractor) {
+      return extractor.pos.isEqualTo(mineral.pos);
+    });
+    var hasAdvancedInfra =
+      terminals.length > 0 ||
+      labs.length >= 3 ||
+      factories.length > 0 ||
+      observers.length > 0 ||
+      powerSpawns.length > 0 ||
+      nukers.length > 0;
+
+    return hasExtractor && hasAdvancedInfra;
+  },
+
+  isMineralProgramUnlocked(room, state) {
+    if (!room.controller || room.controller.level < 6) return false;
+    if (state && state.buildStatus && state.buildStatus.specializationComplete) {
+      return true;
+    }
+    if (this.getActiveMineralMinerCount(room, state) > 0) return true;
+    if (this.hasMatureMineralInfrastructure(room, state)) return true;
+
+    return !!(
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].construction &&
+      Memory.rooms[room.name].construction.mineralProgramUnlocked
+    );
+  },
+
+  getActiveMineralMinerCount(room, state) {
+    var roleCounts = state && state.roleCounts ? state.roleCounts : {};
+    if ((roleCounts.mineral_miner || 0) > 0) {
+      return roleCounts.mineral_miner;
+    }
+
+    return room.find(FIND_MY_CREEPS, {
+      filter: function (creep) {
+        return creep.memory && creep.memory.role === "mineral_miner";
+      },
+    }).length;
   },
 
   getStorageOrigin(room, state) {
@@ -674,6 +846,45 @@ module.exports = {
       room.controller ? room.controller.level : 0,
       structureType,
     );
+  },
+
+  getUnlockedLabGoal(room, state, plan, status) {
+    if (!room.controller) return 0;
+
+    var controllerLevel = room.controller.level || 0;
+    var desiredByController = roadmap.getDesiredLabCount(controllerLevel);
+    var baseGoal = status && typeof status.labsNeeded === "number"
+      ? status.labsNeeded
+      : this.hasAction(plan, "labs")
+        ? Math.min(
+            plan.goals &&
+              plan.goals.advancedStructures &&
+              plan.goals.advancedStructures.labs
+              ? plan.goals.advancedStructures.labs
+              : desiredByController,
+            desiredByController,
+          )
+        : 0;
+
+    if (!status) return baseGoal;
+
+    var unlockedGoal = baseGoal;
+    var matureSpecialization =
+      (status.terminalBuilt || 0) >= 1 &&
+      (status.extractorBuilt || 0) >= 1 &&
+      (status.labsBuilt || 0) >= 3;
+    var matureFortification =
+      (status.factoryBuilt || 0) >= 1 || (status.labsBuilt || 0) >= 6;
+
+    if (controllerLevel >= 7 && (matureSpecialization || status.specializationComplete)) {
+      unlockedGoal = Math.max(unlockedGoal, Math.min(6, desiredByController));
+    }
+
+    if (controllerLevel >= 8 && (matureFortification || status.fortificationComplete)) {
+      unlockedGoal = Math.max(unlockedGoal, desiredByController);
+    }
+
+    return unlockedGoal;
   },
 
   isCurrentRoadmapReady(status) {

@@ -3,129 +3,233 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Omega Admin</title>
+  <title>Screeps Server Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700,900">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@latest/css/materialdesignicons.min.css">
   <link rel="stylesheet" href="/omega-admin/style.css">
 </head>
 <body>
-  <main class="page">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">Local Screeps Control</p>
-        <h1>Omega Admin Panel</h1>
-        <p class="subcopy">Quick local-server controls for testing, resets, room prep, and code sync.</p>
+  <div class="app-shell">
+    <header class="app-bar">
+      <div class="app-bar__brand">
+        <span class="app-bar__icon mdi mdi-server-network"></span>
+        <div>
+          <p class="eyebrow">Local Private Server</p>
+          <h1>Screeps Server Dashboard</h1>
+        </div>
       </div>
       <div class="hero-actions">
-        <a class="button secondary" id="open-client-link" href="/">Open Portal</a>
-        <a class="button" id="open-game-link" href="/">Open Game</a>
+        <button class="button secondary" id="open-client-link" type="button">Portal</button>
+        <button class="button secondary" id="open-maptool-link" type="button">Map Tool</button>
+        <button class="button secondary" id="open-overview-link" type="button">Overview</button>
+        <button class="button secondary" id="open-dashboard-link" type="button">Raw Dashboard</button>
+        <button class="button" id="open-game-link" type="button">Game</button>
       </div>
     </header>
 
-    <section class="grid">
-      <article class="card">
-        <h2>Status</h2>
-        <dl class="stats">
-          <div><dt>State</dt><dd id="status-state">Loading</dd></div>
-          <div><dt>Game Time</dt><dd id="status-game-time">-</dd></div>
-          <div><dt>Tick</dt><dd id="status-tick">-</dd></div>
-          <div><dt>User</dt><dd id="status-user">-</dd></div>
-          <div><dt>CPU</dt><dd id="status-cpu">-</dd></div>
-          <div><dt>Branch</dt><dd id="status-branch">-</dd></div>
-        </dl>
-        <div class="inline-actions">
-          <button class="button" data-action="resume">Resume</button>
-          <button class="button secondary" data-action="pause">Pause</button>
-          <button class="button secondary" id="refresh-status">Refresh</button>
-        </div>
-      </article>
-
-      <article class="card">
-        <h2>Tick Speed</h2>
-        <div class="pill-row">
-          <button class="pill" data-tick="50">50 ms</button>
-          <button class="pill" data-tick="100">100 ms</button>
-          <button class="pill" data-tick="200">200 ms</button>
-          <button class="pill" data-tick="500">500 ms</button>
-          <button class="pill" data-tick="1000">1000 ms</button>
-        </div>
-        <form id="tick-form" class="stack-form">
-          <label>
-            <span>Custom Tick (ms)</span>
-            <input id="tick-input" type="number" min="10" step="10" value="200">
-          </label>
-          <button class="button" type="submit">Set Tick</button>
-        </form>
-      </article>
-
-      <article class="card">
-        <h2>Room Tools</h2>
-        <form id="room-form" class="stack-form">
-          <label>
-            <span>Room</span>
-            <input id="room-input" type="text" value="W5N5" spellcheck="false">
-          </label>
-          <div class="inline-actions">
-            <button class="button" type="button" data-action="reseed-room">Reseed Room</button>
-            <button class="button secondary" type="button" data-action="complete-sites">Complete Sites</button>
-            <button class="button secondary" type="button" data-action="fill-energy">Fill Energy</button>
+    <main class="workspace">
+      <section class="workspace-top">
+        <article class="card status-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Live Status</p>
+              <h2>Server Snapshot</h2>
+            </div>
+            <button class="button secondary" id="refresh-status" type="button">Refresh</button>
           </div>
-        </form>
-      </article>
 
-      <article class="card">
-        <h2>Controller / Threat</h2>
-        <div class="stack-form">
-          <label>
-            <span>Set Controller Level</span>
-            <div class="split">
-              <select id="rcl-select">
-                <option value="1">RCL 1</option>
-                <option value="2">RCL 2</option>
-                <option value="3">RCL 3</option>
-                <option value="4">RCL 4</option>
-                <option value="5">RCL 5</option>
-                <option value="6">RCL 6</option>
-                <option value="7">RCL 7</option>
-                <option value="8">RCL 8</option>
-              </select>
-              <button class="button" id="set-rcl" type="button">Apply</button>
+          <div class="stats-grid">
+            <div class="stat-tile">
+              <span class="stat-label">State</span>
+              <span class="stat-value" id="status-state">Loading</span>
             </div>
-          </label>
-          <label>
-            <span>Spawn Test Invader</span>
-            <div class="split">
-              <select id="invader-type">
-                <option value="Melee">Melee</option>
-                <option value="Ranged">Ranged</option>
-                <option value="Healer">Healer</option>
-              </select>
-              <select id="invader-size">
-                <option value="small">Small</option>
-                <option value="big">Big</option>
-              </select>
-              <button class="button secondary" id="spawn-invader" type="button">Spawn</button>
+            <div class="stat-tile">
+              <span class="stat-label">Tick</span>
+              <span class="stat-value" id="status-game-time">-</span>
             </div>
-          </label>
-        </div>
-      </article>
+            <div class="stat-tile">
+              <span class="stat-label">Target</span>
+              <span class="stat-value" id="status-tick">-</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-label">Observed</span>
+              <span class="stat-value" id="status-observed-tick">-</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-label">User</span>
+              <span class="stat-value" id="status-user">-</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-label">CPU Max</span>
+              <span class="stat-value" id="status-cpu">-</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-label">GCL</span>
+              <span class="stat-value" id="status-gcl">-</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-label">PCL</span>
+              <span class="stat-value" id="status-pcl">-</span>
+            </div>
+          </div>
 
-      <article class="card">
-        <h2>Code / World</h2>
-        <div class="inline-actions stack-mobile">
-          <button class="button" data-action="upload-code">Upload Current Code</button>
-          <button class="button danger" data-action="reset-world">Reset Dev World</button>
-        </div>
-        <p class="help">Reset world will rebuild the local dev room, restore the test user, upload current code, and reset the browser password.</p>
-      </article>
+          <div class="status-meta">
+            <span id="status-cpu-bucket">Bucket -</span>
+            <span id="status-cpu-mode">CPU Auto</span>
+            <span id="status-branch">Branch -</span>
+          </div>
 
-      <article class="card log-card">
-        <div class="card-header">
-          <h2>Action Log</h2>
-          <button class="button secondary" id="clear-log" type="button">Clear</button>
-        </div>
-        <pre id="action-log">Waiting for commands...</pre>
-      </article>
-    </section>
-  </main>
+          <div class="chart-panel">
+            <div class="chart-header">
+              <p class="eyebrow">Live Tick View</p>
+              <span class="chart-summary" id="tick-chart-summary">Collecting samples...</span>
+            </div>
+            <svg id="tick-chart" class="tick-chart" viewBox="0 0 240 64" preserveAspectRatio="none" aria-hidden="true">
+              <polyline id="tick-chart-line" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points=""></polyline>
+            </svg>
+          </div>
+        </article>
+      </section>
+
+      <section class="workspace-grid">
+        <article class="card">
+          <div class="card-header compact">
+            <div>
+              <p class="eyebrow">Simulation</p>
+              <h2>Run Control</h2>
+            </div>
+          </div>
+          <div class="inline-actions">
+            <button class="button" data-action="resume">Resume</button>
+            <button class="button secondary" data-action="pause">Pause</button>
+          </div>
+          <div class="pill-row">
+            <button class="pill" data-tick="50">50</button>
+            <button class="pill" data-tick="100">100</button>
+            <button class="pill" data-tick="200">200</button>
+            <button class="pill" data-tick="500">500</button>
+            <button class="pill" data-tick="1000">1000</button>
+          </div>
+          <form id="tick-form" class="stack-form compact-form">
+            <label>
+              <span>Custom Tick (ms)</span>
+              <div class="split">
+                <input id="tick-input" type="number" min="10" step="10" value="200">
+                <button class="button" type="submit">Set</button>
+              </div>
+            </label>
+          </form>
+        </article>
+
+        <article class="card">
+          <div class="card-header compact">
+            <div>
+              <p class="eyebrow">Player Caps</p>
+              <h2>GCL / PCL / CPU</h2>
+            </div>
+          </div>
+          <div class="stack-form compact-form">
+            <label>
+              <span>CPU Max</span>
+              <div class="split">
+                <input id="cpu-input" type="number" min="1" step="1" value="20">
+                <button class="button" id="set-cpu" type="button">Apply</button>
+              </div>
+            </label>
+            <label>
+              <span>GCL Level</span>
+              <div class="split">
+                <input id="gcl-input" type="number" min="1" step="1" value="1">
+                <button class="button secondary" id="set-gcl" type="button">Apply</button>
+              </div>
+            </label>
+            <label>
+              <span>PCL Level</span>
+              <div class="split">
+                <input id="pcl-input" type="number" min="0" step="1" value="0">
+                <button class="button secondary" id="set-pcl" type="button">Apply</button>
+              </div>
+            </label>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header compact">
+            <div>
+              <p class="eyebrow">Room Tools</p>
+              <h2>Room Ops</h2>
+            </div>
+          </div>
+          <form id="room-form" class="stack-form compact-form">
+            <label>
+              <span>Room</span>
+              <input id="room-input" type="text" value="W5N5" spellcheck="false">
+            </label>
+            <div class="inline-actions stack-mobile">
+              <button class="button" type="button" data-action="reseed-room">Reseed</button>
+              <button class="button secondary" type="button" data-action="complete-sites">Complete</button>
+              <button class="button secondary" type="button" data-action="fill-energy">Fill</button>
+            </div>
+            <label>
+              <span>Controller Level</span>
+              <div class="split">
+                <select id="rcl-select">
+                  <option value="1">RCL 1</option>
+                  <option value="2">RCL 2</option>
+                  <option value="3">RCL 3</option>
+                  <option value="4">RCL 4</option>
+                  <option value="5">RCL 5</option>
+                  <option value="6">RCL 6</option>
+                  <option value="7">RCL 7</option>
+                  <option value="8">RCL 8</option>
+                </select>
+                <button class="button" id="set-rcl" type="button">Apply</button>
+              </div>
+            </label>
+            <label>
+              <span>Spawn Test Invader</span>
+              <div class="split split-3">
+                <select id="invader-type">
+                  <option value="Melee">Melee</option>
+                  <option value="Ranged">Ranged</option>
+                  <option value="Healer">Healer</option>
+                </select>
+                <select id="invader-size">
+                  <option value="small">Small</option>
+                  <option value="big">Big</option>
+                </select>
+                <button class="button secondary" id="spawn-invader" type="button">Spawn</button>
+              </div>
+            </label>
+          </form>
+        </article>
+
+        <article class="card">
+          <div class="card-header compact">
+            <div>
+              <p class="eyebrow">Maintenance</p>
+              <h2>Code / World</h2>
+            </div>
+          </div>
+          <div class="inline-actions stack-mobile">
+            <button class="button" data-action="upload-code">Upload Code</button>
+            <button class="button danger" data-action="reset-world">Reset World</button>
+          </div>
+          <p class="help">Reset rebuilds the dev room, restores the local user, uploads code, and refreshes auth.</p>
+        </article>
+
+        <article class="card log-card">
+          <div class="card-header compact">
+            <h2>Action Log</h2>
+            <button class="button secondary" id="clear-log" type="button">Clear</button>
+          </div>
+          <pre id="action-log">Waiting for commands...</pre>
+        </article>
+      </section>
+    </main>
+  </div>
 
   <script src="/omega-admin/app.js"></script>
 </body>

@@ -84,6 +84,7 @@ module.exports = {
     if (isHeader) return "#e0fbff";
     if (line.indexOf("Hostiles") === 0) return "#ffadad";
     if (line.indexOf("Focus") === 0) return "#a7f3d0";
+    if (line.indexOf("Mineral") === 0) return "#ffd166";
     if (line.indexOf("Safe") === 0) return "#ffd166";
     if (line.indexOf("Build") === 0) return "#caffbf";
     if (line.indexOf("Energy") === 0) return "#f8fafc";
@@ -120,6 +121,8 @@ module.exports = {
         return "W";
       case "miner":
         return "M";
+      case "mineral_miner":
+        return "Mm";
       case "hauler":
         return "H";
       case "upgrader":
@@ -143,6 +146,8 @@ module.exports = {
         return "#8ecae6";
       case "miner":
         return "#ffb703";
+      case "mineral_miner":
+        return "#fb8500";
       case "hauler":
         return "#90be6d";
       case "upgrader":

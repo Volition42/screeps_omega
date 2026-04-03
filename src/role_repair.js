@@ -19,6 +19,7 @@ Important Notes:
 */
 
 const config = require("config");
+const reservePolicy = require("economy_reserve_policy");
 const utils = require("utils");
 
 const MOVE_OPTIONS = {
@@ -32,6 +33,8 @@ const INTERACT_MOVE_OPTIONS = {
 
 module.exports = {
   run(creep) {
+    const state = this.getRuntimeState(creep.room);
+
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;
       delete creep.memory.withdrawTargetId;
@@ -93,7 +96,20 @@ module.exports = {
     const workTarget = this.getWorkTarget(creep);
     if (!workTarget) return;
 
+    if (
+      workTarget.kind === "upgrade" &&
+      reservePolicy.shouldBankStorageEnergy(creep.room, state)
+    ) {
+      this.runReserveHold(creep);
+      return;
+    }
+
     this.runWorkTarget(creep, workTarget);
+  },
+
+  getRuntimeState(room) {
+    const cache = room ? utils.getRoomRuntimeCache(room) : null;
+    return cache && cache.state ? cache.state : null;
   },
 
   getWorkTarget(creep) {
@@ -263,6 +279,29 @@ module.exports = {
 
     if (creep.repair(workTarget.target) === ERR_NOT_IN_RANGE) {
       utils.moveTo(creep, workTarget.target, MOVE_OPTIONS);
+    }
+  },
+
+  runReserveHold(creep) {
+    creep.memory.working = false;
+    delete creep.memory.withdrawTargetId;
+    delete creep.memory.workTargetId;
+    delete creep.memory.workTargetKind;
+
+    if (!creep.room.storage) return;
+
+    if ((creep.store[RESOURCE_ENERGY] || 0) > 0) {
+      if (creep.transfer(creep.room.storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        utils.moveTo(creep, creep.room.storage, MOVE_OPTIONS);
+      }
+      return;
+    }
+
+    if (creep.pos.getRangeTo(creep.room.storage) > 2) {
+      utils.moveTo(creep, creep.room.storage, {
+        reusePath: 8,
+        range: 2,
+      });
     }
   },
 };

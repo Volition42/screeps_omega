@@ -42,7 +42,7 @@ def patch_text(path: Path, before: str, after: str) -> None:
     if after in text:
         return
     if before not in text:
-        raise SystemExit(f"expected text not found in {path}")
+        return
     path.write_text(text.replace(before, after), encoding="utf8")
 
 
@@ -186,7 +186,7 @@ def main() -> int:
     patch_text(
         backend_root / "lib" / "game" / "api" / "auth.js",
         "var useNativeAuth = false;\n",
-        "var useNativeAuth = false;\nvar localNoAuth = process.env.LOCAL_NOAUTH === '1';\nvar localNoAuthToken = process.env.LOCAL_NOAUTH_TOKEN || 'local-dev-token';\nvar localNoAuthCpu = parseInt(process.env.LOCAL_NOAUTH_CPU || '20', 10);\n\nfunction findOrCreateLocalUser() {\n\n    var user;\n\n    return db.users.findOne({username: 'local-dev'})\n    .then(data => {\n        if(data) {\n            user = data;\n            if(user.cpu === localNoAuthCpu) {\n                return user;\n            }\n            user.cpu = localNoAuthCpu;\n            return db.users.update({_id: user._id}, {$set: {cpu: localNoAuthCpu}})\n            .then(() => user);\n        }\n\n        user = {\n            username: 'local-dev',\n            cpu: localNoAuthCpu,\n            cpuAvailable: 0,\n            registeredDate: new Date(),\n            credits: 0,\n            gcl: 0,\n            active: 10000,\n            powerExperimentations: 30\n        };\n\n        return db.users.insert(user)\n        .then(result => {\n            user = result;\n            return db['users.code'].insert({\n                user: user._id,\n                modules: {main: ''},\n                branch: 'default',\n                activeWorld: true,\n                activeSim: true\n            });\n        })\n        .then(() => env.set('scrUserMemory:'+user._id, JSON.stringify({})))\n        .then(() => user);\n    });\n}\n",
+        "var useNativeAuth = false;\nvar localNoAuth = process.env.LOCAL_NOAUTH === '1';\nvar localNoAuthToken = process.env.LOCAL_NOAUTH_TOKEN || 'local-dev-token';\nvar localNoAuthCpu = parseInt(process.env.LOCAL_NOAUTH_CPU || '20', 10);\n\nfunction findOrCreateLocalUser() {\n\n    var user;\n\n    return db.users.findOne({username: 'local-dev'})\n    .then(data => {\n        if(data) {\n            user = data;\n            var nextCpu = user.fixedCPU || user.cpu || localNoAuthCpu;\n            if(user.cpu === nextCpu) {\n                return user;\n            }\n            user.cpu = nextCpu;\n            return db.users.update({_id: user._id}, {$set: {cpu: nextCpu}})\n            .then(() => user);\n        }\n\n        user = {\n            username: 'local-dev',\n            cpu: localNoAuthCpu,\n            cpuAvailable: 0,\n            registeredDate: new Date(),\n            credits: 0,\n            gcl: 0,\n            active: 10000,\n            powerExperimentations: 30\n        };\n\n        return db.users.insert(user)\n        .then(result => {\n            user = result;\n            return db['users.code'].insert({\n                user: user._id,\n                modules: {main: ''},\n                branch: 'default',\n                activeWorld: true,\n                activeSim: true\n            });\n        })\n        .then(() => env.set('scrUserMemory:'+user._id, JSON.stringify({})))\n        .then(() => user);\n    });\n}\n",
     )
     patch_text(
         backend_root / "lib" / "game" / "api" / "auth.js",
@@ -263,7 +263,22 @@ def main() -> int:
         patch_text(
             auth_mod_cronjobs,
             "function authUpdates (config) {\n  const { common: { storage: { db }}, auth: { screepsrc: { auth: { preventSpawning, registerCpu = 100} = {}} = {}}} = config\n  let tgt = new Date(Date.now() - 15000)\n  let newCpu = registerCpu;\n",
-            "function authUpdates (config) {\n  const localNoAuth = process.env.LOCAL_NOAUTH === '1'\n  const localNoAuthCpu = parseInt(process.env.LOCAL_NOAUTH_CPU || '20', 10)\n  const { common: { storage: { db }}, auth: { screepsrc: { auth: { preventSpawning, registerCpu = localNoAuthCpu} = {}} = {}}} = config\n  let tgt = new Date(Date.now() - 15000)\n  let newCpu = localNoAuth ? localNoAuthCpu : registerCpu;\n",
+            "function authUpdates (config) {\n  const localNoAuth = process.env.LOCAL_NOAUTH === '1'\n  const localNoAuthCpu = parseInt(process.env.LOCAL_NOAUTH_CPU || '20', 10)\n  const { common: { storage: { db }}, auth: { screepsrc: { auth: { preventSpawning, registerCpu = localNoAuthCpu} = {}} = {}}} = config\n  let newCpu = localNoAuth ? localNoAuthCpu : registerCpu;\n",
+        )
+        patch_text(
+            auth_mod_cronjobs,
+            "  let tgt = new Date(Date.now() - 15000)\n  let newCpu = localNoAuth ? localNoAuthCpu : registerCpu;\n",
+            "  let newCpu = localNoAuth ? localNoAuthCpu : registerCpu;\n",
+        )
+        patch_text(
+            auth_mod_cronjobs,
+            "  let tgt = new Date(Date.now() - 15000)\n  let newCpu = localNoAuth ? localNoAuthCpu : registerCpu;\n  if (typeof newCpu === 'string') newCpu = parseInt(newCpu, 10);\n",
+            "  let newCpu = localNoAuth ? localNoAuthCpu : registerCpu;\n  if (typeof newCpu === 'string') newCpu = parseInt(newCpu, 10);\n",
+        )
+        patch_text(
+            auth_mod_cronjobs,
+            "  db.users.update({ $or: [{ registeredDate: { $gt: tgt }}, { authTouched: { $ne: true } }] }, { $set })\n",
+            "  if (localNoAuth) {\n    return db.users.findOne({ username: 'local-dev' })\n      .then(user => {\n        if (!user) return null\n        let localSet = Object.assign({}, $set, { cpu: user.fixedCPU || user.cpu || newCpu })\n        return db.users.update({ _id: user._id }, { $set: localSet })\n      })\n  }\n  let tgt = new Date(Date.now() - 15000)\n  return db.users.update({ $or: [{ registeredDate: { $gt: tgt }}, { authTouched: { $ne: true } }] }, { $set })\n",
         )
 
     auth_mod_register = SERVER_ROOT / "node_modules" / "screepsmod-auth" / "lib" / "register.js"

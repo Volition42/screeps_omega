@@ -154,6 +154,7 @@ module.exports = {
   LOGISTICS: {
     towerEmergencyThreshold: 400,
     towerReserveThreshold: 700,
+    towerBankingThreshold: 200,
     storageEnergyCap: 200000,
     hubContainerTarget: 1000,
     controllerContainerTarget: 1500,
@@ -170,7 +171,7 @@ module.exports = {
   - haulers only service advanced tasks when the room economy is already stable
   */
   ADVANCED: {
-    HAULER_MIN_STORAGE_ENERGY: 20000,
+    HAULER_MIN_STORAGE_ENERGY: 5000,
     TASK_LOCK_TTL: 10,
     HAUL_TASK_PRIORITY: [
       "lab_cleanup",
@@ -207,7 +208,7 @@ module.exports = {
         "ZO",
       ],
     },
-    MINERAL_MINING_MIN_STORAGE_ENERGY: 20000,
+    MINERAL_MINING_MIN_STORAGE_ENERGY: 5000,
     MINERAL_EXPORT_AT: 100,
     FACTORY: {
       ENABLED: true,
@@ -228,6 +229,44 @@ module.exports = {
       ENERGY_TARGET: 50000,
       GHODIUM_TARGET: 1000,
     },
+  },
+
+  /*
+  Developer Notes:
+  Upgrader Reserve Policy
+
+  Mature rooms should stop burning every stored surplus into controller
+  progress. Use soft storage gates so mineral ops and buffer growth can
+  coexist with upgrading:
+  - body size scales up only when storage is genuinely comfortable
+  - desired total work ramps later than before
+  - RCL8 stays in maintenance mode unless storage is clearly ahead
+  */
+  UPGRADING: {
+    CONTROLLER_LINK_PROFILE_STORAGE_ENERGY: 20000,
+    RESERVE_BANK_MIN_STORAGE_ENERGY: 5000,
+    TARGET_WORK_THRESHOLDS: [
+      { energy: 20000, work: 6 },
+      { energy: 60000, work: 10 },
+      { energy: 120000, work: 14 },
+    ],
+    BODY_WORK_THRESHOLDS: [
+      { energy: 0, work: 4 },
+      { energy: 20000, work: 6 },
+      { energy: 60000, work: 8 },
+    ],
+    RCL7_TARGET_WORK_BONUS: 1,
+    RCL8_DOWNGRADE_SAFETY_TICKS: 50000,
+    RCL8_TARGET_WORK_CAPS: [
+      { energy: 0, work: 2 },
+      { energy: 30000, work: 4 },
+      { energy: 80000, work: 6 },
+    ],
+    RCL8_BODY_WORK_CAPS: [
+      { energy: 0, work: 2 },
+      { energy: 30000, work: 3 },
+      { energy: 80000, work: 4 },
+    ],
   },
 
   /*

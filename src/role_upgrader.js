@@ -1,3 +1,4 @@
+const reservePolicy = require("economy_reserve_policy");
 const utils = require("utils");
 
 const MOVE_OPTIONS = {
@@ -13,9 +14,15 @@ module.exports = {
   run(creep, options) {
     const thinkInterval =
       options && options.thinkInterval ? options.thinkInterval : 1;
+    const state = this.getRuntimeState(creep.room);
 
     delete creep.memory.targetId;
     delete creep.memory.overrideMove;
+
+    if (reservePolicy.shouldHoldRcl8Upgrading(creep.room, state)) {
+      this.runReserveHold(creep);
+      return;
+    }
 
     if (creep.memory.upgrading && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.upgrading = false;
@@ -74,6 +81,32 @@ module.exports = {
     }
 
     return target;
+  },
+
+  getRuntimeState(room) {
+    const cache = room ? utils.getRoomRuntimeCache(room) : null;
+    return cache && cache.state ? cache.state : null;
+  },
+
+  runReserveHold(creep) {
+    creep.memory.upgrading = false;
+    delete creep.memory.withdrawTargetId;
+
+    if (!creep.room.storage) return;
+
+    if ((creep.store[RESOURCE_ENERGY] || 0) > 0) {
+      if (creep.transfer(creep.room.storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        utils.moveTo(creep, creep.room.storage, MOVE_OPTIONS);
+      }
+      return;
+    }
+
+    if (creep.pos.getRangeTo(creep.room.storage) > 2) {
+      utils.moveTo(creep, creep.room.storage, {
+        reusePath: 8,
+        range: 2,
+      });
+    }
   },
 
   getCachedWithdrawalTarget(creep) {

@@ -1,4 +1,6 @@
 const config = require("config");
+const constructionStatus = require("construction_status");
+const reservePolicy = require("economy_reserve_policy");
 const roadmap = require("construction_roadmap");
 const roomProgress = require("room_progress");
 const roomState = require("room_state");
@@ -31,12 +33,14 @@ const PHASE_BUILD_FIELDS = {
     { label: "hubCtr", built: "hubContainersBuilt", needed: "hubContainersNeeded" },
     { label: "ctrlCtr", built: "controllerContainersBuilt", needed: "controllerContainersNeeded" },
     { label: "roads", built: "roadsBuilt", needed: "roadsNeeded" },
+    { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
   ],
   development: [
     { label: "ext", built: "extensionsBuilt", needed: "extensionsNeeded" },
     { label: "tower", built: "towersBuilt", needed: "towersNeeded" },
     { label: "storage", built: "storageBuilt", needed: "storageNeeded" },
     { label: "roads", built: "roadsBuilt", needed: "roadsNeeded" },
+    { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
     { label: "walls", built: "wallsBuilt", needed: "wallsNeeded" },
     { label: "ramparts", built: "rampartsBuilt", needed: "rampartsNeeded" },
   ],
@@ -46,6 +50,7 @@ const PHASE_BUILD_FIELDS = {
     { label: "storage", built: "storageBuilt", needed: "storageNeeded" },
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
     { label: "roads", built: "roadsBuilt", needed: "roadsNeeded" },
+    { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
     { label: "walls", built: "wallsBuilt", needed: "wallsNeeded" },
     { label: "ramparts", built: "rampartsBuilt", needed: "rampartsNeeded" },
   ],
@@ -54,20 +59,24 @@ const PHASE_BUILD_FIELDS = {
     { label: "terminal", built: "terminalBuilt", needed: "terminalNeeded" },
     { label: "minCtr", built: "mineralContainersBuilt", needed: "mineralContainersNeeded" },
     { label: "extractor", built: "extractorBuilt", needed: "extractorNeeded" },
+    { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
   ],
   fortification: [
     { label: "factory", built: "factoryBuilt", needed: "factoryNeeded" },
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
+    { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
     { label: "walls", built: "wallsBuilt", needed: "wallsNeeded" },
     { label: "ramparts", built: "rampartsBuilt", needed: "rampartsNeeded" },
   ],
   command: [
+    { label: "spawn", built: "spawnsBuilt", needed: "spawnsNeeded" },
     { label: "observer", built: "observerBuilt", needed: "observerNeeded" },
     { label: "pSpawn", built: "powerSpawnBuilt", needed: "powerSpawnNeeded" },
     { label: "nuker", built: "nukerBuilt", needed: "nukerNeeded" },
     { label: "factory", built: "factoryBuilt", needed: "factoryNeeded" },
+    { label: "links", built: "linksBuilt", needed: "linksNeeded" },
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
   ],
 };
@@ -95,9 +104,9 @@ const PHASE_TASK_PRIORITY = {
     "haulers",
   ],
   logistics: ["links", "rcl6"],
-  specialization: ["terminal", "mineralContainer", "extractor", "labs", "rcl7"],
-  fortification: ["factory", "rcl8"],
-  command: ["observer", "powerSpawn", "nuker"],
+  specialization: ["links", "terminal", "mineralContainer", "extractor", "labs", "rcl7"],
+  fortification: ["factory", "links", "labs", "walls", "ramparts", "rcl8"],
+  command: ["spawns", "observer", "powerSpawn", "nuker"],
 };
 
 const MISSING_SUMMARY = {
@@ -116,7 +125,7 @@ const MISSING_SUMMARY = {
   controllerContainer: "controller container missing",
   roads: "roads below target",
   extensions: "extensions incomplete",
-  tower: "tower missing",
+  tower: "towers incomplete",
   storage: "storage missing",
   walls: "walls below target",
   ramparts: "ramparts below target",
@@ -126,9 +135,11 @@ const MISSING_SUMMARY = {
   extractor: "extractor missing",
   labs: "labs incomplete",
   factory: "factory missing",
+  spawns: "spawn network incomplete",
   observer: "observer missing",
   powerSpawn: "power spawn missing",
   nuker: "nuker missing",
+  mineralAccessRoad: "mineral access road pending",
 };
 
 const NEXT_TASK_LABEL = {
@@ -147,7 +158,7 @@ const NEXT_TASK_LABEL = {
   controllerContainer: "place or finish the controller container",
   roads: "close remaining road targets",
   extensions: "finish remaining extensions",
-  tower: "place or finish the first tower",
+  tower: "place or finish the next tower",
   storage: "place or finish storage",
   walls: "finish the wall baseline",
   ramparts: "finish the rampart baseline",
@@ -157,9 +168,11 @@ const NEXT_TASK_LABEL = {
   extractor: "place or finish the extractor",
   labs: "place or finish the lab cluster",
   factory: "place or finish the factory",
+  spawns: "place or finish the next spawn",
   observer: "place or finish the observer",
   powerSpawn: "place or finish the power spawn",
   nuker: "place or finish the nuker",
+  mineralAccessRoad: "finish mineral access road",
 };
 
 function getQueue(room) {
@@ -287,6 +300,7 @@ function getPhaseCompletionMissing(phase, buildStatus) {
   missing.push.apply(missing, getPhaseCompletionMissing("fortification", buildStatus));
 
   if (phase === "command") {
+    pushIfShort(buildStatus.spawnsBuilt, buildStatus.spawnsNeeded, "spawns", missing);
     pushIfShort(buildStatus.observerBuilt, buildStatus.observerNeeded, "observer", missing);
     pushIfShort(
       buildStatus.powerSpawnBuilt,
@@ -300,7 +314,7 @@ function getPhaseCompletionMissing(phase, buildStatus) {
   return uniqueLabels(missing);
 }
 
-function getStableEconomyMissing(state, desiredTotalHaulers) {
+function getStableEconomyMissing(room, state, desiredTotalHaulers) {
   const roleCounts = state.roleCounts || {};
   const laborers = (roleCounts.worker || 0) + (roleCounts.jrworker || 0);
   const minimumHaulers = Math.max(
@@ -310,7 +324,12 @@ function getStableEconomyMissing(state, desiredTotalHaulers) {
   const missing = [];
 
   if (laborers < 1) missing.push("labor");
-  if ((roleCounts.upgrader || 0) < 1) missing.push("upgrader");
+  if (
+    (roleCounts.upgrader || 0) < 1 &&
+    !reservePolicy.shouldHoldRcl8Upgrading(room, state)
+  ) {
+    missing.push("upgrader");
+  }
   if (
     (roleCounts.miner || 0) <
     (state.sources ? state.sources.length : 0) * config.CREEPS.minersPerSource
@@ -347,7 +366,10 @@ function getAdvanceMissing(room, state, desiredTotalHaulers) {
     if (!room.controller || room.controller.level < 5) {
       missing.push("rcl5");
     }
-    missing.push.apply(missing, getStableEconomyMissing(state, desiredTotalHaulers));
+    missing.push.apply(
+      missing,
+      getStableEconomyMissing(room, state, desiredTotalHaulers),
+    );
     return uniqueLabels(missing);
   }
 
@@ -452,6 +474,31 @@ function getDesiredHaulersForSource(sourceId) {
   return 1;
 }
 
+function getRoleTargetCount(state, role, targetId) {
+  if (
+    !state.targetRoleMap ||
+    !state.targetRoleMap[role] ||
+    !state.targetRoleMap[role][targetId]
+  ) {
+    return 0;
+  }
+
+  return state.targetRoleMap[role][targetId].length;
+}
+
+function countQueuedForTarget(room, role, targetId) {
+  const queue = getQueue(room);
+  let total = 0;
+
+  for (let i = 0; i < queue.length; i++) {
+    if (queue[i].role === role && queue[i].targetId === targetId) {
+      total++;
+    }
+  }
+
+  return total;
+}
+
 function getSafeModeLabel(room) {
   if (!room.controller || !room.controller.safeMode) return "off";
   return `${room.controller.safeMode}`;
@@ -550,6 +597,239 @@ function getAdvancedSummary(room, state) {
   };
 }
 
+function getMineralMiningSummary(room, state) {
+  const desiredMiners = Math.max(0, config.CREEPS.mineralMinersPerRoom || 0);
+  if (desiredMiners <= 0) {
+    return { available: false };
+  }
+
+  if (!room.controller || room.controller.level < 6) {
+    return { available: false };
+  }
+
+  const minerals = state && state.minerals ? state.minerals : [];
+  const mineral = minerals.length > 0 ? minerals[0] : null;
+  if (!mineral) {
+    return { available: false };
+  }
+
+  const buildStatus = state.buildStatus || {};
+  const structuresByType = state.structuresByType || {};
+  const extractors = structuresByType[STRUCTURE_EXTRACTOR] || [];
+  const hasExtractor = _.some(extractors, function (extractor) {
+    return extractor.pos.isEqualTo(mineral.pos);
+  });
+  const hasContainer = !!state.mineralContainer;
+  const storageEnergy = getStorageEnergy(room);
+  const minimumEnergy =
+    config.ADVANCED &&
+    typeof config.ADVANCED.MINERAL_MINING_MIN_STORAGE_ENERGY === "number"
+      ? config.ADVANCED.MINERAL_MINING_MIN_STORAGE_ENERGY
+      : 20000;
+  const existingMiners = getRoleTargetCount(state, "mineral_miner", mineral.id);
+  const queuedMiners = countQueuedForTarget(room, "mineral_miner", mineral.id);
+  const totalMiners = existingMiners + queuedMiners;
+  const mineralProgramUnlocked = constructionStatus.isMineralProgramUnlocked(
+    room,
+    state,
+  );
+  const roadBuilt = buildStatus.mineralAccessRoadsBuilt || 0;
+  const roadNeeded = buildStatus.mineralAccessRoadsNeeded || 0;
+  const display =
+    state.phase === "specialization" ||
+    state.phase === "fortification" ||
+    state.phase === "command" ||
+    mineralProgramUnlocked ||
+    hasContainer ||
+    hasExtractor ||
+    totalMiners > 0;
+
+  if (!display) {
+    return { available: false };
+  }
+
+  if (!mineralProgramUnlocked) {
+    return {
+      available: true,
+      status: "blocked",
+      reason: "specialization incomplete",
+      storageEnergy: storageEnergy,
+      minimumEnergy: minimumEnergy,
+      miners: totalMiners,
+      desiredMiners: desiredMiners,
+      roadBuilt: roadBuilt,
+      roadNeeded: roadNeeded,
+    };
+  }
+
+  if (mineral.mineralAmount <= 0) {
+    return {
+      available: true,
+      status: "depleted",
+      reason: "empty",
+      storageEnergy: storageEnergy,
+      minimumEnergy: minimumEnergy,
+      miners: totalMiners,
+      desiredMiners: desiredMiners,
+      roadBuilt: roadBuilt,
+      roadNeeded: roadNeeded,
+    };
+  }
+
+  if (!room.storage) {
+    return {
+      available: true,
+      status: "blocked",
+      reason: "no storage",
+      storageEnergy: storageEnergy,
+      minimumEnergy: minimumEnergy,
+      miners: totalMiners,
+      desiredMiners: desiredMiners,
+      roadBuilt: roadBuilt,
+      roadNeeded: roadNeeded,
+    };
+  }
+
+  if (!hasContainer) {
+    return {
+      available: true,
+      status: "blocked",
+      reason: "minCtr missing",
+      storageEnergy: storageEnergy,
+      minimumEnergy: minimumEnergy,
+      miners: totalMiners,
+      desiredMiners: desiredMiners,
+      roadBuilt: roadBuilt,
+      roadNeeded: roadNeeded,
+    };
+  }
+
+  if (!hasExtractor) {
+    return {
+      available: true,
+      status: "blocked",
+      reason: "extractor missing",
+      storageEnergy: storageEnergy,
+      minimumEnergy: minimumEnergy,
+      miners: totalMiners,
+      desiredMiners: desiredMiners,
+      roadBuilt: roadBuilt,
+      roadNeeded: roadNeeded,
+    };
+  }
+
+  if (state.hostileCreeps && state.hostileCreeps.length > 0) {
+    return {
+      available: true,
+      status: "held",
+      reason: `threat ${state.hostileCreeps.length}`,
+      storageEnergy: storageEnergy,
+      minimumEnergy: minimumEnergy,
+      miners: totalMiners,
+      desiredMiners: desiredMiners,
+      roadBuilt: roadBuilt,
+      roadNeeded: roadNeeded,
+    };
+  }
+
+  if (storageEnergy < minimumEnergy) {
+    return {
+      available: true,
+      status: "held",
+      reason: "storage gate",
+      storageEnergy: storageEnergy,
+      minimumEnergy: minimumEnergy,
+      miners: totalMiners,
+      desiredMiners: desiredMiners,
+      roadBuilt: roadBuilt,
+      roadNeeded: roadNeeded,
+    };
+  }
+
+  return {
+    available: true,
+    status: totalMiners >= desiredMiners ? "active" : "ready",
+    reason: totalMiners >= desiredMiners ? "covered" : "spawn pending",
+    storageEnergy: storageEnergy,
+    minimumEnergy: minimumEnergy,
+    miners: totalMiners,
+    desiredMiners: desiredMiners,
+    roadBuilt: roadBuilt,
+    roadNeeded: roadNeeded,
+  };
+}
+
+function getPendingMineralRoadSegment(summary) {
+  if (!summary) return null;
+
+  const roadBuilt = summary.roadBuilt || 0;
+  const roadNeeded = summary.roadNeeded || 0;
+  if (roadNeeded <= 0 || roadBuilt >= roadNeeded) return null;
+
+  return `Road ${roadBuilt}/${roadNeeded}`;
+}
+
+function formatMineralMiningLine(summary) {
+  if (!summary || !summary.available) return null;
+  const roadSegment = getPendingMineralRoadSegment(summary);
+
+  if (summary.status === "blocked") {
+    return `Mineral blocked | ${summary.reason} | Miner ${summary.miners}/${summary.desiredMiners}`;
+  }
+
+  if (summary.status === "depleted") {
+    return `Mineral depleted | Storage ${summary.storageEnergy}/${summary.minimumEnergy} | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+  }
+
+  if (summary.status === "held") {
+    return `Mineral held | Storage ${summary.storageEnergy}/${summary.minimumEnergy} | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+  }
+
+  if (summary.status === "ready") {
+    return `Mineral ready | Storage ${summary.storageEnergy}/${summary.minimumEnergy} | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+  }
+
+  return `Mineral active | Storage ${summary.storageEnergy}/${summary.minimumEnergy} | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+}
+
+function formatMineralHudLine(summary) {
+  if (!summary || !summary.available) return null;
+  const roadSegment = getPendingMineralRoadSegment(summary);
+
+  if (summary.status === "blocked") {
+    return `Mineral ${summary.reason}`;
+  }
+
+  if (summary.status === "depleted") {
+    return `Mineral depleted | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+  }
+
+  if (summary.status === "held") {
+    return `Mineral held | Store ${summary.storageEnergy}/${summary.minimumEnergy} | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+  }
+
+  if (summary.status === "ready") {
+    return `Mineral ready | Store ${summary.storageEnergy}/${summary.minimumEnergy} | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+  }
+
+  return `Mineral active | Miner ${summary.miners}/${summary.desiredMiners}${roadSegment ? ` | ${roadSegment}` : ""}`;
+}
+
+function formatUpgradeReserveLine(room, state) {
+  if (!reservePolicy.shouldHoldRcl8Upgrading(room, state)) {
+    return null;
+  }
+
+  const storageEnergy = reservePolicy.getStorageEnergy(room, state);
+  const minimumEnergy = reservePolicy.getReserveBankMinStorageEnergy();
+  const ticksToDowngrade =
+    room.controller && typeof room.controller.ticksToDowngrade === "number"
+      ? room.controller.ticksToDowngrade
+      : null;
+
+  return `Upgrade held | Store ${storageEnergy}/${minimumEnergy} | Downgrade ${ticksToDowngrade !== null ? ticksToDowngrade : "--"}`;
+}
+
 function normalizeSection(section) {
   if (!section) return "overview";
 
@@ -582,23 +862,32 @@ module.exports = {
     const progress = roomProgress.getProgressSummary(room, {
       update: reportOptions.updateProgress !== false,
     });
+    const buildStatus = summaryState.buildStatus || {};
     const desiredTotalHaulers = roomState.getDesiredTotalHaulers(
       summaryState.sources || [],
     );
     const currentMissing = getPhaseCompletionMissing(
       summaryState.phase,
-      summaryState.buildStatus,
+      buildStatus,
     );
     const advanceMissing = getAdvanceMissing(room, summaryState, desiredTotalHaulers);
     const statusLabel = getPhaseStatusLabel(summaryState.phase, room, summaryState);
     const nextPhase = getNextPhase(summaryState.phase);
-    const nextTask = getNextTask(summaryState.phase, advanceMissing, statusLabel);
+    const mineralRoadPending =
+      (buildStatus.mineralAccessRoadsNeeded || 0) >
+      (buildStatus.mineralAccessRoadsBuilt || 0);
+    const nextTask = mineralRoadPending
+      ? NEXT_TASK_LABEL.mineralAccessRoad
+      : getNextTask(summaryState.phase, advanceMissing, statusLabel);
     const isAdvanceReady = advanceMissing.length === 0;
     const spawn = getSpawnSummary(room, summaryState);
     const alert = getAlertSummary(room, summaryState);
     const cpu = getCpuSummary(room);
     const advanced = getAdvancedSummary(room, summaryState);
-    const buildStatus = summaryState.buildStatus || {};
+    const mineralMining = getMineralMiningSummary(room, summaryState);
+    const mineralLine = formatMineralMiningLine(mineralMining);
+    const mineralHudLine = formatMineralHudLine(mineralMining);
+    const upgradeReserveLine = formatUpgradeReserveLine(room, summaryState);
     const infrastructure = summaryState.infrastructure || {};
     const roleCounts = summaryState.roleCounts || {};
     const sources = summaryState.sources || [];
@@ -608,27 +897,55 @@ module.exports = {
       : `RCL ${room.controller ? room.controller.level : 0}`;
     const etaLabel = progress && progress.eta ? progress.eta : "--";
 
+    const overviewLines = [
+      `[OPS][${room.name}][OVERVIEW]`,
+      `Phase ${summaryState.phase} | ${progressLabel} | ETA ${etaLabel}`,
+      `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Queue ${spawn.nextQueued}`,
+      `Alert ${alert.active ? `active ${alert.hostiles}` : "clear"} | Sites ${buildStatus.sites || 0} | CPU ${cpu.pressure}`,
+    ];
+    if (mineralLine) {
+      overviewLines.push(mineralLine);
+    }
+    if (upgradeReserveLine) {
+      overviewLines.push(upgradeReserveLine);
+    }
+    overviewLines.push(`Next ${nextTask}`);
+
+    const buildLines = [
+      `[OPS][${room.name}][BUILD]`,
+      `Roadmap ${buildStatus.roadmapPhase || summaryState.phase} | Status ${statusLabel} | Sites ${buildStatus.sites || 0}`,
+      `Current ${formatBuildLine(summaryState.phase, buildStatus)}`,
+      `Future ${buildStatus.futurePlanReady ? "ready" : "planning"} | Advance ${nextPhase || "complete"} ${isAdvanceReady ? "ready" : "blocked"}`,
+    ];
+    if (mineralLine) {
+      buildLines.push(mineralLine);
+    }
+    if (upgradeReserveLine) {
+      buildLines.push(upgradeReserveLine);
+    }
+    buildLines.push(`Next ${nextTask}`);
+
+    const advancedLines = [
+      `[OPS][${room.name}][ADVANCED]`,
+      `Labs ${String(advanced.labStatus || "inactive")} ${advanced.labProduct || ""}`.trim(),
+      `Factory ${String(advanced.factoryStatus || "inactive")} ${advanced.factoryProduct || ""}`.trim(),
+      `PowerSpawn ${String(advanced.powerSpawnStatus || "inactive")} | Nuker ${String(advanced.nukerStatus || "inactive")}`,
+    ];
+    if (mineralLine) {
+      advancedLines.push(mineralLine);
+    }
+    advancedLines.push(`Task ${advanced.taskLabel || "none"}`);
+
     const sections = {
-      overview: [
-        `[OPS][${room.name}][OVERVIEW]`,
-        `Phase ${summaryState.phase} | ${progressLabel} | ETA ${etaLabel}`,
-        `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Queue ${spawn.nextQueued}`,
-        `Alert ${alert.active ? `active ${alert.hostiles}` : "clear"} | Sites ${buildStatus.sites || 0} | CPU ${cpu.pressure}`,
-        `Next ${nextTask}`,
-      ],
+      overview: overviewLines,
       economy: [
         `[OPS][${room.name}][ECONOMY]`,
         `Stage ${infrastructure.economyStage || "unknown"} | Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Storage ${getStorageEnergy(room)}`,
         `Hub ${getContainerEnergy(summaryState.hubContainer)} | Ctrl ${getContainerEnergy(summaryState.controllerContainer)} | Upgrade ${progress && progress.rate > 0 ? progress.rate.toFixed(2) : "0.00"}/t`,
+        upgradeReserveLine || `Upgrade mode ${room.controller && room.controller.level >= 8 ? "maintenance" : "active"}`,
         `Spawn ${spawn.spawnLabel} | Queue ${spawn.queueSize} | Hauler ${summaryState.logistics ? summaryState.logistics.haulerMode : "normal"}`,
       ],
-      build: [
-        `[OPS][${room.name}][BUILD]`,
-        `Roadmap ${buildStatus.roadmapPhase || summaryState.phase} | Status ${statusLabel} | Sites ${buildStatus.sites || 0}`,
-        `Current ${formatBuildLine(summaryState.phase, buildStatus)}`,
-        `Future ${buildStatus.futurePlanReady ? "ready" : "planning"} | Advance ${nextPhase || "complete"} ${isAdvanceReady ? "ready" : "blocked"}`,
-        `Next ${nextTask}`,
-      ],
+      build: buildLines,
       defense: [
         `[OPS][${room.name}][DEFENSE]`,
         `Alert ${alert.active ? "active" : "clear"} | SafeMode ${alert.safeMode}`,
@@ -637,20 +954,14 @@ module.exports = {
       ],
       creeps: [
         `[OPS][${room.name}][CREEPS]`,
-        `J ${roleCounts.jrworker || 0} | D ${roleCounts.defender || 0} | W ${roleCounts.worker || 0} | M ${roleCounts.miner || 0} | H ${roleCounts.hauler || 0} | U ${roleCounts.upgrader || 0} | R ${roleCounts.repair || 0}`,
+        `J ${roleCounts.jrworker || 0} | D ${roleCounts.defender || 0} | W ${roleCounts.worker || 0} | M ${roleCounts.miner || 0} | MM ${roleCounts.mineral_miner || 0} | H ${roleCounts.hauler || 0} | U ${roleCounts.upgrader || 0} | R ${roleCounts.repair || 0}`,
         `Labor ${(roleCounts.worker || 0) + (roleCounts.jrworker || 0)} | Miners ${roleCounts.miner || 0}/${sources.length * config.CREEPS.minersPerSource} | Haulers ${roleCounts.hauler || 0}/${desiredTotalHaulers}`,
-        `Advance ${advanceMissing.length > 0 ? summarizeMissing(advanceMissing) : "room steady"}`,
+        `Advance ${mineralRoadPending ? MISSING_SUMMARY.mineralAccessRoad : advanceMissing.length > 0 ? summarizeMissing(advanceMissing) : "room steady"}`,
       ],
       sources: [
         `[OPS][${room.name}][SOURCES]`,
       ],
-      advanced: [
-        `[OPS][${room.name}][ADVANCED]`,
-        `Labs ${String(advanced.labStatus || "inactive")} ${advanced.labProduct || ""}`.trim(),
-        `Factory ${String(advanced.factoryStatus || "inactive")} ${advanced.factoryProduct || ""}`.trim(),
-        `PowerSpawn ${String(advanced.powerSpawnStatus || "inactive")} | Nuker ${String(advanced.nukerStatus || "inactive")}`,
-        `Task ${advanced.taskLabel || "none"}`,
-      ],
+      advanced: advancedLines,
       cpu: [
         `[OPS][${room.name}][CPU]`,
         cpu.available
@@ -697,7 +1008,7 @@ module.exports = {
           `${room.name} | ${String(summaryState.phase).toUpperCase()} | ${progressLabel} | ETA ${etaLabel}`,
           `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Q ${spawn.nextQueued}`,
           `Focus ${plan.focus} | Next ${nextTask}`,
-          `Build ${shortBuild} | Sites ${buildStatus.sites || 0}`,
+          mineralHudLine || upgradeReserveLine || `Build ${shortBuild} | Sites ${buildStatus.sites || 0}`,
         ];
 
     return {
