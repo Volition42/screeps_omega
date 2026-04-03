@@ -207,9 +207,21 @@ module.exports = {
     const maxWork = this.getConfiguredLimit("upgraderMaxWork", 8);
     const hasStorage = infrastructure.hasStorage;
     const storageEnergy = infrastructure.storageEnergy || 0;
+    const controllerLevel =
+      room && room.controller ? room.controller.level || 0 : 0;
+    const bodyThresholds =
+      controllerLevel >= 8
+        ? (config.UPGRADING && config.UPGRADING.RCL8_BODY_WORK_CAPS) || []
+        : (config.UPGRADING && config.UPGRADING.BODY_WORK_THRESHOLDS) || [];
+    const storageWorkCap = hasStorage
+      ? Math.min(
+          maxWork,
+          this.getThresholdWork(bodyThresholds, storageEnergy, maxWork),
+        )
+      : maxWork;
     const counts = {
       work: Math.min(
-        maxWork,
+        storageWorkCap,
         Math.max(
           2,
           Math.floor(energyCapacity / (hasStorage ? 170 : 200)),
@@ -235,7 +247,7 @@ module.exports = {
       room &&
       room.controller &&
       room.controller.level >= 6 &&
-      storageEnergy >= 10000
+      storageEnergy >= this.getControllerLinkReadyStorageEnergy()
     ) {
       profile = "controller_link_ready";
     }
@@ -451,6 +463,29 @@ module.exports = {
     }
 
     return fallback;
+  },
+
+  getThresholdWork(thresholds, energy, fallback) {
+    let value = fallback;
+    const normalizedThresholds = thresholds || [];
+
+    for (let i = 0; i < normalizedThresholds.length; i++) {
+      const threshold = normalizedThresholds[i];
+      if (!threshold || typeof threshold.energy !== "number") continue;
+      if (energy < threshold.energy) continue;
+      if (typeof threshold.work === "number") {
+        value = threshold.work;
+      }
+    }
+
+    return value;
+  },
+
+  getControllerLinkReadyStorageEnergy() {
+    return config.UPGRADING &&
+      typeof config.UPGRADING.CONTROLLER_LINK_PROFILE_STORAGE_ENERGY === "number"
+      ? config.UPGRADING.CONTROLLER_LINK_PROFILE_STORAGE_ENERGY
+      : 20000;
   },
 
   getDefenderBody(energyCapacity, threatLevel) {

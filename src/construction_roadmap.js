@@ -90,6 +90,7 @@ module.exports = {
         "controllerContainer",
         "anchorRoads",
         "backboneRoads",
+        "mineralAccessRoad",
       ],
       goals: {
         logisticsTier: "container_bootstrap",
@@ -122,6 +123,7 @@ module.exports = {
         "storage",
         "internalRoads",
         "defense",
+        "mineralAccessRoad",
       ],
       goals: {
         logisticsTier: "development_backbone",
@@ -154,6 +156,7 @@ module.exports = {
         "internalRoads",
         "defense",
         "links",
+        "mineralAccessRoad",
       ],
       goals: {
         logisticsTier: "link_backbone",
@@ -190,6 +193,7 @@ module.exports = {
         "mineralContainer",
         "extractor",
         "labs",
+        "mineralAccessRoad",
       ],
       goals: {
         logisticsTier: "advanced_logistics",
@@ -217,6 +221,7 @@ module.exports = {
         "mineralContainer",
         "extractor",
         "labs",
+        "mineralAccessRoad",
         "links",
         "storage",
         "anchorRoads",
@@ -253,6 +258,7 @@ module.exports = {
       focus: "finalization",
       summary: "Final room-completion phase reserved for future RCL8 command structures.",
       buildList: [
+        "spawns",
         "observer",
         "powerSpawn",
         "nuker",
@@ -261,6 +267,7 @@ module.exports = {
         "mineralContainer",
         "extractor",
         "labs",
+        "mineralAccessRoad",
         "links",
         "storage",
         "anchorRoads",
@@ -359,5 +366,61 @@ module.exports = {
 
   cloneGoals(goals) {
     return JSON.parse(JSON.stringify(goals || {}));
+  },
+
+  mergeBuildLists(baseBuildList, unlockedBuildList) {
+    var merged = (baseBuildList || []).slice();
+    var additions = unlockedBuildList || [];
+
+    for (var i = 0; i < additions.length; i++) {
+      if (merged.indexOf(additions[i]) !== -1) continue;
+      merged.push(additions[i]);
+    }
+
+    return merged;
+  },
+
+  mergeGoals(baseGoals, unlockedGoals) {
+    var target = this.cloneGoals(baseGoals || {});
+    var source = unlockedGoals || {};
+
+    for (var key in source) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+
+      var sourceValue = source[key];
+      var targetValue = target[key];
+
+      if (
+        targetValue &&
+        sourceValue &&
+        typeof targetValue === "object" &&
+        typeof sourceValue === "object" &&
+        !Array.isArray(targetValue) &&
+        !Array.isArray(sourceValue)
+      ) {
+        target[key] = this.mergeGoals(targetValue, sourceValue);
+        continue;
+      }
+
+      if (typeof targetValue === "boolean" && typeof sourceValue === "boolean") {
+        target[key] = targetValue || sourceValue;
+        continue;
+      }
+
+      if (typeof targetValue === "number" && typeof sourceValue === "number") {
+        target[key] = Math.max(targetValue, sourceValue);
+        continue;
+      }
+
+      if (typeof targetValue === "string" && typeof sourceValue === "string") {
+        continue;
+      }
+
+      if (targetValue === undefined) {
+        target[key] = this.cloneGoals(sourceValue);
+      }
+    }
+
+    return target;
   },
 };

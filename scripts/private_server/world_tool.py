@@ -21,6 +21,10 @@ DEFAULT_SERVER_URL = os.environ.get("SCREEPS_SERVER_URL", "http://127.0.0.1:2103
 DEFAULT_TOKEN = os.environ.get("SCREEPS_LOCAL_TOKEN", "screeps-omega-dev-token")
 DEFAULT_CLI_HOST = os.environ.get("SCREEPS_CLI_HOST", "localhost")
 DEFAULT_CLI_PORT = int(os.environ.get("SCREEPS_CLI_PORT", "21036"))
+GCL_MULTIPLY = 1_000_000
+GCL_POW = 2.4
+POWER_LEVEL_MULTIPLY = 1_000
+POWER_LEVEL_POW = 2
 
 CONTROLLER_LEVELS = {
     1: 200,
@@ -184,6 +188,72 @@ FILLABLE_STORE_TYPES = {
     "powerSpawn",
     "nuker",
 }
+
+
+def calc_gcl_total(level: int) -> int:
+    if level <= 1:
+        return 0
+    return int(GCL_MULTIPLY * pow(level - 1, GCL_POW))
+
+
+def calc_gcl_status(value: int) -> dict:
+    value = max(0, int(value or 0))
+    level = int(pow(value / GCL_MULTIPLY, 1 / GCL_POW)) + 1 if value > 0 else 1
+    while calc_gcl_total(level + 1) <= value:
+        level += 1
+    while level > 1 and calc_gcl_total(level) > value:
+        level -= 1
+
+    base = calc_gcl_total(level)
+    next_total = calc_gcl_total(level + 1)
+    return {
+        "gcl": value,
+        "gclLevel": level,
+        "gclProgress": value - base,
+        "gclProgressTotal": next_total - base,
+    }
+
+
+def calc_power_total(level: int) -> int:
+    if level <= 0:
+        return 0
+    return int(POWER_LEVEL_MULTIPLY * pow(level, POWER_LEVEL_POW))
+
+
+def calc_power_status(value: int) -> dict:
+    value = max(0, int(value or 0))
+    level = int(pow(value / POWER_LEVEL_MULTIPLY, 1 / POWER_LEVEL_POW)) if value > 0 else 0
+    while calc_power_total(level + 1) <= value:
+        level += 1
+    while level > 0 and calc_power_total(level) > value:
+        level -= 1
+
+    base = calc_power_total(level)
+    next_total = calc_power_total(level + 1)
+    return {
+        "power": value,
+        "pclLevel": level,
+        "pclProgress": value - base,
+        "pclProgressTotal": next_total - base,
+    }
+
+
+def parse_structured_output(text: str):
+    trimmed = (text or "").strip()
+    if not trimmed:
+        return None
+
+    attempts = [trimmed]
+    if trimmed.startswith("'") and trimmed.endswith("'"):
+        attempts.append(trimmed[1:-1])
+
+    for attempt in attempts:
+        try:
+            return json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+
+    return None
 
 
 def api_request(url: str, payload: dict | None = None, token: str | None = None) -> dict:
@@ -513,6 +583,52 @@ def command_reset_world(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_status(args: argparse.Namespace) -> int:
+    output = run_cli(
+        "Promise.resolve()"
+        ".then(() => Promise.all(["
+        " storage.env.get('gameTime'),"
+        " storage.env.get(storage.env.keys.MAIN_LOOP_PAUSED),"
+        " storage.env.get(storage.env.keys.MAIN_LOOP_MIN_DURATION),"
+        " storage.db.users.findOne({username: 'local-dev'})"
+        "]))"
+        ".then(([gameTime, paused, tickDuration, user]) => Promise.resolve("
+        " user ? storage.db['users.code'].findOne({user: user._id, activeWorld: true}) : null"
+        ").then(code => ({gameTime, paused, tickDuration, user, code})))"
+        ".then(({gameTime, paused, tickDuration, user, code}) => print(JSON.stringify({"
+        " gameTime: parseInt(gameTime || '0', 10) || 0,"
+        " paused: paused === '1',"
+        " tickDuration: parseInt(tickDuration || '0', 10) || 0,"
+        " user: user ? {"
+        "   username: user.username,"
+        "   cpu: user.cpu,"
+        "   fixedCPU: user.fixedCPU || null,"
+        "   cpuAvailable: user.cpuAvailable || 0,"
+        "   gcl: user.gcl || 0,"
+        "   power: user.power || 0"
+        " } : null,"
+        " activeBranch: code ? code.branch : null"
+        "})))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+    data = parse_structured_output(output)
+    if data is None:
+        print(output)
+        return 0
+
+    user = data.get("user") or {}
+    if user:
+        user.update(calc_gcl_status(user.get("gcl", 0)))
+        user.update(calc_power_status(user.get("power", 0)))
+        data["user"] = user
+
+    print(json.dumps(data))
+    return 0
+
+
 def command_pause(args: argparse.Namespace) -> int:
     print(run_cli("system.pauseSimulation()", args.server_root, args.cli_host, args.cli_port))
     return 0
@@ -553,16 +669,95 @@ def command_set_user_cpu(args: argparse.Namespace) -> int:
         f"Promise.resolve(storage.db.users.findOne({{_id:'{user_id}'}}))"
         ".then(user => {"
         " if (!user) { throw new Error('user not found'); }"
-        f" return storage.db.users.update({{_id: user._id}}, {{$set: {{cpu: {args.cpu}}}}})"
+        f" return storage.db.users.update({{_id: user._id}}, {{$set: {{cpu: {args.cpu}, fixedCPU: {args.cpu}}}}})"
         " .then(() => storage.db.users.findOne({_id: user._id}));"
         "})"
-        ".then(user => print(JSON.stringify({username: user.username, cpu: user.cpu, cpuAvailable: user.cpuAvailable || null})))"
+        ".then(user => print(JSON.stringify({username: user.username, cpu: user.cpu, fixedCPU: user.fixedCPU || null, cpuAvailable: user.cpuAvailable || null})))"
         ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
         args.server_root,
         args.cli_host,
         args.cli_port,
     )
-    print(output)
+    data = parse_structured_output(output)
+    if data is None:
+        print(output)
+        return 0
+
+    print(json.dumps(data))
+    return 0
+
+
+def command_set_user_gcl(args: argparse.Namespace) -> int:
+    if args.level < 1:
+        raise SystemExit("--level must be at least 1")
+
+    user_id = args.user_id
+    if not user_id:
+        if args.username != "local-dev":
+            raise SystemExit("set-user-gcl requires --user-id for non-local-dev users")
+        user_id = ensure_local_user(args.server_url)["user"]["_id"]
+
+    progress = max(0, int(args.progress or 0))
+    total_gcl = calc_gcl_total(args.level) + progress
+
+    output = run_cli(
+        f"Promise.resolve(storage.db.users.findOne({{_id:'{user_id}'}}))"
+        ".then(user => {"
+        " if (!user) { throw new Error('user not found'); }"
+        f" return storage.db.users.update({{_id: user._id}}, {{$set: {{gcl: {total_gcl}}}}})"
+        " .then(() => storage.db.users.findOne({_id: user._id}));"
+        "})"
+        ".then(user => print(JSON.stringify({username: user.username, gcl: user.gcl || 0})))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+
+    data = parse_structured_output(output)
+    if data is None:
+        print(output)
+        return 0
+
+    data.update(calc_gcl_status(data.get("gcl", 0)))
+    print(json.dumps(data))
+    return 0
+
+
+def command_set_user_pcl(args: argparse.Namespace) -> int:
+    if args.level < 0:
+        raise SystemExit("--level must be at least 0")
+
+    user_id = args.user_id
+    if not user_id:
+        if args.username != "local-dev":
+            raise SystemExit("set-user-pcl requires --user-id for non-local-dev users")
+        user_id = ensure_local_user(args.server_url)["user"]["_id"]
+
+    progress = max(0, int(args.progress or 0))
+    total_power = calc_power_total(args.level) + progress
+
+    output = run_cli(
+        f"Promise.resolve(storage.db.users.findOne({{_id:'{user_id}'}}))"
+        ".then(user => {"
+        " if (!user) { throw new Error('user not found'); }"
+        f" return storage.db.users.update({{_id: user._id}}, {{$set: {{power: {total_power}}}}})"
+        " .then(() => storage.db.users.findOne({_id: user._id}));"
+        "})"
+        ".then(user => print(JSON.stringify({username: user.username, power: user.power || 0})))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
+        args.server_root,
+        args.cli_host,
+        args.cli_port,
+    )
+
+    data = parse_structured_output(output)
+    if data is None:
+        print(output)
+        return 0
+
+    data.update(calc_power_status(data.get("power", 0)))
+    print(json.dumps(data))
     return 0
 
 
@@ -812,6 +1007,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    status = subparsers.add_parser("status", help="show private-server runtime status")
+    status.set_defaults(func=command_status)
+
     reset_world = subparsers.add_parser("reset-world", help="wipe the private server world")
     reset_world.set_defaults(func=command_reset_world)
 
@@ -833,6 +1031,20 @@ def build_parser() -> argparse.ArgumentParser:
     set_cpu.add_argument("--username", default="local-dev")
     set_cpu.add_argument("--user-id")
     set_cpu.set_defaults(func=command_set_user_cpu)
+
+    set_gcl = subparsers.add_parser("set-user-gcl", help="set a private-server user's GCL level")
+    set_gcl.add_argument("level", type=int)
+    set_gcl.add_argument("--progress", type=int, default=0)
+    set_gcl.add_argument("--username", default="local-dev")
+    set_gcl.add_argument("--user-id")
+    set_gcl.set_defaults(func=command_set_user_gcl)
+
+    set_pcl = subparsers.add_parser("set-user-pcl", help="set a private-server user's PCL level")
+    set_pcl.add_argument("level", type=int)
+    set_pcl.add_argument("--progress", type=int, default=0)
+    set_pcl.add_argument("--username", default="local-dev")
+    set_pcl.add_argument("--user-id")
+    set_pcl.set_defaults(func=command_set_user_pcl)
 
     set_controller = subparsers.add_parser(
         "set-controller-level",

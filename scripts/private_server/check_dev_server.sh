@@ -1,10 +1,10 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/load_server_profile.sh"
 
-SERVER_URL="${SCREEPS_SERVER_URL}"
+SERVER_URL="http://127.0.0.1:${SCREEPS_SERVER_PORT}"
 LOCAL_TOKEN="${SCREEPS_LOCAL_TOKEN}"
 
 curl -sSf -H "Content-Type: application/json" \

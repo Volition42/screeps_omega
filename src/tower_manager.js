@@ -1,3 +1,4 @@
+const reservePolicy = require("economy_reserve_policy");
 const utils = require("utils");
 
 module.exports = {
@@ -27,6 +28,10 @@ module.exports = {
       if (injured.length) {
         const closest = tower.pos.findClosestByRange(injured);
         tower.heal(closest);
+        continue;
+      }
+
+      if (reservePolicy.shouldBankStorageEnergy(room, state)) {
         continue;
       }
 

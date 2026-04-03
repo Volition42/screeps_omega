@@ -17,6 +17,7 @@ Important Notes:
 */
 
 const config = require("config");
+const reservePolicy = require("economy_reserve_policy");
 
 module.exports = {
   getRoomPlan(room, state) {
@@ -192,7 +193,7 @@ module.exports = {
             },
           });
 
-    const emergencyThreshold = config.LOGISTICS.towerEmergencyThreshold;
+    const emergencyThreshold = this.getEmergencyTowerThreshold(room, state);
 
     return _.some(towers, function (tower) {
       return (tower.store[RESOURCE_ENERGY] || 0) < emergencyThreshold;
@@ -208,6 +209,28 @@ module.exports = {
 
   getTowerCapacityTarget() {
     return typeof TOWER_CAPACITY === "number" ? TOWER_CAPACITY : 1000;
+  },
+
+  getEmergencyTowerThreshold(room, state) {
+    if (
+      !this.hasHostilePressure(room, state) &&
+      reservePolicy.shouldBankStorageEnergy(room, state)
+    ) {
+      return reservePolicy.getTowerBankingThreshold();
+    }
+
+    return config.LOGISTICS.towerEmergencyThreshold;
+  },
+
+  getTowerReserveThreshold(room, state) {
+    if (
+      !this.hasHostilePressure(room, state) &&
+      reservePolicy.shouldBankStorageEnergy(room, state)
+    ) {
+      return reservePolicy.getTowerBankingThreshold();
+    }
+
+    return config.LOGISTICS.towerReserveThreshold;
   },
 
   getHaulerDeliveryTarget(room, creep, state) {
@@ -232,16 +255,19 @@ module.exports = {
     if (!hostilePressure && towerEmergency) {
       const emergencyTower = this.getLowTowerTarget(
         room,
-        config.LOGISTICS.towerEmergencyThreshold,
+        this.getEmergencyTowerThreshold(room, state),
         creep,
       );
       if (emergencyTower) return emergencyTower;
     }
 
-    const sourceLink = this.getSourceLinkDeliveryTarget(state, creep);
+    const sourceLink = this.getSourceLinkDeliveryTarget(room, state, creep);
     if (sourceLink) return sourceLink;
 
-    const controllerContainer = this.getControllerContainerDeliveryTarget(state);
+    const controllerContainer = this.getControllerContainerDeliveryTarget(
+      room,
+      state,
+    );
     if (controllerContainer) return controllerContainer;
 
     const hubContainer = this.getHubContainerDeliveryTarget(state);
@@ -254,7 +280,7 @@ module.exports = {
       room,
       hostilePressure
         ? this.getTowerCapacityTarget()
-        : config.LOGISTICS.towerReserveThreshold,
+        : this.getTowerReserveThreshold(room, state),
       creep,
     );
     if (reserveTower) return reserveTower;
@@ -262,11 +288,11 @@ module.exports = {
     return null;
   },
 
-  getSourceLinkDeliveryTarget(state, creep) {
+  getSourceLinkDeliveryTarget(room, state, creep) {
     if (!state || !state.infrastructure || !creep) return null;
 
     const infrastructure = state.infrastructure;
-    if (!this.shouldFillSourceLinks(infrastructure)) {
+    if (!this.shouldFillSourceLinks(room, state, infrastructure)) {
       return null;
     }
 
@@ -290,8 +316,11 @@ module.exports = {
     );
   },
 
-  shouldFillSourceLinks(infrastructure) {
+  shouldFillSourceLinks(room, state, infrastructure) {
     if (!infrastructure) return false;
+    if (reservePolicy.shouldBankStorageEnergy(room, state)) {
+      return false;
+    }
 
     const storageLink = infrastructure.storageLink || null;
     if (
@@ -375,8 +404,11 @@ module.exports = {
     return state.hubContainer;
   },
 
-  getControllerContainerDeliveryTarget(state) {
+  getControllerContainerDeliveryTarget(room, state) {
     if (!state || !state.controllerContainer) return null;
+    if (reservePolicy.shouldBankStorageEnergy(room, state)) {
+      return null;
+    }
     if (
       state.infrastructure &&
       state.infrastructure.hasControllerLink

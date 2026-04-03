@@ -131,13 +131,13 @@ Remote notes:
 - `src/stats_manager.js`
   Stores rolling CPU stats and prints overview or detail logs.
 - `src/hud.js`
-  Draws room and remote status.
+  Draws the lean room HUD.
 - `src/directive_manager.js`
-  Optional console reporting.
+  Event-driven critical room reporting.
 
 CPU notes:
 
-- `STATS.CPU_CONSOLE_MODE` supports `off`, `overview`, and `detail`.
+- `DIRECTIVES.DEBUG_CPU_*` controls opt-in CPU debug output.
 - Runtime pressure can reduce HUD, directives, planning cadence, and remote scan work.
 
 ## Config And Setup
@@ -206,7 +206,8 @@ Validation notes:
 - `src/remote_manager.js`: remote planning and cache
 - `src/defense_manager.js`: threat planning
 - `src/logistics_manager.js`: shared energy rules
-- `src/hud.js`: visuals and room console summary
+- `src/hud.js`: room visuals
+- `src/room_reporting.js`: shared room overview/detail formatting for HUD and ops
 - `src/stats_manager.js`: CPU and runtime reporting
 - `src/config.js`: operator settings
 

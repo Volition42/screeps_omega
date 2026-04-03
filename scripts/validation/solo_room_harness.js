@@ -547,8 +547,15 @@ class FakeRoom {
   }
 
   createConstructionSite(x, y, structureType) {
+    const hasMineral = this._minerals.some((item) => item.pos.x === x && item.pos.y === y);
     if (x < 1 || x > 48 || y < 1 || y > 48) return ERR_INVALID_ARGS;
-    if (this._terrain.get(x, y) === TERRAIN_MASK_WALL) return ERR_INVALID_TARGET;
+    if (
+      this._terrain.get(x, y) === TERRAIN_MASK_WALL
+      && !(structureType === STRUCTURE_EXTRACTOR && hasMineral)
+    ) {
+      return ERR_INVALID_TARGET;
+    }
+    if (structureType === STRUCTURE_EXTRACTOR && !hasMineral) return ERR_INVALID_TARGET;
 
     const existingStructure = this._structures.find((item) => item.pos.x === x && item.pos.y === y && item.structureType === structureType);
     if (existingStructure) return ERR_INVALID_TARGET;
@@ -802,6 +809,11 @@ function buildRoomScenario(name, options) {
   resetRuntime(options.tick);
 
   const room = new FakeRoom(name, new FakeTerrain());
+  if (options.terrainWalls) {
+    for (let i = 0; i < options.terrainWalls.length; i++) {
+      room.getTerrain().setWall(options.terrainWalls[i][0], options.terrainWalls[i][1]);
+    }
+  }
   room.setController(
     createController(options.controllerX || 20, options.controllerY || 20, {
       roomName: name,
@@ -908,14 +920,33 @@ function getSiteTypes(room) {
   return room.find(FIND_CONSTRUCTION_SITES).map((site) => site.structureType);
 }
 
+function completeAllSites(room) {
+  const sites = room.find(FIND_CONSTRUCTION_SITES).slice();
+
+  for (let i = 0; i < sites.length; i++) {
+    const site = sites[i];
+    room._sites = room._sites.filter((entry) => entry.id !== site.id);
+    delete currentRuntime.objectsById[site.id];
+    room.addStructure(
+      createStructure(site.structureType, site.pos.x, site.pos.y, {
+        roomName: room.name,
+      }),
+    );
+  }
+}
+
 const roomState = require("room_state");
+const bodies = require("bodies");
 const spawnManager = require("spawn_manager");
 const constructionManager = require("construction_manager");
 const constructionStatus = require("construction_status");
+const roomReporting = require("room_reporting");
 const advancedStructureManager = require("advanced_structure_manager");
 const defenseLayout = require("defense_layout");
 const logisticsManager = require("logistics_manager");
+const roleWorker = require("role_worker");
 const utils = require("utils");
+const config = require("config");
 
 function getOccupiedKey(x, y) {
   return `${x}:${y}`;
@@ -1293,6 +1324,70 @@ function runDevelopmentScenario() {
   );
 }
 
+function runDevelopmentStorageGateScenario() {
+  const room = buildRoomScenario("VAL_DEVELOPMENT_STORAGE_GATE", {
+    tick: 301,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+  });
+
+  const state = roomState.collect(room);
+  state.phase = "development";
+
+  const status = constructionStatus.getStatus(room, state);
+
+  assert(
+    status.storageNeeded === 0,
+    `storage should stay gated until RCL4, got ${status.storageNeeded}`,
+  );
+}
+
+function runStoragePlanningRoadConflictScenario() {
+  const room = buildRoomScenario("VAL_STORAGE_ROAD_CONFLICT", {
+    tick: 302,
+    controllerLevel: 4,
+    spawnX: 18,
+    spawnY: 15,
+    controllerX: 23,
+    controllerY: 42,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    extraStructures: [
+      { type: STRUCTURE_ROAD, x: 18, y: 20 },
+      { type: STRUCTURE_ROAD, x: 23, y: 15 },
+      { type: STRUCTURE_ROAD, x: 18, y: 10 },
+      { type: STRUCTURE_ROAD, x: 12, y: 14 },
+      { type: STRUCTURE_ROAD, x: 13, y: 14 },
+      { type: STRUCTURE_ROAD, x: 14, y: 14 },
+      { type: STRUCTURE_ROAD, x: 12, y: 15 },
+      { type: STRUCTURE_ROAD, x: 14, y: 15 },
+      { type: STRUCTURE_ROAD, x: 12, y: 16 },
+      { type: STRUCTURE_ROAD, x: 13, y: 16 },
+      { type: STRUCTURE_ROAD, x: 14, y: 16 },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+
+  constructionManager.placeStorage(context);
+
+  const storageSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter: function (site) {
+      return site.structureType === STRUCTURE_STORAGE;
+    },
+  });
+
+  assert(storageSites.length === 1, `expected one storage site, got ${storageSites.length}`);
+  assert(
+    storageSites[0].pos.x === 13 && storageSites[0].pos.y === 15,
+    `expected storage at 13,15, got ${storageSites[0].pos.x},${storageSites[0].pos.y}`,
+  );
+}
+
 function runContainerUsageScenario() {
   const room = buildRoomScenario("VAL_CONTAINER_USAGE", {
     tick: 305,
@@ -1433,17 +1528,97 @@ function runSpecializationScenario() {
   const state = roomState.collect(room);
   let status = constructionStatus.getStatus(room, state);
   assert(state.phase === "specialization", `expected specialization, got ${state.phase}`);
+  assert(status.linksNeeded === 3, `specialization should use the full RCL6 link cap, got ${status.linksNeeded}`);
   assert(status.terminalNeeded === 1, "specialization should require a terminal");
   assert(status.mineralContainersNeeded === 1, "specialization should require a mineral container");
   assert(status.extractorNeeded === 1, "specialization should require an extractor");
   assert(status.labsNeeded === 3, "specialization should require an initial lab cluster");
 
   constructionManager.plan(room, state);
+  const siteTypes = getSiteTypes(room);
+  assert(
+    !siteTypes.includes(STRUCTURE_LINK),
+    `specialization should not try to exceed the RCL6 link cap, got sites: ${siteTypes.join(",") || "none"}`,
+  );
   status = constructionStatus.getStatus(room, state);
   assert(
     status.futurePlan && status.futurePlan.mineralContainerPlanReady,
     "specialization should produce a ready mineral container plan",
   );
+}
+
+function runExtractorWallMineralScenario() {
+  const room = buildRoomScenario("VAL_EXTRACTOR_WALL_MINERAL", {
+    tick: 510,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    terrainWalls: [[40, 10]],
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_LAB, x: 27, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 28, y: 33, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 29, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 120000;
+
+  const originalMaxSites = config.CONSTRUCTION.MAX_SITES;
+  config.CONSTRUCTION.MAX_SITES = 200;
+  let lastState = null;
+  let lastStatus = null;
+
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      lastState = roomState.collect(room);
+      lastStatus = constructionStatus.getStatus(room, lastState);
+      constructionManager.plan(room, lastState);
+
+      const extractorSites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter(site) {
+          return site.structureType === STRUCTURE_EXTRACTOR;
+        },
+      });
+
+      if (extractorSites.length === 1) {
+        assert(
+          extractorSites[0].pos.x === 40 && extractorSites[0].pos.y === 10,
+          `expected extractor site on wall mineral, got ${JSON.stringify(extractorSites.map((site) => ({ x: site.pos.x, y: site.pos.y, type: site.structureType })))}`,
+        );
+        return;
+      }
+
+      if (room.find(FIND_CONSTRUCTION_SITES).length === 0) break;
+      completeAllSites(room);
+      Game.time += 60;
+    }
+
+    assert(
+      false,
+      `expected extractor site on wall mineral, got ${JSON.stringify(getSiteTypes(room))} phase=${lastState && lastState.phase} ready=${lastStatus && lastStatus.futurePlan && lastStatus.futurePlan.extractorPlanReady} plan=${JSON.stringify(lastStatus && lastStatus.futurePlan && lastStatus.futurePlan.extractor)}`,
+    );
+  } finally {
+    config.CONSTRUCTION.MAX_SITES = originalMaxSites;
+  }
 }
 
 function runSpecializationTransitionScenario() {
@@ -1504,6 +1679,272 @@ function runMineralOpsScenario() {
       { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
       { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
       { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LAB, x: 27, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 28, y: 33, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 29, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 5000;
+
+  const state = roomState.collect(room);
+  const requests = spawnManager.getSpawnRequests(room, state);
+  const mineralRequest = requests.find((request) => request.role === "mineral_miner");
+
+  assert(state.mineralContainer, "mineral ops scenario should classify the mineral container");
+  assert(
+    state.buildStatus.specializationComplete,
+    "mineral ops scenario should be specialization complete",
+  );
+  assert(
+    mineralRequest,
+    `expected a mineral_miner request, got ${JSON.stringify(requests)}`,
+  );
+  assert(
+    mineralRequest.priority === 85,
+    `expected mineral_miner priority 85, got ${mineralRequest.priority}`,
+  );
+}
+
+function runUpgraderReserveScenario() {
+  const room = buildRoomScenario("VAL_UPGRADER_RESERVE", {
+    tick: 555,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_FACTORY, x: 27, y: 30, options: { store: { energy: 0 }, storeCapacity: 50000, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.controller.ticksToDowngrade = 200000;
+
+  room.storage.store.energy = 0;
+  let state = roomState.collect(room);
+  let lowPlan = bodies.plan("upgrader", room, { role: "upgrader" }, state);
+  let lowDesired = spawnManager.getDesiredUpgraders(room, state);
+  let lowWorkerDesired = spawnManager.getDesiredWorkers(room, state);
+  let lowRepairDesired = spawnManager.getDesiredRepairs(room, state);
+  let lowReport = roomReporting.build(room, state, { updateProgress: false });
+
+  assert(
+    lowPlan.workParts <= 2,
+    `expected low-storage RCL8 upgrader body to stay lean, got ${lowPlan.workParts} work`,
+  );
+  assert(
+    lowPlan.profile !== "controller_link_ready",
+    `expected low-storage RCL8 upgrader to avoid controller_link_ready profile, got ${lowPlan.profile}`,
+  );
+  assert(
+    lowDesired === 0,
+    `expected low-storage RCL8 upgrader demand to pause for reserve banking, got ${lowDesired}`,
+  );
+  assert(
+    lowWorkerDesired === 0,
+    `expected low-storage storage-backed room with no sites to skip workers, got ${lowWorkerDesired}`,
+  );
+  assert(
+    lowRepairDesired === 0,
+    `expected low-storage storage-backed room with no repair pressure to skip repairers, got ${lowRepairDesired}`,
+  );
+  assert(
+    lowReport.sections.overview.some((line) => line.indexOf("Upgrade held | Store 0/5000") !== -1),
+    `expected reserve-hold line in overview, got ${JSON.stringify(lowReport.sections.overview)}`,
+  );
+
+  room.storage.store.energy = 120000;
+  state = roomState.collect(room);
+  const highPlan = bodies.plan("upgrader", room, { role: "upgrader" }, state);
+  const highDesired = spawnManager.getDesiredUpgraders(room, state);
+
+  assert(
+    highPlan.workParts > lowPlan.workParts,
+    `expected upgrader body to scale with healthy storage, got low ${lowPlan.workParts} high ${highPlan.workParts}`,
+  );
+  assert(
+    highDesired >= lowDesired,
+    `expected healthy storage to allow at least as much upgrader demand, got low ${lowDesired} high ${highDesired}`,
+  );
+}
+
+function runWorkerReserveBankingScenario() {
+  const room = buildRoomScenario("VAL_WORKER_RESERVE_BANKING", {
+    tick: 560,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      {
+        name: "worker1",
+        role: "worker",
+        x: 24,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.controller.ticksToDowngrade = 200000;
+  room.storage.store.energy = 0;
+
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+
+  const worker = Game.creeps.worker1;
+  const workTarget = roleWorker.getWorkTarget(worker, 1);
+  const withdrawTarget = roleWorker.getWithdrawalTarget(worker);
+
+  assert(
+    workTarget && workTarget.id === room.storage.id,
+    `expected worker reserve mode to bank into storage, got ${workTarget ? workTarget.id : "none"}`,
+  );
+  assert(
+    withdrawTarget && withdrawTarget.id !== room.storage.id,
+    "expected worker reserve mode to avoid withdrawing from storage while banking",
+  );
+}
+
+function runTowerBankingThresholdScenario() {
+  const room = buildRoomScenario("VAL_TOWER_BANKING", {
+    tick: 565,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      {
+        name: "hauler1",
+        role: "hauler",
+        x: 25,
+        y: 24,
+        store: { energy: 100 },
+        memory: { delivering: true },
+      },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_TOWER, x: 27, y: 25, options: { store: { energy: 300 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.controller.ticksToDowngrade = 200000;
+  room.storage.store.energy = 0;
+  room.find(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return (
+        structure.structureType === STRUCTURE_SPAWN ||
+        structure.structureType === STRUCTURE_EXTENSION
+      );
+    },
+  }).forEach(function (structure) {
+    structure.store.energy =
+      structure.structureType === STRUCTURE_SPAWN ? 300 : 50;
+  });
+
+  let state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  let delivery = logisticsManager.getHaulerDeliveryTarget(
+    room,
+    Game.creeps.hauler1,
+    state,
+  );
+
+  assert(
+    delivery && delivery.id === room.storage.id,
+    `expected storage to beat tower reserve fill while banking, got ${delivery ? delivery.id : "none"}`,
+  );
+
+  const tower = state.structuresByType[STRUCTURE_TOWER][0];
+  tower.store.energy = 100;
+  state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  delivery = logisticsManager.getHaulerDeliveryTarget(
+    room,
+    Game.creeps.hauler1,
+    state,
+  );
+
+  assert(
+    delivery && delivery.id === tower.id,
+    `expected tower below banking threshold to remain priority, got ${delivery ? delivery.id : "none"}`,
+  );
+}
+
+function runMineralMiningBlockedScenario() {
+  const room = buildRoomScenario("VAL_MINERAL_BLOCKED", {
+    tick: 575,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
     ],
   });
 
@@ -1512,16 +1953,107 @@ function runMineralOpsScenario() {
 
   const state = roomState.collect(room);
   const requests = spawnManager.getSpawnRequests(room, state);
-  const task = advancedStructureManager.getHaulerTask(room, Game.creeps.hauler1, state);
 
-  assert(state.mineralContainer, "mineral ops scenario should classify the mineral container");
   assert(
-    requests.some((request) => request.role === "mineral_miner"),
-    `expected a mineral_miner request, got ${JSON.stringify(requests)}`,
+    state.phase === "specialization",
+    `expected specialization phase, got ${state.phase}`,
   );
   assert(
-    task && task.label === "mineral_output",
-    `expected mineral_output advanced haul task, got ${task ? task.label : "none"}`,
+    !state.buildStatus.specializationComplete,
+    "mineral blocked scenario should not be specialization complete",
+  );
+  assert(
+    !requests.some((request) => request.role === "mineral_miner"),
+    `did not expect a mineral_miner request before specialization complete, got ${JSON.stringify(requests)}`,
+  );
+}
+
+function runMineralAccessRoadScenario() {
+  const room = buildRoomScenario("VAL_MINERAL_ACCESS_ROAD", {
+    tick: 590,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LAB, x: 27, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 28, y: 33, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 29, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 10000;
+
+  const mineral = room.find(FIND_MINERALS)[0];
+  createCreep("mineral1", "mineral_miner", 39, 10, {
+    roomName: room.name,
+    memory: { targetId: mineral.id },
+    body: [{ type: WORK }, { type: WORK }, { type: MOVE }],
+  });
+
+  let state = roomState.collect(room);
+  let status = constructionStatus.getStatus(room, state);
+
+  assert(
+    status.mineralAccessRoadsNeeded > status.mineralAccessRoadsBuilt,
+    `expected pending mineral access road, got ${status.mineralAccessRoadsBuilt}/${status.mineralAccessRoadsNeeded} phase=${state.phase} unlocked=${constructionStatus.isMineralAccessRoadUnlocked(room, state)} mineralContainer=${!!state.mineralContainer} storage=${!!room.storage} roleCounts=${JSON.stringify(state.roleCounts)}`,
+  );
+
+  constructionManager.plan(room, state);
+
+  const roadSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_ROAD;
+    },
+  });
+  assert(
+    roadSites.length > 0,
+    "expected mineral access road sites after mineral miner became active",
+  );
+
+  state = roomState.collect(room);
+  status = constructionStatus.getStatus(room, state);
+  const report = roomReporting.build(room, state, { updateProgress: false });
+
+  assert(
+    report.nextTask === "finish mineral access road",
+    `expected mineral access road next task, got ${report.nextTask}`,
+  );
+  assert(
+    report.sections.build[2].indexOf("mRoad ") !== -1,
+    `expected build section to include mineral access road progress, got ${report.sections.build[2]}`,
+  );
+  assert(
+    report.sections.overview.some((line) => line.indexOf("Road ") !== -1),
+    `expected overview to mention mineral road progress, got ${JSON.stringify(report.sections.overview)}`,
+  );
+  assert(
+    report.hudLines[3].indexOf("Road ") !== -1,
+    `expected HUD line to mention mineral road progress, got ${JSON.stringify(report.hudLines)}`,
+  );
+
+  delete Game.creeps.mineral1;
+  state = roomState.collect(room);
+  status = constructionStatus.getStatus(room, state);
+
+  assert(
+    status.mineralAccessRoadsNeeded > 0,
+    "expected mineral access road target to stay unlocked after mineral miner activity",
   );
 }
 
@@ -1575,6 +2107,315 @@ function runFortificationScenario() {
   );
 }
 
+function runRcl7UpgradeTransitionScenario() {
+  const room = buildRoomScenario("VAL_RCL7_TRANSITION", {
+    tick: 640,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1200,
+    energyCapacityAvailable: 1200,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LAB, x: 27, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 28, y: 33, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LAB, x: 29, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 150000;
+
+  let state = roomState.collect(room);
+  assert(state.phase === "specialization", `expected specialization before upgrade, got ${state.phase}`);
+  assert(
+    state.buildStatus.specializationComplete,
+    "expected RCL6 room to finish specialization prep before the RCL7 test",
+  );
+
+  room.controller.level = 7;
+
+  state = roomState.collect(room);
+  assert(state.phase === "development", `expected development catch-up right after RCL7 upgrade, got ${state.phase}`);
+  assert(
+    state.buildStatus.extensionsNeeded === 50 && state.buildStatus.towersNeeded === 3,
+    `expected RCL7 core unlock targets, got ext ${state.buildStatus.extensionsNeeded} tower ${state.buildStatus.towersNeeded}`,
+  );
+
+  satisfyDevelopmentRequirements(room);
+  state = roomState.collect(room);
+  assert(state.phase === "fortification", `expected fortification after RCL7 core catch-up, got ${state.phase}`);
+  assert(
+    state.buildStatus.linksNeeded === 4,
+    `expected fortification to add the second source link target at RCL7, got ${state.buildStatus.linksNeeded}`,
+  );
+
+  Game.time += config.CONSTRUCTION.PLAN_INTERVAL || 50;
+  constructionManager.plan(room, state);
+  const siteTypes = getSiteTypes(room);
+  assert(
+    siteTypes.includes(STRUCTURE_FACTORY),
+    `RCL7 transition should place a factory site after the next planning cycle, got sites: ${siteTypes.join(",") || "none"}`,
+  );
+}
+
+function runRcl8MineralCatchupScenario() {
+  const room = buildRoomScenario("VAL_RCL8_MINERAL_CATCHUP", {
+    tick: 680,
+    controllerLevel: 7,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 30000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_FACTORY, x: 27, y: 30, options: { store: { energy: 0 }, storeCapacity: 50000, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      ...Array.from({ length: 6 }, function (_, index) {
+        return {
+          type: STRUCTURE_LAB,
+          x: 27 + (index % 3),
+          y: 33 + Math.floor(index / 3),
+          options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 },
+        };
+      }),
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 150000;
+
+  let state = roomState.collect(room);
+  assert(state.phase === "fortification", `expected fortification before upgrade, got ${state.phase}`);
+  assert(
+    state.buildStatus.specializationComplete,
+    "expected specialization complete before the RCL8 mineral catch-up test",
+  );
+
+  room.controller.level = 8;
+  const existingExtensions = room.find(FIND_STRUCTURES, {
+    filter: function (structure) {
+      return structure.structureType === STRUCTURE_EXTENSION;
+    },
+  }).length;
+  const extensionPositions = pickOpenPositions(
+    room,
+    (CONTROLLER_STRUCTURES.extension[8] || 0) - existingExtensions,
+  );
+  for (let i = 0; i < extensionPositions.length; i++) {
+    room.addStructure(
+      createStructure(STRUCTURE_EXTENSION, extensionPositions[i][0], extensionPositions[i][1], {
+        roomName: room.name,
+        store: { energy: 0 },
+        storeCapacityResource: { energy: 50 },
+        hits: 1000,
+        hitsMax: 1000,
+      }),
+    );
+  }
+
+  state = roomState.collect(room);
+  assert(state.phase === "development", `expected development catch-up at RCL8, got ${state.phase}`);
+  assert(
+    !state.buildStatus.specializationComplete,
+    "expected RCL8 catch-up state to temporarily regress specializationComplete",
+  );
+  assert(
+    constructionStatus.isMineralProgramUnlocked(room, state),
+    "expected mature mineral infrastructure to keep mineral ops unlocked during RCL8 catch-up",
+  );
+
+  const mineral = room.find(FIND_MINERALS)[0];
+  assert(
+    spawnManager.shouldSpawnMineralMiner(room, state, mineral),
+    "expected mineral miner respawn to stay enabled during RCL8 catch-up after unlock",
+  );
+
+  let report = roomReporting.build(room, state, { updateProgress: false });
+  assert(
+    report.nextTask === "place or finish the next tower",
+    `expected next task to point at the next tower, got ${report.nextTask}`,
+  );
+  assert(
+    report.sections.overview.some((line) => line.indexOf("Mineral ready") !== -1),
+    `expected mineral reporting to stay ready instead of blocked, got ${report.sections.overview.join(" || ")}`,
+  );
+
+  constructionManager.plan(room, state);
+  const siteTypes = getSiteTypes(room);
+  assert(
+    siteTypes.includes(STRUCTURE_TOWER),
+    `expected RCL8 catch-up to keep placing towers, got sites: ${siteTypes.join(",") || "none"}`,
+  );
+  assert(
+    siteTypes.includes(STRUCTURE_LAB),
+    `expected RCL8 catch-up to place final labs alongside tower catch-up, got sites: ${siteTypes.join(",") || "none"}`,
+  );
+
+  createCreep("mineral_miner1", "mineral_miner", 39, 10, {
+    roomName: room.name,
+    memory: { targetId: mineral.id },
+  });
+
+  state = roomState.collect(room);
+  report = roomReporting.build(room, state, { updateProgress: false });
+  assert(
+    report.sections.overview.some((line) => line.indexOf("Mineral active") !== -1),
+    `expected active mineral reporting during RCL8 catch-up, got ${report.sections.overview.join(" || ")}`,
+  );
+}
+
+function runLegacyTowerFallbackScenario() {
+  const room = buildRoomScenario("VAL_LEGACY_TOWER_FALLBACK", {
+    tick: 690,
+    controllerLevel: 8,
+    spawnX: 18,
+    spawnY: 15,
+    spawnEnergy: 300,
+    energyAvailable: 12300,
+    energyCapacityAvailable: 12300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 20, y: 34 },
+      { name: "miner1", role: "miner", x: 29, y: 19, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 33, y: 18, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 23, y: 12 },
+      { name: "hauler2", role: "hauler", x: 18, y: 18 },
+      { name: "upgrader1", role: "upgrader", x: 23, y: 39 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 13, y: 15, options: { store: { energy: 150000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TERMINAL, x: 13, y: 17, options: { store: { energy: 30000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_FACTORY, x: 14, y: 17, options: { store: { energy: 0 }, storeCapacity: 50000, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      { type: STRUCTURE_CONTAINER, x: 8, y: 43, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 9, y: 43, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LINK, x: 11, y: 14, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 22, y: 41, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 28, y: 20, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 32, y: 19, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 11, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 19, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TOWER, x: 14, y: 19, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      ...Array.from({ length: 6 }, function (_, index) {
+        return {
+          type: STRUCTURE_LAB,
+          x: 10 + (index % 2),
+          y: 16 + index,
+          options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 },
+        };
+      }),
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room._structures = room._structures.filter(function (structure) {
+    if (structure.structureType !== STRUCTURE_TOWER) return true;
+    delete currentRuntime.objectsById[structure.id];
+    return false;
+  });
+  room.addStructure(
+    createStructure(STRUCTURE_TOWER, 22, 11, {
+      roomName: room.name,
+      store: { energy: 800 },
+      storeCapacityResource: { energy: 1000 },
+      hits: 3000,
+      hitsMax: 3000,
+    }),
+  );
+  room.addStructure(
+    createStructure(STRUCTURE_TOWER, 22, 19, {
+      roomName: room.name,
+      store: { energy: 800 },
+      storeCapacityResource: { energy: 1000 },
+      hits: 3000,
+      hitsMax: 3000,
+    }),
+  );
+  room.addStructure(
+    createStructure(STRUCTURE_TOWER, 14, 19, {
+      roomName: room.name,
+      store: { energy: 800 },
+      storeCapacityResource: { energy: 1000 },
+      hits: 3000,
+      hitsMax: 3000,
+    }),
+  );
+  room.addStructure(
+    createStructure(STRUCTURE_EXTENSION, 14, 11, {
+      roomName: room.name,
+      store: { energy: 50 },
+      storeCapacityResource: { energy: 50 },
+      hits: 1000,
+      hitsMax: 1000,
+    }),
+  );
+  room.addStructure(
+    createStructure(STRUCTURE_ROAD, 18, 9, {
+      roomName: room.name,
+      hits: 5000,
+      hitsMax: 5000,
+    }),
+  );
+  room.addStructure(
+    createStructure(STRUCTURE_ROAD, 18, 21, {
+      roomName: room.name,
+      hits: 5000,
+      hitsMax: 5000,
+    }),
+  );
+  room.storage.store.energy = 150000;
+
+  const state = roomState.collect(room);
+  assert(state.phase === "development", `expected development catch-up, got ${state.phase}`);
+  constructionManager.plan(room, state);
+
+  const towerSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_TOWER;
+    },
+  });
+
+  assert(
+    towerSites.length >= 3,
+    `expected legacy layout to still place missing towers, got ${towerSites.length}`,
+  );
+}
+
 function runCommandScenario() {
   const room = buildRoomScenario("VAL_COMMAND", {
     tick: 700,
@@ -1621,14 +2462,25 @@ function runCommandScenario() {
   const status = constructionStatus.getStatus(room, state);
 
   assert(state.phase === "command", `expected command, got ${state.phase}`);
+  assert(status.spawnsNeeded === 3, "command should need all three spawns");
   assert(status.observerNeeded === 1, "command should need observer");
   assert(status.powerSpawnNeeded === 1, "command should need power spawn");
   assert(status.nukerNeeded === 1, "command should need nuker");
+  const report = roomReporting.build(room, state, { updateProgress: false });
+  assert(
+    report.nextTask === "place or finish the next spawn",
+    `expected command next task to point at spawns, got ${report.nextTask}`,
+  );
+  assert(
+    report.sections.build[2].indexOf("spawn 1/3") !== -1,
+    `expected command build line to include spawn progress, got ${report.sections.build[2]}`,
+  );
 
   constructionManager.plan(room, state);
   const siteTypes = getSiteTypes(room);
   assert(
-    siteTypes.includes(STRUCTURE_OBSERVER) ||
+    siteTypes.includes(STRUCTURE_SPAWN) ||
+      siteTypes.includes(STRUCTURE_OBSERVER) ||
       siteTypes.includes(STRUCTURE_POWER_SPAWN) ||
       siteTypes.includes(STRUCTURE_NUKER),
     `command should place late-game command structure sites, got sites: ${siteTypes.join(",") || "none"}`,
@@ -1686,12 +2538,23 @@ function main() {
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
+    ["development_storage_gate", runDevelopmentStorageGateScenario],
+    ["storage_planning_road_conflict", runStoragePlanningRoadConflictScenario],
     ["container_usage", runContainerUsageScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],
+    ["extractor_wall_mineral", runExtractorWallMineralScenario],
     ["specialization_transition", runSpecializationTransitionScenario],
+    ["mineral_blocked", runMineralMiningBlockedScenario],
     ["mineral_ops", runMineralOpsScenario],
+    ["upgrader_reserve", runUpgraderReserveScenario],
+    ["worker_reserve_banking", runWorkerReserveBankingScenario],
+    ["tower_banking_threshold", runTowerBankingThresholdScenario],
+    ["mineral_access_road", runMineralAccessRoadScenario],
     ["fortification", runFortificationScenario],
+    ["rcl7_transition", runRcl7UpgradeTransitionScenario],
+    ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],
+    ["legacy_tower_fallback", runLegacyTowerFallbackScenario],
     ["command", runCommandScenario],
     ["factory_ops", runFactoryOpsScenario],
   ];

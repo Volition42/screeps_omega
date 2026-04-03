@@ -15,7 +15,9 @@ Recovery behavior:
 
 const bodies = require("bodies");
 const config = require("config");
+const constructionStatus = require("construction_status");
 const defenseManager = require("defense_manager");
+const reservePolicy = require("economy_reserve_policy");
 const utils = require("utils");
 
 module.exports = {
@@ -73,7 +75,7 @@ module.exports = {
       Game.time % 25 === 0
     ) {
       console.log(
-        "[SPAWN " +
+        "[DBG][SPAWN " +
           spawn.name +
           "] failed role=" +
           request.role +
@@ -464,24 +466,38 @@ module.exports = {
     var workPerCreep = Math.max(1, plan.workParts || 1);
     var sites = state && state.sites ? state.sites.length : 0;
     var targetWork = 2;
+    var hasStorage = !!(state && state.infrastructure && state.infrastructure.hasStorage);
+    var bankingReserve = reservePolicy.shouldBankStorageEnergy(room, state);
 
     if (state.phase === "foundation") {
       targetWork = Math.max(4, (state.sources ? state.sources.length : 1) * 2);
     } else if (state.phase === "development") {
-      targetWork = 4 + Math.min(4, sites);
+      targetWork = sites > 0 ? 2 + Math.min(4, sites) : 0;
     } else {
-      targetWork = state.infrastructure && state.infrastructure.hasStorage ? 2 : 4;
+      targetWork = hasStorage ? 0 : 4;
 
       if (sites > 0) {
         targetWork += Math.min(4, sites);
       }
     }
 
-    if (state.buildStatus && !state.buildStatus.developmentComplete) {
+    if (
+      state.buildStatus &&
+      !state.buildStatus.developmentComplete &&
+      (!hasStorage || sites > 0)
+    ) {
       targetWork += 1;
     }
 
-    return Math.max(1, Math.ceil(Math.min(12, targetWork) / workPerCreep));
+    if (hasStorage && sites <= 0 && bankingReserve) {
+      return 0;
+    }
+
+    if (targetWork <= 0) {
+      return 0;
+    }
+
+    return Math.ceil(Math.min(12, targetWork) / workPerCreep);
   },
 
   getDesiredUpgraders(room, state) {
@@ -493,14 +509,28 @@ module.exports = {
       state.infrastructure && state.infrastructure.storageEnergy
         ? state.infrastructure.storageEnergy
         : 0;
+    var controllerLevel = room.controller ? room.controller.level || 0 : 0;
+    var rampThresholds =
+      config.UPGRADING && config.UPGRADING.TARGET_WORK_THRESHOLDS
+        ? config.UPGRADING.TARGET_WORK_THRESHOLDS
+        : [];
+    var rcl8Caps =
+      config.UPGRADING && config.UPGRADING.RCL8_TARGET_WORK_CAPS
+        ? config.UPGRADING.RCL8_TARGET_WORK_CAPS
+        : [];
+
+    if (reservePolicy.shouldHoldRcl8Upgrading(room, state)) {
+      return 0;
+    }
 
     if (state.phase === "development" && sites > 3) {
       targetWork = 2;
     }
 
-    if (storageEnergy >= 10000) targetWork = Math.max(targetWork, 6);
-    if (storageEnergy >= 50000) targetWork = Math.max(targetWork, 10);
-    if (storageEnergy >= 100000) targetWork = Math.max(targetWork, 14);
+    targetWork = Math.max(
+      targetWork,
+      this.getThresholdWork(rampThresholds, storageEnergy, targetWork),
+    );
 
     if (
       state.buildStatus &&
@@ -510,11 +540,55 @@ module.exports = {
       targetWork = Math.max(2, targetWork - 2);
     }
 
-    if (room.controller && room.controller.level >= 7) {
-      targetWork = Math.min(15, targetWork + 2);
+    if (
+      controllerLevel === 7 &&
+      storageEnergy >= this.getControllerLinkReadyStorageEnergy()
+    ) {
+      targetWork = Math.min(
+        15,
+        targetWork +
+          (config.UPGRADING &&
+          typeof config.UPGRADING.RCL7_TARGET_WORK_BONUS === "number"
+            ? config.UPGRADING.RCL7_TARGET_WORK_BONUS
+            : 1),
+      );
     }
 
-    return Math.max(1, Math.ceil(Math.min(15, targetWork) / workPerCreep));
+    if (controllerLevel >= 8) {
+      targetWork = Math.min(
+        targetWork,
+        this.getThresholdWork(rcl8Caps, storageEnergy, targetWork),
+      );
+    }
+
+    if (targetWork <= 0) {
+      return 0;
+    }
+
+    return Math.ceil(Math.min(15, targetWork) / workPerCreep);
+  },
+
+  getThresholdWork(thresholds, energy, fallback) {
+    var value = fallback;
+    var normalizedThresholds = thresholds || [];
+
+    for (var i = 0; i < normalizedThresholds.length; i++) {
+      var threshold = normalizedThresholds[i];
+      if (!threshold || typeof threshold.energy !== "number") continue;
+      if (energy < threshold.energy) continue;
+      if (typeof threshold.work === "number") {
+        value = threshold.work;
+      }
+    }
+
+    return value;
+  },
+
+  getControllerLinkReadyStorageEnergy() {
+    return config.UPGRADING &&
+      typeof config.UPGRADING.CONTROLLER_LINK_PROFILE_STORAGE_ENERGY === "number"
+      ? config.UPGRADING.CONTROLLER_LINK_PROFILE_STORAGE_ENERGY
+      : 20000;
   },
 
   getDesiredHaulersForSource(room, state, sourceId) {
@@ -558,7 +632,7 @@ module.exports = {
     ) {
       requests.push({
         role: "mineral_miner",
-        priority: 65,
+        priority: 85,
         targetId: mineral.id,
       });
     }
@@ -569,6 +643,9 @@ module.exports = {
     if (!room.storage) return false;
     if (!mineral || mineral.mineralAmount <= 0) return false;
     if (!state || !state.mineralContainer) return false;
+    if (!constructionStatus.isMineralProgramUnlocked(room, state)) {
+      return false;
+    }
     if (state.hostileCreeps && state.hostileCreeps.length > 0) return false;
 
     var storageEnergy = room.storage.store[RESOURCE_ENERGY] || 0;
@@ -606,10 +683,13 @@ module.exports = {
 
     if (
       targetWork === 0 &&
-      (state.phase === "development" ||
-        (room.controller && room.controller.level >= 4))
+      reservePolicy.shouldBankStorageEnergy(room, state)
     ) {
-      targetWork = 2;
+      return 0;
+    }
+
+    if (targetWork <= 0) {
+      return 0;
     }
 
     return Math.ceil(Math.min(8, targetWork) / workPerCreep);
