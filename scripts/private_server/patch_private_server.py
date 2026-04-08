@@ -23,6 +23,9 @@ CLI_PORT = int(os.environ.get("SCREEPS_CLI_PORT", "21036"))
 SERVER_HOST = os.environ.get("SCREEPS_SERVER_HOST", "0.0.0.0")
 CLI_HOST = os.environ.get("SCREEPS_CLI_HOST", "localhost")
 DEFAULT_CPU = int(os.environ.get("SCREEPS_TEST_CPU", "20"))
+REPO_ROOT = Path(
+    os.environ.get("SCREEPS_OMEGA_REPO_ROOT", str(Path(__file__).resolve().parents[2]))
+)
 
 
 def copy_if_missing(src: Path, dst: Path) -> None:
@@ -44,6 +47,14 @@ def patch_text(path: Path, before: str, after: str) -> None:
     if before not in text:
         return
     path.write_text(text.replace(before, after), encoding="utf8")
+
+
+def replace_tree(src: Path, dst: Path) -> None:
+    if not src.exists():
+        return
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
 
 
 def write_server_config(server_root: Path) -> None:
@@ -80,7 +91,7 @@ def write_mods_config(server_root: Path) -> None:
     mods = """{
   "mods": [
     "node_modules/screepsmod-auth",
-    "node_modules/screepsmod-admin-utils",
+    "mods/screepsmod-omega-dashboard",
     "node_modules/screepsmod-map-tool"
   ],
   "bots": {
@@ -155,6 +166,10 @@ def main() -> int:
     copy_if_missing(
         init_dist / "node_modules" / "@screeps" / "simplebot",
         SERVER_ROOT / "node_modules" / "@screeps" / "simplebot",
+    )
+    replace_tree(
+        REPO_ROOT / "mods" / "screepsmod-omega-dashboard",
+        SERVER_ROOT / "mods" / "screepsmod-omega-dashboard",
     )
 
     write_server_config(SERVER_ROOT)

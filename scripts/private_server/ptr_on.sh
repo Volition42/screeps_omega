@@ -50,4 +50,5 @@ done
 echo "Server: ${SERVER_URL}"
 echo "Portal: ${CLIENT_URL}/"
 echo "Game: ${CLIENT_URL}/(${SERVER_URL})/"
-echo "Admin: ${CLIENT_URL}/omega-admin/"
+echo "Dashboard: ${CLIENT_URL}/web"
+echo "Omega Admin: ${SERVER_URL}/omega-admin/"

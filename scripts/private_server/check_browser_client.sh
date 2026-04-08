@@ -16,6 +16,6 @@ curl -sSfI "${CLIENT_URL}/(${SERVER_URL})/"
 echo
 
 echo
-echo "Browser Client Admin Route:"
-curl -sSfI "${CLIENT_URL}/omega-admin/"
+echo "Browser Client Dashboard Entry:"
+curl -sSfI "${CLIENT_URL}/web"
 echo
