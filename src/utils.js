@@ -510,6 +510,46 @@ module.exports = {
     return new RoomPosition(x, y, parts[0]);
   },
 
+  getBalancedHarvestSource(creep, candidates) {
+    if (!creep || !creep.room) return null;
+
+    let sourceCandidates = candidates;
+    if (!sourceCandidates || sourceCandidates.length === 0) {
+      sourceCandidates = creep.room.find(FIND_SOURCES_ACTIVE);
+    }
+    if (!sourceCandidates || sourceCandidates.length === 0) {
+      sourceCandidates = creep.room.find(FIND_SOURCES);
+    }
+    if (!sourceCandidates || sourceCandidates.length === 0) return null;
+
+    const candidateIds = {};
+    for (let i = 0; i < sourceCandidates.length; i++) {
+      candidateIds[sourceCandidates[i].id] = true;
+    }
+
+    const cache = getRuntimeCache(creep.room);
+    const homeCreeps = cache && cache.homeCreeps ? cache.homeCreeps : creep.room.find(FIND_MY_CREEPS);
+    const assignedCounts = {};
+
+    for (let i = 0; i < homeCreeps.length; i++) {
+      const other = homeCreeps[i];
+      if (!other || other.name === creep.name || !other.memory) continue;
+
+      const assignedId = other.memory.harvestSourceId || other.memory.withdrawTargetId || null;
+      if (!assignedId || !candidateIds[assignedId]) continue;
+
+      assignedCounts[assignedId] = (assignedCounts[assignedId] || 0) + 1;
+    }
+
+    return _.min(sourceCandidates, function (candidate) {
+      const assigned = assignedCounts[candidate.id] || 0;
+      const capacity = Math.max(1, module.exports.getSourceHarvestCapacity(candidate));
+      const overload = assigned >= capacity ? (assigned - capacity + 1) * 1000 : 0;
+
+      return overload + (assigned / capacity) * 100 + creep.pos.getRangeTo(candidate);
+    });
+  },
+
   getAssignedHarvestPosition(creep, source) {
     if (!creep || !creep.memory || !source || !source.pos) return null;
 

@@ -566,37 +566,86 @@ module.exports = {
     var links = structuresByType[STRUCTURE_LINK] || [];
     var storage = room.storage || null;
     var controller = room.controller || null;
+    var terminal = room.terminal || null;
+    var mineralContainer = state.mineralContainer || null;
+    var futurePlan =
+      state &&
+      state.buildStatus &&
+      state.buildStatus.futurePlan &&
+      state.buildStatus.futurePlan.links
+        ? state.buildStatus.futurePlan.links
+        : null;
+    var remainingLinks = links.slice();
     var controllerLink = null;
     var storageLink = null;
+    var terminalLink = null;
+    var mineralLink = null;
     var sourceLinksBySourceId = {};
     var builtSourceLinks = 0;
 
     if (controller) {
-      controllerLink =
-        _.find(links, function (link) {
-          return link.pos.getRangeTo(controller) <= 2;
-        }) || null;
+      controllerLink = this.takePlannedLink(
+        remainingLinks,
+        futurePlan && futurePlan.controller,
+      ) || this.takeMatchingLink(remainingLinks, function (link) {
+        return link.pos.getRangeTo(controller) <= 2;
+      });
     }
 
     if (storage) {
-      storageLink =
-        _.find(links, function (link) {
-          return link.pos.getRangeTo(storage) <= 2;
-        }) || null;
+      storageLink = this.takePlannedLink(
+        remainingLinks,
+        futurePlan && futurePlan.storage,
+      ) || this.takeMatchingLink(remainingLinks, function (link) {
+        return link.pos.getRangeTo(storage) <= 2;
+      });
+    }
+
+    if (terminal) {
+      terminalLink = this.takePlannedLink(
+        remainingLinks,
+        futurePlan && futurePlan.terminal,
+      ) || this.takeMatchingLink(remainingLinks, function (link) {
+        return link.pos.getRangeTo(terminal) <= 2;
+      });
+    }
+
+    if (mineralContainer) {
+      mineralLink = this.takePlannedLink(
+        remainingLinks,
+        futurePlan && futurePlan.mineral,
+      ) || this.takeMatchingLink(remainingLinks, function (link) {
+        return link.pos.getRangeTo(mineralContainer) <= 2;
+      });
     }
 
     for (var i = 0; i < state.sources.length; i++) {
       var source = state.sources[i];
-      var sourceLink =
-        _.find(links, function (link) {
-          return link.pos.getRangeTo(source) <= 2;
-        }) || null;
+      var sourcePlan = futurePlan && futurePlan.sources
+        ? _.find(futurePlan.sources, function (entry) {
+            return entry && entry.sourceId === source.id;
+          })
+        : null;
+      var sourceLink = this.takePlannedLink(
+        remainingLinks,
+        sourcePlan ? sourcePlan.pos : null,
+      ) || this.takeMatchingLink(remainingLinks, function (link) {
+        return link.pos.getRangeTo(source) <= 2;
+      });
 
       sourceLinksBySourceId[source.id] = sourceLink;
 
       if (sourceLink) {
         builtSourceLinks++;
       }
+    }
+
+    if (!terminalLink && terminal) {
+      terminalLink = this.takeClosestLink(remainingLinks, terminal);
+    }
+
+    if (!mineralLink && mineralContainer) {
+      mineralLink = this.takeClosestLink(remainingLinks, mineralContainer);
     }
 
     return {
@@ -610,6 +659,10 @@ module.exports = {
       hasControllerLink: !!controllerLink,
       storageLink: storageLink,
       hasStorageLink: !!storageLink,
+      terminalLink: terminalLink,
+      hasTerminalLink: !!terminalLink,
+      mineralLink: mineralLink,
+      hasMineralLink: !!mineralLink,
       sourceLinksBySourceId: sourceLinksBySourceId,
       builtSourceLinks: builtSourceLinks,
       sourceLinksNeeded: state.buildStatus
@@ -625,6 +678,50 @@ module.exports = {
         builtSourceLinks: builtSourceLinks,
       }),
     };
+  },
+
+  takePlannedLink(links, serializedPos) {
+    if (!serializedPos || !links || links.length <= 0) return null;
+
+    return this.takeMatchingLink(links, function (link) {
+      return (
+        link.pos &&
+        link.pos.x === serializedPos.x &&
+        link.pos.y === serializedPos.y &&
+        link.pos.roomName === serializedPos.roomName
+      );
+    });
+  },
+
+  takeMatchingLink(links, predicate) {
+    if (!links || links.length <= 0) return null;
+
+    for (var i = 0; i < links.length; i++) {
+      if (!predicate(links[i])) continue;
+
+      return links.splice(i, 1)[0];
+    }
+
+    return null;
+  },
+
+  takeClosestLink(links, target) {
+    if (!links || links.length <= 0 || !target || !target.pos) return null;
+
+    var bestIndex = -1;
+    var bestRange = Infinity;
+
+    for (var i = 0; i < links.length; i++) {
+      var range = links[i].pos.getRangeTo(target);
+      if (range < bestRange) {
+        bestRange = range;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex === -1) return null;
+
+    return links.splice(bestIndex, 1)[0];
   },
 
   getEconomyStage(room, state, infrastructure) {

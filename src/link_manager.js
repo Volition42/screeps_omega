@@ -26,12 +26,18 @@ module.exports = {
 
     var controllerLink = infrastructure.controllerLink || null;
     var storageLink = infrastructure.storageLink || null;
+    var terminalLink = infrastructure.terminalLink || null;
+    var mineralLink = infrastructure.mineralLink || null;
     var sourceLinks = this.getSourceLinks(infrastructure);
     var summary = {
       transfers: 0,
       sourceToStorage: 0,
       sourceToController: 0,
       storageToController: 0,
+      storageToTerminal: 0,
+      storageToMineral: 0,
+      utilityToStorage: 0,
+      utilityToController: 0,
     };
 
     for (var i = 0; i < sourceLinks.length; i++) {
@@ -60,6 +66,45 @@ module.exports = {
     ) {
       summary.transfers += 1;
       summary.storageToController += 1;
+    }
+
+    if (this.canTransfer(storageLink, terminalLink) && this.shouldFillUtilityLink(terminalLink)) {
+      if (storageLink.transferEnergy(terminalLink) === OK) {
+        summary.transfers += 1;
+        summary.storageToTerminal += 1;
+      }
+    } else if (this.canTransfer(storageLink, mineralLink) && this.shouldFillUtilityLink(mineralLink)) {
+      if (storageLink.transferEnergy(mineralLink) === OK) {
+        summary.transfers += 1;
+        summary.storageToMineral += 1;
+      }
+    }
+
+    var utilityLinks = [terminalLink, mineralLink];
+    for (var i = 0; i < utilityLinks.length; i++) {
+      var utilityLink = utilityLinks[i];
+      if (!utilityLink) continue;
+
+      if (
+        this.canTransfer(utilityLink, controllerLink) &&
+        this.shouldDrainUtilityLink(utilityLink, controllerLink)
+      ) {
+        if (utilityLink.transferEnergy(controllerLink) === OK) {
+          summary.transfers += 1;
+          summary.utilityToController += 1;
+          continue;
+        }
+      }
+
+      if (
+        this.canTransfer(utilityLink, storageLink) &&
+        this.shouldDrainUtilityLink(utilityLink, storageLink)
+      ) {
+        if (utilityLink.transferEnergy(storageLink) === OK) {
+          summary.transfers += 1;
+          summary.utilityToStorage += 1;
+        }
+      }
     }
 
     return summary;
@@ -103,12 +148,30 @@ module.exports = {
     return true;
   },
 
+  shouldFillUtilityLink(link) {
+    if (!link || !link.store) return false;
+
+    return (link.store[RESOURCE_ENERGY] || 0) <= 0;
+  },
+
+  shouldDrainUtilityLink(fromLink, toLink) {
+    if (!fromLink || !fromLink.store || !toLink || !toLink.store) return false;
+
+    if ((fromLink.store[RESOURCE_ENERGY] || 0) <= 0) return false;
+
+    return toLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+  },
+
   getEmptySummary() {
     return {
       transfers: 0,
       sourceToStorage: 0,
       sourceToController: 0,
       storageToController: 0,
+      storageToTerminal: 0,
+      storageToMineral: 0,
+      utilityToStorage: 0,
+      utilityToController: 0,
     };
   },
 };

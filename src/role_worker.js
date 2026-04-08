@@ -86,7 +86,7 @@ module.exports = {
 
     const workTarget = this.getWorkTarget(creep, thinkInterval);
 
-    if (workTarget && workTarget.structureType === STRUCTURE_SPAWN) {
+    if (this.isSpawnEnergyTarget(workTarget)) {
       if (creep.transfer(workTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         utils.moveTo(creep, workTarget, MOVE_OPTIONS);
       }
@@ -115,6 +115,10 @@ module.exports = {
       target = reservePolicy.shouldBankStorageEnergy(creep.room, state)
         ? this.getReserveWithdrawalTarget(creep, state)
         : utils.getGeneralEnergyWithdrawalTarget(creep.room, creep);
+
+      if (target && target.energy !== undefined && target.pos) {
+        target = utils.getBalancedHarvestSource(creep) || target;
+      }
 
       if (target && target.id) {
         creep.memory.withdrawTargetId = target.id;
@@ -179,6 +183,18 @@ module.exports = {
     }
 
     if (
+      target.energy !== undefined &&
+      (
+        !target.pos ||
+        target.pos.roomName !== creep.room.name ||
+        target.energy <= 0
+      )
+    ) {
+      delete creep.memory.withdrawTargetId;
+      return null;
+    }
+
+    if (
       target.structureType === STRUCTURE_STORAGE &&
       reservePolicy.shouldBankStorageEnergy(
         creep.room,
@@ -202,7 +218,7 @@ module.exports = {
     }
 
     if (
-      target.structureType === STRUCTURE_SPAWN &&
+      this.isSpawnEnergyTarget(target) &&
       target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
     ) {
       delete creep.memory.workTargetId;
@@ -224,6 +240,15 @@ module.exports = {
     }
 
     return target;
+  },
+
+  isSpawnEnergyTarget(target) {
+    return !!(
+      target &&
+      target.structureType === STRUCTURE_SPAWN &&
+      target.store &&
+      typeof target.store.getFreeCapacity === "function"
+    );
   },
 
   getReserveWithdrawalTarget(creep, state) {

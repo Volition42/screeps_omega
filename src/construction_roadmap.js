@@ -90,6 +90,7 @@ module.exports = {
         "controllerContainer",
         "anchorRoads",
         "backboneRoads",
+        "extensionStamps",
         "mineralAccessRoad",
       ],
       goals: {
@@ -163,7 +164,7 @@ module.exports = {
         linkPlanning: {
           enabled: true,
           controllerLink: true,
-          sourceLinks: 1,
+          sourceLinks: 2,
           storageLink: false,
         },
         advancedStructures: {
@@ -200,7 +201,7 @@ module.exports = {
         linkPlanning: {
           enabled: true,
           controllerLink: true,
-          sourceLinks: 1,
+          sourceLinks: 2,
           storageLink: true,
         },
         advancedStructures: {
@@ -216,6 +217,7 @@ module.exports = {
       focus: "hardening",
       summary: "Late-game hardening phase reserved for stronger defenses and mature infrastructure.",
       buildList: [
+        "spawns",
         "factory",
         "terminal",
         "mineralContainer",
@@ -243,6 +245,9 @@ module.exports = {
           terminal: true,
           extractor: true,
           labs: 6,
+        },
+        structureTargets: {
+          spawn: 2,
         },
         lateGameStructures: {
           observer: false,
@@ -284,11 +289,16 @@ module.exports = {
           controllerLink: true,
           sourceLinks: 2,
           storageLink: true,
+          terminalLink: true,
+          mineralLink: true,
         },
         advancedStructures: {
           terminal: true,
           extractor: true,
           labs: 10,
+        },
+        structureTargets: {
+          spawn: 3,
         },
         lateGameStructures: {
           observer: true,

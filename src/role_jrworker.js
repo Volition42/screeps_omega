@@ -138,34 +138,7 @@ module.exports = {
     }
 
     if (!source) {
-      var candidates = creep.room.find(FIND_SOURCES_ACTIVE);
-      if (!candidates || candidates.length === 0) {
-        candidates = creep.room.find(FIND_SOURCES);
-      }
-
-      if (candidates && candidates.length > 0) {
-        var assignedCounts = {};
-        var creeps = creep.room.find(FIND_MY_CREEPS);
-
-        for (var i = 0; i < creeps.length; i++) {
-          var other = creeps[i];
-          var assignedId =
-            other.memory && other.memory.harvestSourceId
-              ? other.memory.harvestSourceId
-              : null;
-
-          if (!assignedId) continue;
-          assignedCounts[assignedId] = (assignedCounts[assignedId] || 0) + 1;
-        }
-
-        source = _.min(candidates, function (candidate) {
-          var assigned = assignedCounts[candidate.id] || 0;
-          var capacity = Math.max(1, utils.getSourceHarvestCapacity(candidate));
-          var overload = assigned >= capacity ? (assigned - capacity + 1) * 1000 : 0;
-
-          return overload + (assigned / capacity) * 100 + creep.pos.getRangeTo(candidate);
-        });
-      }
+      source = utils.getBalancedHarvestSource(creep);
 
       if (source) {
         creep.memory.harvestSourceId = source.id;

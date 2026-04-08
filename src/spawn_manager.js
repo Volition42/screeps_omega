@@ -22,8 +22,8 @@ const utils = require("utils");
 
 module.exports = {
   run(room, state) {
-    var spawn = state.spawns[0];
-    if (!spawn) return;
+    var spawns = state.spawns || [];
+    if (spawns.length <= 0) return;
 
     var requests = this.getSpawnRequests(room, state);
 
@@ -46,12 +46,84 @@ module.exports = {
       };
     });
 
-    if (spawn.spawning || requests.length === 0) return;
+    if (requests.length === 0) return;
 
-    var request = requests[0];
+    var idleSpawns = _.filter(spawns, function (spawn) {
+      return !spawn.spawning;
+    });
+    if (idleSpawns.length === 0) return;
+
+    var assignments = this.assignRequestsToSpawns(idleSpawns, requests);
+    for (var i = 0; i < assignments.length; i++) {
+      this.trySpawnRequest(room, state, assignments[i].spawn, assignments[i].request);
+    }
+  },
+
+  assignRequestsToSpawns(idleSpawns, requests) {
+    var availableSpawns = (idleSpawns || []).slice();
+    var remainingRequests = (requests || []).slice();
+    var assignments = [];
+
+    if (availableSpawns.length <= 0 || remainingRequests.length <= 0) {
+      return assignments;
+    }
+
+    if (availableSpawns.length > 1) {
+      var defenseIndex = this.findRequestIndex(remainingRequests, true);
+      var economyIndex = this.findRequestIndex(remainingRequests, false);
+
+      if (defenseIndex !== -1 && economyIndex !== -1) {
+        assignments.push({
+          spawn: availableSpawns.shift(),
+          request: remainingRequests.splice(defenseIndex, 1)[0],
+        });
+
+        if (economyIndex > defenseIndex) {
+          economyIndex--;
+        }
+
+        assignments.push({
+          spawn: availableSpawns.shift(),
+          request: remainingRequests.splice(economyIndex, 1)[0],
+        });
+      }
+    }
+
+    while (availableSpawns.length > 0 && remainingRequests.length > 0) {
+      assignments.push({
+        spawn: availableSpawns.shift(),
+        request: remainingRequests.shift(),
+      });
+    }
+
+    return assignments;
+  },
+
+  findRequestIndex(requests, defenseRequest) {
+    for (var i = 0; i < requests.length; i++) {
+      if (this.isDefenseRequest(requests[i]) === defenseRequest) {
+        return i;
+      }
+    }
+
+    return -1;
+  },
+
+  isDefenseRequest(request) {
+    return !!(
+      request &&
+      (
+        request.role === "defender" ||
+        request.threatLevel !== undefined ||
+        request.threatScore !== undefined
+      )
+    );
+  },
+
+  trySpawnRequest(room, state, spawn, request) {
     var bodyPlan = bodies.plan(request.role, room, request, state);
     var body = bodyPlan.body;
-    var name = request.role + "_" + Game.time;
+    var name = this.getSpawnName(request.role, spawn);
 
     var result = spawn.spawnCreep(body, name, {
       memory: {
@@ -83,6 +155,27 @@ module.exports = {
           result,
       );
     }
+  },
+
+  getSpawnName(role, spawn) {
+    var baseName = role + "_" + Game.time;
+
+    if (!Game.creeps[baseName]) {
+      return baseName;
+    }
+
+    var spawnName = spawn && spawn.name ? spawn.name.replace(/[^A-Za-z0-9]/g, "") : "spawn";
+    var candidate = baseName + "_" + spawnName;
+    if (!Game.creeps[candidate]) {
+      return candidate;
+    }
+
+    var suffix = 1;
+    while (Game.creeps[candidate + "_" + suffix]) {
+      suffix++;
+    }
+
+    return candidate + "_" + suffix;
   },
 
   getSpawnRequests(room, state) {

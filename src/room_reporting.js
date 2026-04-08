@@ -63,6 +63,7 @@ const PHASE_BUILD_FIELDS = {
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
   ],
   fortification: [
+    { label: "spawn", built: "spawnsBuilt", needed: "spawnsNeeded" },
     { label: "factory", built: "factoryBuilt", needed: "factoryNeeded" },
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
@@ -105,8 +106,8 @@ const PHASE_TASK_PRIORITY = {
   ],
   logistics: ["links", "rcl6"],
   specialization: ["links", "terminal", "mineralContainer", "extractor", "labs", "rcl7"],
-  fortification: ["factory", "links", "labs", "walls", "ramparts", "rcl8"],
-  command: ["spawns", "observer", "powerSpawn", "nuker"],
+  fortification: ["spawns", "factory", "links", "labs", "walls", "ramparts", "rcl8"],
+  command: ["spawns", "links", "observer", "powerSpawn", "nuker"],
 };
 
 const MISSING_SUMMARY = {
@@ -293,6 +294,7 @@ function getPhaseCompletionMissing(phase, buildStatus) {
   missing.push.apply(missing, getPhaseCompletionMissing("specialization", buildStatus));
 
   if (phase === "fortification") {
+    pushIfShort(buildStatus.spawnsBuilt, buildStatus.spawnsNeeded, "spawns", missing);
     pushIfShort(buildStatus.factoryBuilt, buildStatus.factoryNeeded, "factory", missing);
     return uniqueLabels(missing);
   }
@@ -300,6 +302,7 @@ function getPhaseCompletionMissing(phase, buildStatus) {
   missing.push.apply(missing, getPhaseCompletionMissing("fortification", buildStatus));
 
   if (phase === "command") {
+    pushIfShort(buildStatus.linksBuilt, buildStatus.linksNeeded, "links", missing);
     pushIfShort(buildStatus.spawnsBuilt, buildStatus.spawnsNeeded, "spawns", missing);
     pushIfShort(buildStatus.observerBuilt, buildStatus.observerNeeded, "observer", missing);
     pushIfShort(
@@ -515,13 +518,24 @@ function getContainerEnergy(container) {
 
 function getSpawnSummary(room, state) {
   const queue = getQueue(room);
-  const spawn = state.spawns && state.spawns[0] ? state.spawns[0] : null;
+  const spawns = state.spawns || [];
+  const primarySpawn = spawns.length > 0 ? spawns[0] : null;
+  const busySpawns = spawns.filter(function (spawn) {
+    return !!spawn.spawning;
+  });
+  let spawnLabel = "idle";
+
+  if (spawns.length > 1) {
+    spawnLabel = busySpawns.length > 0 ? `${busySpawns.length}/${spawns.length} busy` : "idle";
+  } else if (primarySpawn && primarySpawn.spawning) {
+    spawnLabel = primarySpawn.spawning.name;
+  }
 
   return {
     queue: queue,
     queueSize: queue.length,
     nextQueued: queue.length > 0 ? queue[0].role : "none",
-    spawnLabel: spawn && spawn.spawning ? spawn.spawning.name : "idle",
+    spawnLabel: spawnLabel,
   };
 }
 

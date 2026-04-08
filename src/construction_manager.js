@@ -390,6 +390,13 @@ module.exports = {
       used,
     );
     var mineralContainerPlan = this.buildMineralContainerPlan(context, plan);
+    linkPlan = this.extendLinkPlanWithUtilities(
+      context,
+      plan,
+      linkPlan,
+      terminalPlan,
+      mineralContainerPlan,
+    );
     var extractorPlan = this.buildExtractorPlan(context, plan);
     var labPlan = this.buildLabPlan(
       context,
@@ -461,6 +468,8 @@ module.exports = {
         controller: null,
         sources: [],
         storage: null,
+        terminal: null,
+        mineral: null,
       };
     }
 
@@ -546,7 +555,93 @@ module.exports = {
       controller: this.serializePos(controllerLinkPos),
       sources: sourceLinks,
       storage: this.serializePos(storageLinkPos),
+      terminal: null,
+      mineral: null,
     };
+  },
+
+  extendLinkPlanWithUtilities(context, plan, linkPlan, terminalPlan, mineralContainerPlan) {
+    if (!linkPlan || !linkPlan.enabled) {
+      return linkPlan;
+    }
+
+    var room = context.room;
+    var linkGoals = plan.goals && plan.goals.linkPlanning ? plan.goals.linkPlanning : {};
+    var totalLinks = roadmap.getDesiredLinkCount(
+      room.controller ? room.controller.level : 0,
+    );
+    var used = {};
+
+    this.markSerializedPosUsed(used, linkPlan.controller);
+    this.markSerializedPosUsed(used, linkPlan.storage);
+    if (linkPlan.sources) {
+      for (var i = 0; i < linkPlan.sources.length; i++) {
+        this.markSerializedPosUsed(used, linkPlan.sources[i].pos);
+      }
+    }
+    this.markSerializedPosUsed(used, terminalPlan && terminalPlan.pos);
+    this.markSerializedPosUsed(used, mineralContainerPlan && mineralContainerPlan.pos);
+
+    var plannedCount =
+      (linkPlan.controller ? 1 : 0) +
+      (linkPlan.sources ? linkPlan.sources.length : 0) +
+      (linkPlan.storage ? 1 : 0);
+    var terminalLinkPos = null;
+    var mineralLinkPos = null;
+
+    if (
+      linkGoals.terminalLink &&
+      plannedCount < totalLinks &&
+      terminalPlan &&
+      terminalPlan.pos
+    ) {
+      terminalLinkPos = this.pickOpenPositionNear(
+        context,
+        this.deserializePos(terminalPlan.pos),
+        1,
+        config.CONSTRUCTION.FUTURE_INFRA.TERMINAL_RANGE_FROM_STORAGE || 2,
+        used,
+        STRUCTURE_LINK,
+      );
+
+      if (terminalLinkPos) {
+        plannedCount++;
+      }
+    }
+
+    if (
+      linkGoals.mineralLink &&
+      plannedCount < totalLinks
+    ) {
+      var mineralAnchor = mineralContainerPlan && mineralContainerPlan.pos
+        ? this.deserializePos(mineralContainerPlan.pos)
+        : null;
+
+      if (!mineralAnchor) {
+        var minerals = context.state.minerals || room.find(FIND_MINERALS);
+        mineralAnchor = minerals && minerals.length > 0 ? minerals[0].pos : null;
+      }
+
+      if (mineralAnchor) {
+        mineralLinkPos = this.pickOpenPositionNear(
+          context,
+          mineralAnchor,
+          1,
+          config.CONSTRUCTION.FUTURE_INFRA.LINK_SOURCE_RANGE || 2,
+          used,
+          STRUCTURE_LINK,
+        );
+      }
+    }
+
+    linkPlan.terminal = this.serializePos(terminalLinkPos);
+    linkPlan.mineral = this.serializePos(mineralLinkPos);
+    linkPlan.ready =
+      !!linkPlan.ready &&
+      (!linkGoals.terminalLink || !!terminalLinkPos) &&
+      (!linkGoals.mineralLink || !!mineralLinkPos);
+
+    return linkPlan;
   },
 
   buildTerminalPlan(context, plan, storagePos, linkPlan, used) {
@@ -636,16 +731,19 @@ module.exports = {
 
     var minerals = context.state.minerals || context.room.find(FIND_MINERALS);
     var mineral = minerals && minerals.length > 0 ? minerals[0] : null;
-    var pos = mineral
-      ? this.pickOpenPositionNear(
-          context,
-          mineral.pos,
-          1,
-          1,
-          {},
-          STRUCTURE_CONTAINER,
-        )
-      : null;
+    var existing = context.state.mineralContainer || null;
+    var pos = existing
+      ? existing.pos
+      : mineral
+        ? this.pickOpenPositionNear(
+            context,
+            mineral.pos,
+            1,
+            1,
+            {},
+            STRUCTURE_CONTAINER,
+          )
+        : null;
 
     return {
       enabled: !!mineral,
@@ -773,7 +871,7 @@ module.exports = {
       used,
       {
         structureType: STRUCTURE_OBSERVER,
-        anchorTag: "hub_slot",
+        anchorTag: "late_slot",
         anchorRange:
           config.CONSTRUCTION.FUTURE_INFRA.OBSERVER_RANGE_FROM_ANCHOR || 6,
       },
@@ -788,7 +886,7 @@ module.exports = {
       used,
       {
         structureType: STRUCTURE_NUKER,
-        anchorTag: "hub_slot",
+        anchorTag: "late_slot",
         anchorRange:
           config.CONSTRUCTION.FUTURE_INFRA.NUKER_RANGE_FROM_ANCHOR || 7,
       },
@@ -1478,6 +1576,14 @@ module.exports = {
       candidates.push(linkPlan.storage);
     }
 
+    if (linkPlan.terminal) {
+      candidates.push(linkPlan.terminal);
+    }
+
+    if (linkPlan.mineral) {
+      candidates.push(linkPlan.mineral);
+    }
+
     this.placePlannedStructureList(
       context,
       candidates,
@@ -2017,16 +2123,20 @@ module.exports = {
       if (this.isSiteCapReached(context)) return;
       if (remainingExtensions <= 0) return;
 
-      // Roads first so the stamp network starts forming immediately.
-      this.placeStampRoads(context, stampOrigins[i], "extension_plus_v1");
-
-      // Then place extensions from the same stamp.
-      remainingExtensions -= this.placeStampExtensions(
+      // Prioritize extension sites so low site caps do not let road churn starve
+      // the actual economy unlocks.
+      var placed = this.placeStampExtensions(
         context,
         stampOrigins[i],
         "extension_plus_v1",
         remainingExtensions,
       );
+
+      remainingExtensions -= placed;
+
+      if (!this.isSiteCapReached(context) && placed > 0) {
+        this.placeStampRoads(context, stampOrigins[i], "extension_plus_v1");
+      }
     }
 
     if (remainingExtensions > 0 && !this.isSiteCapReached(context)) {
@@ -2065,28 +2175,56 @@ module.exports = {
   },
 
   placeInternalRoads(context) {
-    var room = context.room;
     var state = context.state;
     var spawn = state.spawns[0];
     if (!spawn) return;
+    var origin = this.getAnchorOrigin(context);
+    if (!origin) return;
 
-    var extensions = state.extensions || [];
-    var towers = state.structuresByType[STRUCTURE_TOWER] || [];
+    var targets = [];
+    var used = {};
 
-    for (var i = 0; i < extensions.length; i++) {
-      if (this.isSiteCapReached(context)) return;
-      this.placeRoadPath(context, spawn.pos, extensions[i].pos, 1);
+    function pushTarget(pos) {
+      if (!pos) return;
+      var key = pos.x + ":" + pos.y;
+      if (used[key]) return;
+      used[key] = true;
+      targets.push(pos);
     }
 
-    for (var j = 0; j < towers.length; j++) {
+    var extensionOrigins = stamps.getExtensionStampOrigins(origin);
+    for (var i = 0; i < extensionOrigins.length; i++) {
+      pushTarget(
+        new RoomPosition(
+          extensionOrigins[i].x,
+          extensionOrigins[i].y,
+          extensionOrigins[i].roomName,
+        ),
+      );
+    }
+
+    var towerOrigins = stamps.getTowerStampOrigins(origin);
+    for (var j = 0; j < towerOrigins.length; j++) {
+      pushTarget(
+        new RoomPosition(
+          towerOrigins[j].x,
+          towerOrigins[j].y,
+          towerOrigins[j].roomName,
+        ),
+      );
+    }
+
+    for (var k = 0; k < targets.length; k++) {
       if (this.isSiteCapReached(context)) return;
-      this.placeRoadPath(context, spawn.pos, towers[j].pos, 1);
+      this.placeRoadPath(context, spawn.pos, targets[k], 1);
     }
   },
 
   placeDefense(context) {
     var plan = this.getDefenseRing(context);
     if (!plan) return;
+    this.pruneOffPlanDefenseStructures(context, plan);
+    this.pruneOffPlanDefenseSites(context, plan);
 
     for (var i = 0; i < plan.gates.length; i++) {
       if (this.isSiteCapReached(context)) return;
@@ -2096,6 +2234,123 @@ module.exports = {
     for (var j = 0; j < plan.walls.length; j++) {
       if (this.isSiteCapReached(context)) return;
       this.tryPlaceStructureSite(context, plan.walls[j], STRUCTURE_WALL);
+    }
+  },
+
+  pruneOffPlanDefenseStructures(context, plan) {
+    if (!context || !plan || !plan.gates || !plan.walls) return;
+
+    var allowed = this.getDefensePlanTypeMap(plan);
+    var structures = context.room.find(FIND_STRUCTURES, {
+      filter: function (structure) {
+        return (
+          structure.structureType === STRUCTURE_RAMPART ||
+          structure.structureType === STRUCTURE_WALL
+        );
+      },
+    });
+
+    for (var i = 0; i < structures.length; i++) {
+      var structure = structures[i];
+      if (!structure || !structure.pos) continue;
+
+      var expectedType = allowed[this.toPosKey(structure.pos)];
+      if (expectedType === structure.structureType) continue;
+      if (typeof structure.destroy !== "function") continue;
+
+      if (structure.destroy() === OK) {
+        this.removeDestroyedDefenseFromContext(context, structure);
+      }
+    }
+  },
+
+  pruneOffPlanDefenseSites(context, plan) {
+    if (!context || !plan || !plan.gates || !plan.walls) return;
+
+    var allowed = this.getDefensePlanTypeMap(plan);
+
+    var defenseTypes = [STRUCTURE_RAMPART, STRUCTURE_WALL];
+    for (var t = 0; t < defenseTypes.length; t++) {
+      var structureType = defenseTypes[t];
+      var sites = this.getSitesByType(context, structureType);
+
+      for (var s = 0; s < sites.length; s++) {
+        var site = sites[s];
+        if (!site || !site.pos) continue;
+        if (allowed[this.toPosKey(site.pos)] === structureType) continue;
+        if (typeof site.remove !== "function") continue;
+
+        if (site.remove() === OK) {
+          this.removeDefenseSiteFromContext(context, site);
+        }
+      }
+    }
+  },
+
+  getDefensePlanTypeMap(plan) {
+    var allowed = {};
+
+    for (var i = 0; i < plan.gates.length; i++) {
+      allowed[this.toPosKey(plan.gates[i])] = STRUCTURE_RAMPART;
+    }
+    for (var j = 0; j < plan.walls.length; j++) {
+      allowed[this.toPosKey(plan.walls[j])] = STRUCTURE_WALL;
+    }
+
+    return allowed;
+  },
+
+  removeDestroyedDefenseFromContext(context, structure) {
+    if (!context || !structure) return;
+
+    if (
+      context.state &&
+      context.state.structuresByType &&
+      context.state.structuresByType[structure.structureType]
+    ) {
+      context.state.structuresByType[structure.structureType] =
+        context.state.structuresByType[structure.structureType].filter(function (entry) {
+          return entry.id !== structure.id;
+        });
+    }
+
+    if (context.buildStatus) {
+      if (
+        structure.structureType === STRUCTURE_RAMPART &&
+        context.buildStatus.rampartsBuilt > 0
+      ) {
+        context.buildStatus.rampartsBuilt -= 1;
+      } else if (
+        structure.structureType === STRUCTURE_WALL &&
+        context.buildStatus.wallsBuilt > 0
+      ) {
+        context.buildStatus.wallsBuilt -= 1;
+      }
+    }
+  },
+
+  removeDefenseSiteFromContext(context, site) {
+    if (!context || !site) return;
+
+    context.siteCount = Math.max(0, context.siteCount - 1);
+
+    if (
+      context.state &&
+      context.state.sitesByType &&
+      context.state.sitesByType[site.structureType]
+    ) {
+      context.state.sitesByType[site.structureType] =
+        context.state.sitesByType[site.structureType].filter(function (entry) {
+          return entry.id !== site.id;
+        });
+    }
+
+    if (context.buildStatus) {
+      if (site.structureType === STRUCTURE_RAMPART && context.buildStatus.rampartsBuilt > 0) {
+        context.buildStatus.rampartsBuilt -= 1;
+      } else if (site.structureType === STRUCTURE_WALL && context.buildStatus.wallsBuilt > 0) {
+        context.buildStatus.wallsBuilt -= 1;
+      }
     }
   },
 
@@ -2338,6 +2593,9 @@ module.exports = {
     if (pos.x < minCoord || pos.x > maxCoord || pos.y < minCoord || pos.y > maxCoord) {
       return false;
     }
+    if (!this.hasBorderSupportWalls(context, pos, structureType)) {
+      return false;
+    }
     if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL && !extractorOnMineral) {
       return false;
     }
@@ -2379,6 +2637,38 @@ module.exports = {
     }
 
     return !blocked;
+  },
+
+  hasBorderSupportWalls(context, pos, structureType) {
+    if (!context || !context.terrain || !pos) return false;
+    if (
+      structureType === STRUCTURE_ROAD ||
+      structureType === STRUCTURE_CONTAINER
+    ) {
+      return true;
+    }
+
+    var borderTiles = this.getBorderSupportTiles(pos.x, pos.y);
+    if (!borderTiles) return true;
+
+    for (var i = 0; i < borderTiles.length; i++) {
+      if (
+        context.terrain.get(borderTiles[i][0], borderTiles[i][1]) !==
+        TERRAIN_MASK_WALL
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  },
+
+  getBorderSupportTiles(x, y) {
+    if (x === 1) return [[0, y - 1], [0, y], [0, y + 1]];
+    if (x === 48) return [[49, y - 1], [49, y], [49, y + 1]];
+    if (y === 1) return [[x - 1, 0], [x, 0], [x + 1, 0]];
+    if (y === 48) return [[x - 1, 49], [x, 49], [x + 1, 49]];
+    return null;
   },
 
   canStructureTypesShareTile(plannedType, existingType) {

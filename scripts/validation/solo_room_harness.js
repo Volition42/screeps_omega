@@ -97,6 +97,17 @@ const CONTROLLER_STRUCTURES = {
   nuker: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 1 },
 };
 
+const PART_COSTS = {
+  [WORK]: 100,
+  [CARRY]: 50,
+  [MOVE]: 50,
+  [ATTACK]: 80,
+  [RANGED_ATTACK]: 150,
+  [HEAL]: 250,
+  [CLAIM]: 600,
+  [TOUGH]: 10,
+};
+
 function collectionValues(collection) {
   if (!collection) return [];
   return Array.isArray(collection) ? collection.slice() : Object.values(collection);
@@ -301,6 +312,16 @@ function createStore(initial, capacities, totalCapacity) {
   });
 
   return store;
+}
+
+function getBodyCost(body) {
+  let cost = 0;
+
+  for (let i = 0; i < body.length; i++) {
+    cost += PART_COSTS[body[i]] || 0;
+  }
+
+  return cost;
 }
 
 class FakeTerrain {
@@ -548,7 +569,25 @@ class FakeRoom {
 
   createConstructionSite(x, y, structureType) {
     const hasMineral = this._minerals.some((item) => item.pos.x === x && item.pos.y === y);
+    const borderTiles = (
+      structureType !== STRUCTURE_ROAD &&
+      structureType !== STRUCTURE_CONTAINER &&
+      (x === 1 || x === 48 || y === 1 || y === 48)
+    )
+      ? (
+        x === 1 ? [[0, y - 1], [0, y], [0, y + 1]]
+          : x === 48 ? [[49, y - 1], [49, y], [49, y + 1]]
+            : y === 1 ? [[x - 1, 0], [x, 0], [x + 1, 0]]
+              : [[x - 1, 49], [x, 49], [x + 1, 49]]
+      )
+      : null;
     if (x < 1 || x > 48 || y < 1 || y > 48) return ERR_INVALID_ARGS;
+    if (
+      borderTiles &&
+      borderTiles.some((tile) => this._terrain.get(tile[0], tile[1]) !== TERRAIN_MASK_WALL)
+    ) {
+      return ERR_INVALID_TARGET;
+    }
     if (
       this._terrain.get(x, y) === TERRAIN_MASK_WALL
       && !(structureType === STRUCTURE_EXTRACTOR && hasMineral)
@@ -573,6 +612,14 @@ class FakeRoom {
       room: this,
       my: true,
       owner: { username: "tester" },
+      remove() {
+        const idx = this.room ? this.room._sites.findIndex((item) => item.id === this.id) : -1;
+        if (idx >= 0) {
+          this.room._sites.splice(idx, 1);
+        }
+        delete currentRuntime.objectsById[this.id];
+        return OK;
+      },
     };
     this.addSite(site);
     return OK;
@@ -589,6 +636,17 @@ function createStructure(structureType, x, y, options) {
     pos: new RoomPosition(x, y, spec.roomName || "sim"),
     hits: spec.hits || 1000,
     hitsMax: spec.hitsMax || spec.hits || 1000,
+    destroy() {
+      const idx = this.room ? this.room._structures.findIndex((item) => item.id === this.id) : -1;
+      if (idx >= 0) {
+        this.room._structures.splice(idx, 1);
+      }
+      if (this.room && this.room.storage && this.room.storage.id === this.id) delete this.room.storage;
+      if (this.room && this.room.terminal && this.room.terminal.id === this.id) delete this.room.terminal;
+      if (this.room && this.room.spawn && this.room.spawn.id === this.id) delete this.room.spawn;
+      delete currentRuntime.objectsById[this.id];
+      return OK;
+    },
   };
 
   if (spec.store || spec.storeCapacity || spec.storeCapacityResource) {
@@ -601,6 +659,68 @@ function createStructure(structureType, x, y, options) {
   if (spec.cooldown !== undefined) structure.cooldown = spec.cooldown;
   if (spec.name) structure.name = spec.name;
   if (spec.level !== undefined) structure.level = spec.level;
+
+  if (structureType === STRUCTURE_SPAWN) {
+    structure.spawning = spec.spawning || null;
+    structure.spawnCreep = function (body, name, options) {
+      if (this.spawning) return ERR_BUSY;
+      if (Game.creeps[name]) return ERR_NAME_EXISTS;
+
+      const room = this.room;
+      const cost = getBodyCost(body || []);
+      if (!room || room.energyAvailable < cost) return ERR_NOT_ENOUGH_ENERGY;
+
+      room.energyAvailable -= cost;
+      if (room.energyAvailable < 0) room.energyAvailable = 0;
+
+      const memory = options && options.memory ? options.memory : {};
+      createCreep(name, memory.role || "worker", this.pos.x, this.pos.y, {
+        roomName: room.name,
+        memory: memory,
+        body: (body || []).map(function (part) {
+          return { type: part };
+        }),
+      });
+
+      this.spawning = {
+        name: name,
+        needTime: (body || []).length * 3,
+        remainingTime: (body || []).length * 3,
+      };
+
+      currentRuntime.spawnEvents.push({
+        spawnId: this.id,
+        spawnName: this.name,
+        role: memory.role || null,
+        name: name,
+      });
+
+      return OK;
+    };
+  }
+
+  if (structureType === STRUCTURE_LINK) {
+    structure.transferEnergy = function (target, amount) {
+      if (!target || !target.store || typeof target.store.getFreeCapacity !== "function") {
+        return ERR_INVALID_TARGET;
+      }
+      if ((this.store[RESOURCE_ENERGY] || 0) <= 0) return ERR_NOT_ENOUGH_ENERGY;
+      if (this.cooldown > 0) return ERR_TIRED;
+      if (target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) return ERR_FULL;
+
+      const transferred = Math.min(
+        this.store[RESOURCE_ENERGY] || 0,
+        amount || this.store[RESOURCE_ENERGY] || 0,
+        target.store.getFreeCapacity(RESOURCE_ENERGY),
+      );
+
+      this.store[RESOURCE_ENERGY] = (this.store[RESOURCE_ENERGY] || 0) - transferred;
+      target.store[RESOURCE_ENERGY] = (target.store[RESOURCE_ENERGY] || 0) + transferred;
+      this.cooldown = 1;
+
+      return OK;
+    };
+  }
 
   return structure;
 }
@@ -685,6 +805,7 @@ function resetRuntime(tick) {
     nextId: 0,
     rooms: {},
     objectsById: {},
+    spawnEvents: [],
   };
 
   global.Memory = { rooms: {}, creeps: {}, runtime: {}, stats: {} };
@@ -910,6 +1031,29 @@ function buildRoomScenario(name, options) {
   return room;
 }
 
+function buildOpenEdgeDefenseTerrainWalls() {
+  const walls = [];
+
+  for (let x = 0; x <= 49; x++) {
+    if (x < 14 || x > 45) walls.push([x, 0]);
+    walls.push([x, 49]);
+  }
+  for (let y = 0; y <= 49; y++) {
+    if (y < 9 || y > 46) walls.push([0, y]);
+    walls.push([49, y]);
+  }
+  for (let y = 1; y <= 8; y++) {
+    for (let x = 0; x < 14 - y; x++) {
+      walls.push([x, y]);
+    }
+    for (let x = 46; x <= 49; x++) {
+      walls.push([x, y]);
+    }
+  }
+
+  return walls;
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
@@ -943,6 +1087,7 @@ const constructionStatus = require("construction_status");
 const roomReporting = require("room_reporting");
 const advancedStructureManager = require("advanced_structure_manager");
 const defenseLayout = require("defense_layout");
+const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
 const roleWorker = require("role_worker");
 const utils = require("utils");
@@ -1191,6 +1336,36 @@ function runFoundationScenario() {
   assert(siteTypes.includes(STRUCTURE_ROAD), "foundation should also place road sites");
 }
 
+function runFoundationExtensionScenario() {
+  const room = buildRoomScenario("VAL_FOUNDATION_EXTENSIONS", {
+    tick: 225,
+    controllerLevel: 2,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 30, y: 26 },
+      { name: "miner1", role: "miner", x: 40, y: 34, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 30, y: 42, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 31, y: 27 },
+    ],
+  });
+
+  const state = roomState.collect(room);
+
+  constructionManager.plan(room, state);
+  const siteTypes = getSiteTypes(room);
+
+  assert(
+    siteTypes.includes(STRUCTURE_EXTENSION),
+    `foundation at RCL2 should place extension sites once the backbone is in place, got ${siteTypes.join(",") || "none"}`,
+  );
+}
+
 function runBootstrapHarvestSpreadScenario() {
   const room = buildRoomScenario("VAL_BOOTSTRAP_SPREAD", {
     tick: 250,
@@ -1242,6 +1417,42 @@ function runBootstrapSpawnCapScenario() {
   assert(
     !requests.some((request) => request.role === "jrworker"),
     "bootstrap at RCL1 should cap the emergency jrworker count instead of endlessly refilling the spawn",
+  );
+}
+
+function runFoundationWorkerHarvestSpreadScenario() {
+  const room = buildRoomScenario("VAL_FOUNDATION_WORKER_SPREAD", {
+    tick: 280,
+    controllerLevel: 2,
+    spawnEnergy: 0,
+    energyAvailable: 0,
+    energyCapacityAvailable: 300,
+    creeps: [
+      { name: "worker1", role: "worker", x: 25, y: 24 },
+      { name: "worker2", role: "worker", x: 25, y: 25 },
+    ],
+  });
+
+  roomState.collect(room);
+  const workers = room.find(FIND_MY_CREEPS);
+
+  const targetA = roleWorker.getWithdrawalTarget(workers[0]);
+  const targetB = roleWorker.getWithdrawalTarget(workers[1]);
+
+  assert(targetA && targetA.id, "expected first worker to choose a withdrawal target");
+  assert(targetB && targetB.id, "expected second worker to choose a withdrawal target");
+  assert(
+    targetA.id !== targetB.id,
+    `expected workers to split across sources, got ${targetA.id} and ${targetB.id}`,
+  );
+
+  const sources = room.find(FIND_SOURCES);
+  sources[0].energy = 0;
+
+  const refreshed = roleWorker.getWithdrawalTarget(workers[0]);
+  assert(
+    refreshed && refreshed.id === sources[1].id,
+    `expected worker to abandon empty source ${sources[0].id} for ${sources[1].id}, got ${refreshed ? refreshed.id : "none"}`,
   );
 }
 
@@ -1316,11 +1527,8 @@ function runDevelopmentScenario() {
   constructionManager.plan(room, state);
   const siteTypes = getSiteTypes(room);
   assert(
-    siteTypes.includes(STRUCTURE_EXTENSION) ||
-      siteTypes.includes(STRUCTURE_TOWER) ||
-      siteTypes.includes(STRUCTURE_STORAGE) ||
-      siteTypes.includes(STRUCTURE_ROAD),
-    "development should place active buildout sites",
+    siteTypes.includes(STRUCTURE_EXTENSION),
+    `development should prioritize extension placement, got ${siteTypes.join(",") || "none"}`,
   );
 }
 
@@ -1383,8 +1591,8 @@ function runStoragePlanningRoadConflictScenario() {
 
   assert(storageSites.length === 1, `expected one storage site, got ${storageSites.length}`);
   assert(
-    storageSites[0].pos.x === 13 && storageSites[0].pos.y === 15,
-    `expected storage at 13,15, got ${storageSites[0].pos.x},${storageSites[0].pos.y}`,
+    storageSites[0].pos.x === 18 && storageSites[0].pos.y === 19,
+    `expected storage at 18,19, got ${storageSites[0].pos.x},${storageSites[0].pos.y}`,
   );
 }
 
@@ -1643,6 +1851,7 @@ function runSpecializationTransitionScenario() {
     extraStructures: [
       { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
       { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
     ],
   });
 
@@ -1841,6 +2050,66 @@ function runWorkerReserveBankingScenario() {
   assert(
     withdrawTarget && withdrawTarget.id !== room.storage.id,
     "expected worker reserve mode to avoid withdrawing from storage while banking",
+  );
+}
+
+function runWorkerSpawnSiteCacheScenario() {
+  const room = buildRoomScenario("VAL_WORKER_SPAWN_SITE_CACHE", {
+    tick: 567,
+    controllerLevel: 7,
+    spawnEnergy: 300,
+    energyAvailable: 2300,
+    energyCapacityAvailable: 2300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      {
+        name: "worker1",
+        role: "worker",
+        x: 24,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 150000;
+
+  const spawnSiteResult = room.createConstructionSite(
+    room.spawn.pos.x + 2,
+    room.spawn.pos.y,
+    STRUCTURE_SPAWN,
+  );
+  assert(spawnSiteResult === OK, `expected second spawn site for worker cache test, got ${spawnSiteResult}`);
+
+  const worker = Game.creeps.worker1;
+  const spawnSite = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_SPAWN;
+    },
+  })[0];
+  assert(spawnSite, "expected cached worker spawn site test to create a spawn site");
+
+  worker.memory.workTargetId = spawnSite.id;
+
+  const cachedTarget = roleWorker.getCachedWorkTarget(worker);
+  assert(
+    cachedTarget && cachedTarget.id === spawnSite.id,
+    `expected cached spawn construction site to remain a valid build target, got ${cachedTarget ? cachedTarget.id : "none"}`,
+  );
+
+  const liveTarget = roleWorker.getWorkTarget(worker, 1);
+  assert(
+    liveTarget && liveTarget.id === spawnSite.id,
+    `expected worker to keep the spawn construction site as work target, got ${liveTarget ? liveTarget.id : "none"}`,
   );
 }
 
@@ -2057,6 +2326,287 @@ function runMineralAccessRoadScenario() {
   );
 }
 
+function runDefenseBorderSupportScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_BORDER_SUPPORT", {
+    tick: 588,
+    controllerLevel: 4,
+    spawnX: 32,
+    spawnY: 26,
+    controllerX: 6,
+    controllerY: 6,
+    sourceAX: 41,
+    sourceAY: 33,
+    sourceBX: 31,
+    sourceBY: 43,
+    mineralX: 11,
+    mineralY: 35,
+    terrainWalls: buildOpenEdgeDefenseTerrainWalls(),
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 32, y: 30, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+    ],
+  });
+
+  const anchor = new RoomPosition(32, 30, room.name);
+  const plan = defenseLayout.getPlanForAnchor(room, anchor);
+
+  assert(plan, "expected defense plan for open-edge room");
+  assert(
+    !plan.walls.some((pos) => pos.y === 1) && !plan.gates.some((pos) => pos.y === 1),
+    `expected border-adjacent top defense tiles to be skipped, got walls=${JSON.stringify(plan.walls)} gates=${JSON.stringify(plan.gates)}`,
+  );
+  assert(
+    plan.gates.some((pos) => pos.x === 31 && pos.y === 2) &&
+      plan.gates.some((pos) => pos.x === 32 && pos.y === 2),
+    `expected repaired top gates at 31,2 and 32,2, got ${JSON.stringify(plan.gates)}`,
+  );
+  assert(
+    room.createConstructionSite(31, 1, STRUCTURE_RAMPART) === ERR_INVALID_TARGET,
+    "expected rampart site on open top border to be rejected",
+  );
+}
+
+function runDefensePlanLockScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_PLAN_LOCK", {
+    tick: 590,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    terrainWalls: buildOpenEdgeDefenseTerrainWalls(),
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+  });
+
+  let state = roomState.collect(room);
+  const initialPlan = defenseLayout.getPlan(room, state);
+
+  assert(initialPlan && initialPlan.gates.length > 0, "expected initial defense gate plan");
+  assert(initialPlan.walls.length > 0, "expected initial defense wall plan");
+
+  const firstGate = initialPlan.gates[0];
+  const placeResult = room.createConstructionSite(
+    firstGate.x,
+    firstGate.y,
+    STRUCTURE_RAMPART,
+  );
+  assert(placeResult === OK, `expected first defense site to place, got ${placeResult}`);
+
+  const storagePos = pickOpenPositions(
+    room,
+    1,
+    [[room.spawn.pos.x - 1, room.spawn.pos.y + 4, 3, 3]],
+  )[0];
+  assert(storagePos, "expected open storage position for defense lock test");
+  room.addStructure(
+    createStructure(STRUCTURE_STORAGE, storagePos[0], storagePos[1], {
+      roomName: room.name,
+      store: { energy: 100000 },
+      storeCapacity: 1000000,
+      hits: 10000,
+      hitsMax: 10000,
+    }),
+  );
+
+  state = roomState.collect(room);
+  const preservedPlan = defenseLayout.getPlan(room, state);
+
+  const initialGateKeys = initialPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
+  const preservedGateKeys = preservedPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
+  const initialWallKeys = initialPlan.walls.map((pos) => `${pos.x}:${pos.y}`).join(",");
+  const preservedWallKeys = preservedPlan.walls.map((pos) => `${pos.x}:${pos.y}`).join(",");
+
+  assert(
+    preservedGateKeys === initialGateKeys,
+    `expected defense gate plan to stay locked after first placement, got ${preservedGateKeys} instead of ${initialGateKeys}`,
+  );
+  assert(
+    preservedWallKeys === initialWallKeys,
+    `expected defense wall plan to stay locked after first placement, got ${preservedWallKeys} instead of ${initialWallKeys}`,
+  );
+
+  const strayWallPos = pickOpenPositions(room, 1, [[room.spawn.pos.x + 7, room.spawn.pos.y + 7, 2, 2]])[0];
+  assert(strayWallPos, "expected stray wall site position");
+  const strayCreate = room.createConstructionSite(
+    strayWallPos[0],
+    strayWallPos[1],
+    STRUCTURE_WALL,
+  );
+  assert(strayCreate === OK, `expected stray wall site to place for cleanup test, got ${strayCreate}`);
+
+  state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+  constructionManager.placeDefense(context);
+
+  const strayStillExists = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return (
+        site.structureType === STRUCTURE_WALL &&
+        site.pos.x === strayWallPos[0] &&
+        site.pos.y === strayWallPos[1]
+      );
+    },
+  }).length > 0;
+  assert(!strayStillExists, "expected off-plan wall site to be removed once defense plan is locked");
+}
+
+function runDefenseConflictCleanupScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_CONFLICT_CLEANUP", {
+    tick: 595,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    terrainWalls: buildOpenEdgeDefenseTerrainWalls(),
+  });
+
+  let state = roomState.collect(room);
+  const initialPlan = defenseLayout.getPlan(room, state);
+  assert(initialPlan && initialPlan.gates.length > 0, "expected initial defense plan");
+
+  const initialGate = initialPlan.gates[0];
+  room.addStructure(
+    createStructure(STRUCTURE_RAMPART, initialGate.x, initialGate.y, {
+      roomName: room.name,
+      hits: 6000,
+      hitsMax: 6000,
+    }),
+  );
+
+  const storagePos = pickOpenPositions(
+    room,
+    1,
+    [[room.spawn.pos.x - 1, room.spawn.pos.y + 4, 3, 3]],
+  )[0];
+  assert(storagePos, "expected open storage position for defense cleanup test");
+  room.addStructure(
+    createStructure(STRUCTURE_STORAGE, storagePos[0], storagePos[1], {
+      roomName: room.name,
+      store: { energy: 50000 },
+      storeCapacity: 1000000,
+      hits: 10000,
+      hitsMax: 10000,
+    }),
+  );
+
+  const storagePlan = defenseLayout.getPlanForAnchor(room, room.storage.pos);
+  assert(storagePlan && storagePlan.gates.length > 0, "expected storage defense plan");
+
+  const initialTiles = {};
+  for (let i = 0; i < initialPlan.gates.length; i++) {
+    initialTiles[`${initialPlan.gates[i].x}:${initialPlan.gates[i].y}`] = STRUCTURE_RAMPART;
+  }
+  for (let j = 0; j < initialPlan.walls.length; j++) {
+    initialTiles[`${initialPlan.walls[j].x}:${initialPlan.walls[j].y}`] = STRUCTURE_WALL;
+  }
+
+  let storageConflict = null;
+  let storageConflictType = null;
+  for (let k = 0; k < storagePlan.gates.length; k++) {
+    const key = `${storagePlan.gates[k].x}:${storagePlan.gates[k].y}`;
+    if (initialTiles[key] !== STRUCTURE_RAMPART) {
+      storageConflict = storagePlan.gates[k];
+      storageConflictType = STRUCTURE_RAMPART;
+      break;
+    }
+  }
+  if (!storageConflict) {
+    for (let m = 0; m < storagePlan.walls.length; m++) {
+      const key = `${storagePlan.walls[m].x}:${storagePlan.walls[m].y}`;
+      if (initialTiles[key] !== STRUCTURE_WALL) {
+        storageConflict = storagePlan.walls[m];
+        storageConflictType = STRUCTURE_WALL;
+        break;
+      }
+    }
+  }
+  assert(storageConflict, "expected a storage-conflict defense tile for cleanup test");
+
+  const storageConflictKey = `${storageConflict.x}:${storageConflict.y}`;
+  const originalConflictType = initialTiles[storageConflictKey] || null;
+
+  if (originalConflictType) {
+    room.addStructure(
+      createStructure(originalConflictType, storageConflict.x, storageConflict.y, {
+        roomName: room.name,
+        hits: 4500,
+        hitsMax: 4500,
+      }),
+    );
+  }
+
+  room.addStructure(
+    createStructure(storageConflictType, storageConflict.x, storageConflict.y, {
+      roomName: room.name,
+      hits: 1500,
+      hitsMax: 1500,
+    }),
+  );
+  room.addStructure(
+    createStructure(STRUCTURE_WALL, initialGate.x, initialGate.y, {
+      roomName: room.name,
+      hits: 500,
+      hitsMax: 500,
+    }),
+  );
+
+  state = roomState.collect(room);
+  const resolvedPlan = defenseLayout.getPlan(room, state);
+  const initialGateKeys = initialPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
+  const resolvedGateKeys = resolvedPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
+
+  assert(
+    resolvedGateKeys === initialGateKeys,
+    `expected cleanup to keep the original defense gate plan, got ${resolvedGateKeys} instead of ${initialGateKeys}`,
+  );
+
+  const context = constructionManager.createPlanContext(room, state);
+  constructionManager.placeDefense(context);
+
+  const overlappingWalls = room.lookForAt(LOOK_STRUCTURES, initialGate.x, initialGate.y)
+    .filter((structure) => structure.structureType === STRUCTURE_WALL);
+  const overlappingRamparts = room.lookForAt(LOOK_STRUCTURES, initialGate.x, initialGate.y)
+    .filter((structure) => structure.structureType === STRUCTURE_RAMPART);
+  assert(
+    overlappingWalls.length === 0,
+    "expected later wall overlap on the original gate tile to be destroyed",
+  );
+  assert(
+    overlappingRamparts.length === 1,
+    "expected the original gate rampart to remain after cleanup",
+  );
+
+  const strayDefense = room.lookForAt(LOOK_STRUCTURES, storageConflict.x, storageConflict.y)
+    .filter((structure) => (
+      structure.structureType === STRUCTURE_WALL ||
+      structure.structureType === STRUCTURE_RAMPART
+    ));
+  if (originalConflictType) {
+    assert(
+      strayDefense.length === 1 && strayDefense[0].structureType === originalConflictType,
+      "expected the original defense type to remain on the conflicting tile",
+    );
+  } else {
+    assert(
+      strayDefense.length === 0,
+      "expected storage-driven stray defense structure to be destroyed",
+    );
+  }
+}
+
 function runFortificationScenario() {
   const room = buildRoomScenario("VAL_FORTIFICATION", {
     tick: 600,
@@ -2098,12 +2648,26 @@ function runFortificationScenario() {
 
   const state = roomState.collect(room);
   assert(state.phase === "fortification", `expected fortification, got ${state.phase}`);
+  assert(
+    state.buildStatus.spawnsNeeded === 2,
+    `expected fortification to target two spawns at RCL7, got ${state.buildStatus.spawnsNeeded}`,
+  );
+  assert(
+    !state.buildStatus.fortificationComplete,
+    "expected fortification to stay incomplete until the second spawn is built",
+  );
+
+  const report = roomReporting.build(room, state, { updateProgress: false });
+  assert(
+    report.nextTask === "place or finish the next spawn",
+    `expected fortification next task to point at spawn expansion, got ${report.nextTask}`,
+  );
 
   constructionManager.plan(room, state);
   const siteTypes = getSiteTypes(room);
   assert(
-    siteTypes.includes(STRUCTURE_FACTORY),
-    `fortification should place a factory site, got sites: ${siteTypes.join(",") || "none"}`,
+    siteTypes.includes(STRUCTURE_SPAWN),
+    `fortification should place a second spawn site, got sites: ${siteTypes.join(",") || "none"}`,
   );
 }
 
@@ -2132,6 +2696,7 @@ function runRcl7UpgradeTransitionScenario() {
       { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
       { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
       { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
       { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
       { type: STRUCTURE_LAB, x: 27, y: 32, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
       { type: STRUCTURE_LAB, x: 28, y: 33, options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 } },
@@ -2165,13 +2730,17 @@ function runRcl7UpgradeTransitionScenario() {
     state.buildStatus.linksNeeded === 4,
     `expected fortification to add the second source link target at RCL7, got ${state.buildStatus.linksNeeded}`,
   );
+  assert(
+    state.buildStatus.spawnsNeeded === 2,
+    `expected fortification to target a second spawn at RCL7, got ${state.buildStatus.spawnsNeeded}`,
+  );
 
   Game.time += config.CONSTRUCTION.PLAN_INTERVAL || 50;
   constructionManager.plan(room, state);
   const siteTypes = getSiteTypes(room);
   assert(
-    siteTypes.includes(STRUCTURE_FACTORY),
-    `RCL7 transition should place a factory site after the next planning cycle, got sites: ${siteTypes.join(",") || "none"}`,
+    siteTypes.includes(STRUCTURE_SPAWN),
+    `RCL7 transition should place a second spawn site after the next planning cycle, got sites: ${siteTypes.join(",") || "none"}`,
   );
 }
 
@@ -2436,6 +3005,7 @@ function runCommandScenario() {
       { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
     ],
     extraStructures: [
+      { type: STRUCTURE_SPAWN, x: 27, y: 25, options: { name: "Spawn2", store: { energy: 300 }, storeCapacityResource: { energy: 300 }, hits: 5000, hitsMax: 5000 } },
       { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 30000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
       { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
       { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
@@ -2463,6 +3033,7 @@ function runCommandScenario() {
 
   assert(state.phase === "command", `expected command, got ${state.phase}`);
   assert(status.spawnsNeeded === 3, "command should need all three spawns");
+  assert(status.linksNeeded === 6, `command should unlock all six links, got ${status.linksNeeded}`);
   assert(status.observerNeeded === 1, "command should need observer");
   assert(status.powerSpawnNeeded === 1, "command should need power spawn");
   assert(status.nukerNeeded === 1, "command should need nuker");
@@ -2472,7 +3043,7 @@ function runCommandScenario() {
     `expected command next task to point at spawns, got ${report.nextTask}`,
   );
   assert(
-    report.sections.build[2].indexOf("spawn 1/3") !== -1,
+    report.sections.build[2].indexOf("spawn 2/3") !== -1,
     `expected command build line to include spawn progress, got ${report.sections.build[2]}`,
   );
 
@@ -2484,6 +3055,175 @@ function runCommandScenario() {
       siteTypes.includes(STRUCTURE_POWER_SPAWN) ||
       siteTypes.includes(STRUCTURE_NUKER),
     `command should place late-game command structure sites, got sites: ${siteTypes.join(",") || "none"}`,
+  );
+}
+
+function runCommandUtilityLinksScenario() {
+  const room = buildRoomScenario("VAL_COMMAND_LINKS", {
+    tick: 720,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 12900,
+    energyCapacityAvailable: 12900,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_SPAWN, x: 27, y: 25, options: { name: "Spawn2", store: { energy: 300 }, storeCapacityResource: { energy: 300 }, hits: 5000, hitsMax: 5000 } },
+      { type: STRUCTURE_SPAWN, x: 23, y: 25, options: { name: "Spawn3", store: { energy: 300 }, storeCapacityResource: { energy: 300 }, hits: 5000, hitsMax: 5000 } },
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 30000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_FACTORY, x: 27, y: 30, options: { store: { energy: 0 }, storeCapacity: 50000, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      { type: STRUCTURE_OBSERVER, x: 25, y: 19, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_POWER_SPAWN, x: 27, y: 31, options: { store: { energy: 0, power: 0 }, storeCapacity: 5000, hits: 5000, hitsMax: 5000 } },
+      { type: STRUCTURE_NUKER, x: 23, y: 22, options: { store: { energy: 0, G: 0 }, storeCapacity: 5000, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 400 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 800 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 800 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000, cooldown: 0 } },
+      ...Array.from({ length: 10 }, function (_, index) {
+        return {
+          type: STRUCTURE_LAB,
+          x: 27 + (index % 3),
+          y: 33 + Math.floor(index / 3),
+          options: { store: { energy: 1000 }, storeCapacity: 5000, storeCapacityResource: { energy: 2000 }, hits: 500, hitsMax: 500 },
+        };
+      }),
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 200000;
+
+  let state = roomState.collect(room);
+  let status = constructionStatus.getStatus(room, state);
+  assert(state.phase === "command", `expected command utility-link room to be command, got ${state.phase}`);
+  assert(status.linksNeeded === 6, `expected command utility-link room to need six links, got ${status.linksNeeded}`);
+
+  let report = roomReporting.build(room, state, { updateProgress: false });
+  assert(
+    report.nextTask === "finish planned links",
+    `expected command utility-link next task to point at links, got ${report.nextTask}`,
+  );
+  assert(
+    report.sections.build[2].indexOf("links 4/6") !== -1,
+    `expected command utility-link build line to show 4/6 links, got ${report.sections.build[2]}`,
+  );
+
+  constructionManager.plan(room, state);
+  let linkSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_LINK;
+    },
+  });
+  assert(
+    linkSites.length >= 2,
+    `expected command utility-link plan to place two link sites, got ${linkSites.length}`,
+  );
+
+  for (let i = 0; i < linkSites.length; i++) {
+    room.addStructure(
+      createStructure(STRUCTURE_LINK, linkSites[i].pos.x, linkSites[i].pos.y, {
+        roomName: room.name,
+        store: { energy: 0 },
+        storeCapacityResource: { energy: 800 },
+        hits: 1000,
+        hitsMax: 1000,
+        cooldown: 0,
+      }),
+    );
+    linkSites[i].remove();
+  }
+
+  state = roomState.collect(room);
+  status = constructionStatus.getStatus(room, state);
+  assert(status.linksBuilt >= 6, `expected command utility-link room to build six links, got ${status.linksBuilt}`);
+  assert(state.infrastructure.hasTerminalLink, "expected terminal utility link to be classified");
+  assert(state.infrastructure.hasMineralLink, "expected mineral utility link to be classified");
+
+  const summary = linkManager.run(room, state);
+  assert(
+    summary.storageToTerminal + summary.storageToMineral + summary.sourceToStorage + summary.sourceToController >= 1,
+    `expected command utility-link runtime to perform at least one transfer, got ${JSON.stringify(summary)}`,
+  );
+}
+
+function runMultiSpawnBalancingScenario() {
+  const room = buildRoomScenario("VAL_MULTI_SPAWN_BALANCE", {
+    tick: 740,
+    controllerLevel: 7,
+    spawnEnergy: 300,
+    energyAvailable: 2300,
+    energyCapacityAvailable: 2300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24, memory: { sourceId: "source1" } },
+      { name: "hauler2", role: "hauler", x: 26, y: 24, memory: { sourceId: "source2" } },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_SPAWN, x: 27, y: 25, options: { name: "Spawn2", store: { energy: 300 }, storeCapacityResource: { energy: 300 }, hits: 5000, hitsMax: 5000 } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 50000;
+
+  const state = roomState.collect(room);
+  state.defense = {
+    activeThreats: [
+      {
+        roomName: room.name,
+        desiredDefenders: 1,
+        priority: 200,
+        threatLevel: 1,
+        threatScore: 10,
+        responseRole: "defender",
+        spawnCooldown: 0,
+      },
+    ],
+  };
+
+  spawnManager.run(room, state);
+
+  assert(
+    currentRuntime.spawnEvents.length === 2,
+    `expected both spawns to be used in one tick, got ${currentRuntime.spawnEvents.length}`,
+  );
+
+  const roles = currentRuntime.spawnEvents.map(function (event) {
+    return event.role;
+  });
+  const spawnIds = currentRuntime.spawnEvents.map(function (event) {
+    return event.spawnId;
+  });
+  assert(
+    roles.includes("defender"),
+    `expected one defense spawn assignment, got ${roles.join(",") || "none"}`,
+  );
+  assert(
+    roles.some(function (role) {
+      return role !== "defender";
+    }),
+    `expected one non-defense spawn assignment, got ${roles.join(",") || "none"}`,
+  );
+  assert(
+    new Set(spawnIds).size === 2,
+    `expected both idle spawns to participate, got ${spawnIds.join(",") || "none"}`,
   );
 }
 
@@ -2534,8 +3274,10 @@ function main() {
   const scenarios = [
     ["bootstrap", runBootstrapScenario],
     ["foundation", runFoundationScenario],
+    ["foundation_extensions", runFoundationExtensionScenario],
     ["bootstrap_harvest_spread", runBootstrapHarvestSpreadScenario],
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
+    ["foundation_worker_harvest_spread", runFoundationWorkerHarvestSpreadScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
     ["development_storage_gate", runDevelopmentStorageGateScenario],
@@ -2549,13 +3291,19 @@ function main() {
     ["mineral_ops", runMineralOpsScenario],
     ["upgrader_reserve", runUpgraderReserveScenario],
     ["worker_reserve_banking", runWorkerReserveBankingScenario],
+    ["worker_spawn_site_cache", runWorkerSpawnSiteCacheScenario],
     ["tower_banking_threshold", runTowerBankingThresholdScenario],
     ["mineral_access_road", runMineralAccessRoadScenario],
+    ["defense_border_support", runDefenseBorderSupportScenario],
+    ["defense_plan_lock", runDefensePlanLockScenario],
+    ["defense_conflict_cleanup", runDefenseConflictCleanupScenario],
     ["fortification", runFortificationScenario],
     ["rcl7_transition", runRcl7UpgradeTransitionScenario],
     ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],
     ["legacy_tower_fallback", runLegacyTowerFallbackScenario],
     ["command", runCommandScenario],
+    ["command_links", runCommandUtilityLinksScenario],
+    ["multi_spawn_balance", runMultiSpawnBalancingScenario],
     ["factory_ops", runFactoryOpsScenario],
   ];
 

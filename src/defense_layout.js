@@ -1,6 +1,6 @@
 const config = require("config");
 
-var PLANNER_VERSION = 3;
+var PLANNER_VERSION = 5;
 var cachedTick = null;
 var cachedPlansByRoom = {};
 
@@ -33,42 +33,61 @@ module.exports = {
 
     var memory = this.getRoomMemory(room);
     var signature = this.getPlanSignature(room, state, spawn);
+    var preserveExistingPlan = this.shouldPreserveExistingPlan(state, memory);
+    var storedPlan = memory.plan
+      ? this.normalizePlan(
+          room,
+          state,
+          spawn,
+          this.deserializePlan(room.name, memory.plan),
+        )
+      : null;
+
+    if (storedPlan) {
+      memory.plan = this.serializePlan(storedPlan);
+    }
+
+    if (memory.plan) {
+      if (preserveExistingPlan) {
+        var canonicalPlan = this.selectCanonicalPlan(
+          room,
+          state,
+          spawn,
+          memory,
+          storedPlan,
+        );
+        if (!canonicalPlan) {
+          cachedPlansByRoom[room.name] = null;
+          return null;
+        }
+
+        memory.version = PLANNER_VERSION;
+        memory.signature = signature;
+        memory.plan = this.serializePlan(canonicalPlan);
+        memory.locked = true;
+        cachedPlansByRoom[room.name] = canonicalPlan;
+        return cachedPlansByRoom[room.name];
+      }
+    }
 
     if (
       memory.version === PLANNER_VERSION &&
       memory.signature === signature &&
-      memory.plan
+      storedPlan
     ) {
-      cachedPlansByRoom[room.name] = this.deserializePlan(room.name, memory.plan);
+      cachedPlansByRoom[room.name] = storedPlan;
       return cachedPlansByRoom[room.name];
     }
 
-    var terrain = room.getTerrain();
     var anchor = this.getTrafficAnchor(room, state, spawn);
-    var passages = this.getExitPassages(room.name, terrain);
-    var wallMap = Object.create(null);
-    var gateMap = Object.create(null);
-
-    for (var i = 0; i < passages.length; i++) {
-      var choke = this.getBestPassageChoke(
-        room.name,
-        terrain,
-        passages[i],
-        anchor,
-      );
-
-      if (!choke) continue;
-      this.mergeBarrierMaps(wallMap, gateMap, choke);
-    }
-
-    var plan = {
-      walls: this.toSortedPositions(room.name, wallMap),
-      gates: this.toSortedPositions(room.name, gateMap),
-    };
+    var plan = this.buildPlan(room, anchor);
 
     memory.version = PLANNER_VERSION;
     memory.signature = signature;
     memory.plan = this.serializePlan(plan);
+    if (preserveExistingPlan) {
+      memory.locked = true;
+    }
     cachedPlansByRoom[room.name] = plan;
     return plan;
   },
@@ -81,6 +100,31 @@ module.exports = {
     }
 
     return Memory.rooms[room.name].defenseLayout;
+  },
+
+  shouldPreserveExistingPlan(state, memory) {
+    if (!memory || !memory.plan) return false;
+    if (memory.locked) return true;
+    if (!state) return false;
+
+    var builtWalls =
+      state.structuresByType && state.structuresByType[STRUCTURE_WALL]
+        ? state.structuresByType[STRUCTURE_WALL].length
+        : 0;
+    var builtRamparts =
+      state.structuresByType && state.structuresByType[STRUCTURE_RAMPART]
+        ? state.structuresByType[STRUCTURE_RAMPART].length
+        : 0;
+    var wallSites =
+      state.sitesByType && state.sitesByType[STRUCTURE_WALL]
+        ? state.sitesByType[STRUCTURE_WALL].length
+        : 0;
+    var rampartSites =
+      state.sitesByType && state.sitesByType[STRUCTURE_RAMPART]
+        ? state.sitesByType[STRUCTURE_RAMPART].length
+        : 0;
+
+    return builtWalls + builtRamparts + wallSites + rampartSites > 0;
   },
 
   getPlanSignature(room, state, spawn) {
@@ -114,6 +158,217 @@ module.exports = {
     if (storageSites.length > 0) return storageSites[0].pos;
 
     return spawn ? spawn.pos : null;
+  },
+
+  getPlanForAnchor(room, anchor) {
+    if (!room || !anchor) return null;
+
+    return this.buildPlan(room, anchor);
+  },
+
+  buildPlan(room, anchor) {
+    if (!room || !anchor) return null;
+
+    var terrain = room.getTerrain();
+    var passages = this.getExitPassages(room.name, terrain);
+    var wallMap = Object.create(null);
+    var gateMap = Object.create(null);
+
+    for (var i = 0; i < passages.length; i++) {
+      var choke = this.getBestPassageChoke(
+        room.name,
+        terrain,
+        passages[i],
+        anchor,
+      );
+
+      if (!choke) continue;
+      this.mergeBarrierMaps(wallMap, gateMap, choke);
+    }
+
+    return {
+      walls: this.toSortedPositions(room.name, wallMap),
+      gates: this.toSortedPositions(room.name, gateMap),
+    };
+  },
+
+  selectCanonicalPlan(room, state, spawn, memory, storedPlan) {
+    if (!room || !spawn) return null;
+
+    var candidates = [];
+    var seen = Object.create(null);
+    var currentAnchor = this.getTrafficAnchor(room, state, spawn);
+
+    this.addPlanCandidate(
+      candidates,
+      seen,
+      "spawn",
+      this.buildPlan(room, spawn.pos),
+      2,
+    );
+    this.addPlanCandidate(
+      candidates,
+      seen,
+      "stored",
+      storedPlan || this.deserializePlan(room.name, memory && memory.plan),
+      1,
+    );
+    this.addPlanCandidate(
+      candidates,
+      seen,
+      "traffic",
+      this.buildPlan(room, currentAnchor),
+      0,
+    );
+
+    if (candidates.length === 0) return null;
+
+    var footprint = this.getDefenseFootprint(state);
+    var best = candidates[0];
+    var bestScore = this.scorePlanAgainstFootprint(best.plan, footprint);
+
+    for (var i = 1; i < candidates.length; i++) {
+      var score = this.scorePlanAgainstFootprint(candidates[i].plan, footprint);
+
+      if (score > bestScore) {
+        best = candidates[i];
+        bestScore = score;
+        continue;
+      }
+
+      if (score === bestScore && candidates[i].priority > best.priority) {
+        best = candidates[i];
+      }
+    }
+
+    return best.plan;
+  },
+
+  addPlanCandidate(candidates, seen, label, plan, priority) {
+    if (!plan) return;
+
+    var key = this.getPlanKey(plan);
+    if (seen[key]) return;
+    seen[key] = true;
+
+    candidates.push({
+      label: label,
+      plan: plan,
+      priority: priority || 0,
+    });
+  },
+
+  getPlanKey(plan) {
+    if (!plan) return "null";
+
+    return [
+      this.serializePositionList(plan.walls)
+        .map(function (pos) {
+          return pos.x + ":" + pos.y;
+        })
+        .join(","),
+      this.serializePositionList(plan.gates)
+        .map(function (pos) {
+          return pos.x + ":" + pos.y;
+        })
+        .join(","),
+    ].join("|");
+  },
+
+  getDefenseFootprint(state) {
+    var footprint = [];
+    var builtWalls =
+      state && state.structuresByType && state.structuresByType[STRUCTURE_WALL]
+        ? state.structuresByType[STRUCTURE_WALL]
+        : [];
+    var builtRamparts =
+      state && state.structuresByType && state.structuresByType[STRUCTURE_RAMPART]
+        ? state.structuresByType[STRUCTURE_RAMPART]
+        : [];
+    var wallSites =
+      state && state.sitesByType && state.sitesByType[STRUCTURE_WALL]
+        ? state.sitesByType[STRUCTURE_WALL]
+        : [];
+    var rampartSites =
+      state && state.sitesByType && state.sitesByType[STRUCTURE_RAMPART]
+        ? state.sitesByType[STRUCTURE_RAMPART]
+        : [];
+
+    this.pushDefenseFootprintEntries(footprint, builtWalls, STRUCTURE_WALL, false);
+    this.pushDefenseFootprintEntries(
+      footprint,
+      builtRamparts,
+      STRUCTURE_RAMPART,
+      false,
+    );
+    this.pushDefenseFootprintEntries(footprint, wallSites, STRUCTURE_WALL, true);
+    this.pushDefenseFootprintEntries(
+      footprint,
+      rampartSites,
+      STRUCTURE_RAMPART,
+      true,
+    );
+
+    return footprint;
+  },
+
+  pushDefenseFootprintEntries(footprint, entries, structureType, isSite) {
+    if (!entries || !entries.length) return;
+
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry || !entry.pos) continue;
+
+      footprint.push({
+        x: entry.pos.x,
+        y: entry.pos.y,
+        structureType: structureType,
+        isSite: !!isSite,
+        hits: entry.hits || 0,
+      });
+    }
+  },
+
+  scorePlanAgainstFootprint(plan, footprint) {
+    if (!plan) return -1;
+    if (!footprint || footprint.length === 0) return 0;
+
+    var typeByKey = this.getPlanTypeMap(plan);
+    var score = 0;
+
+    for (var i = 0; i < footprint.length; i++) {
+      var entry = footprint[i];
+      var expectedType = typeByKey[this.toKey(entry.x, entry.y)];
+      if (!expectedType) continue;
+
+      if (entry.isSite) {
+        score += expectedType === entry.structureType ? 100 : 10;
+        continue;
+      }
+
+      if (expectedType === entry.structureType) {
+        score += 10000 + Math.min(entry.hits || 0, 50000);
+      } else {
+        score += 1000 + Math.floor(Math.min(entry.hits || 0, 50000) / 10);
+      }
+    }
+
+    return score;
+  },
+
+  getPlanTypeMap(plan) {
+    var typeByKey = Object.create(null);
+
+    if (!plan) return typeByKey;
+
+    for (var i = 0; i < plan.walls.length; i++) {
+      typeByKey[this.toKey(plan.walls[i].x, plan.walls[i].y)] = STRUCTURE_WALL;
+    }
+    for (var j = 0; j < plan.gates.length; j++) {
+      typeByKey[this.toKey(plan.gates[j].x, plan.gates[j].y)] = STRUCTURE_RAMPART;
+    }
+
+    return typeByKey;
   },
 
   getExitPassages(roomName, terrain) {
@@ -199,13 +454,15 @@ module.exports = {
 
       var gatePair = this.pickGatePair(frontier.tiles, passage.side, preferredCoord);
       if (!gatePair) continue;
+      var walls = this.getWallTiles(frontier.tiles, gatePair);
+      if (!this.isBarrierBuildable(terrain, walls, gatePair)) continue;
 
       var score = this.scoreChoke(frontier.tiles.length, gatePair, passage.side, preferredCoord, depth);
 
       if (!best || score < best.score) {
         best = {
           score: score,
-          walls: this.getWallTiles(frontier.tiles, gatePair),
+          walls: walls,
           gates: gatePair,
         };
       }
@@ -371,6 +628,134 @@ module.exports = {
       gateMap[gateKey] = gate;
       delete wallMap[gateKey];
     }
+  },
+
+  normalizePlan(room, state, spawn, plan) {
+    if (!room || !plan) return plan;
+
+    var terrain = room.getTerrain();
+    var passages = this.getExitPassages(room.name, terrain);
+    var anchor = this.getTrafficAnchor(room, state, spawn);
+    var wallMap = Object.create(null);
+    var gateMap = Object.create(null);
+    var key;
+
+    for (var i = 0; i < plan.walls.length; i++) {
+      wallMap[this.toKey(plan.walls[i].x, plan.walls[i].y)] = plan.walls[i];
+    }
+    for (var j = 0; j < plan.gates.length; j++) {
+      gateMap[this.toKey(plan.gates[j].x, plan.gates[j].y)] = plan.gates[j];
+    }
+
+    for (var p = 0; p < passages.length; p++) {
+      var side = passages[p].side;
+      var hasInvalidEntries = false;
+
+      for (key in wallMap) {
+        if (!wallMap[key] || !this.isPositionOnSide(wallMap[key], side)) continue;
+        if (!this.isDefensePositionBuildable(terrain, wallMap[key])) {
+          hasInvalidEntries = true;
+          break;
+        }
+      }
+
+      if (!hasInvalidEntries) {
+        for (key in gateMap) {
+          if (!gateMap[key] || !this.isPositionOnSide(gateMap[key], side)) continue;
+          if (!this.isDefensePositionBuildable(terrain, gateMap[key])) {
+            hasInvalidEntries = true;
+            break;
+          }
+        }
+      }
+
+      if (!hasInvalidEntries) continue;
+
+      for (key in wallMap) {
+        if (wallMap[key] && this.isPositionOnSide(wallMap[key], side)) {
+          delete wallMap[key];
+        }
+      }
+      for (key in gateMap) {
+        if (gateMap[key] && this.isPositionOnSide(gateMap[key], side)) {
+          delete gateMap[key];
+        }
+      }
+
+      var repairedChoke = this.getBestPassageChoke(
+        room.name,
+        terrain,
+        passages[p],
+        anchor,
+      );
+      if (repairedChoke) {
+        this.mergeBarrierMaps(wallMap, gateMap, repairedChoke);
+      }
+    }
+
+    return {
+      walls: this.toSortedPositions(room.name, wallMap),
+      gates: this.toSortedPositions(room.name, gateMap),
+    };
+  },
+
+  isBarrierBuildable(terrain, walls, gates) {
+    var positions = [];
+    if (walls && walls.length) positions = positions.concat(walls);
+    if (gates && gates.length) positions = positions.concat(gates);
+
+    for (var i = 0; i < positions.length; i++) {
+      if (!this.isDefensePositionBuildable(terrain, positions[i])) return false;
+    }
+
+    return true;
+  },
+
+  isDefensePositionBuildable(terrain, pos) {
+    if (!terrain || !pos) return false;
+    if (pos.x <= 0 || pos.y <= 0 || pos.x >= 49 || pos.y >= 49) return false;
+    if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) return false;
+
+    var borderTiles = this.getBorderSupportTiles(pos.x, pos.y);
+    if (!borderTiles) return true;
+
+    for (var i = 0; i < borderTiles.length; i++) {
+      if (terrain.get(borderTiles[i][0], borderTiles[i][1]) !== TERRAIN_MASK_WALL) {
+        return false;
+      }
+    }
+
+    return true;
+  },
+
+  getBorderSupportTiles(x, y) {
+    if (x === 1) return [[0, y - 1], [0, y], [0, y + 1]];
+    if (x === 48) return [[49, y - 1], [49, y], [49, y + 1]];
+    if (y === 1) return [[x - 1, 0], [x, 0], [x + 1, 0]];
+    if (y === 48) return [[x - 1, 49], [x, 49], [x + 1, 49]];
+    return null;
+  },
+
+  isPositionOnSide(pos, side) {
+    return !!pos && this.getPrimarySide(pos) === side;
+  },
+
+  getPrimarySide(pos) {
+    var distances = [
+      { side: "top", distance: pos.y },
+      { side: "right", distance: 49 - pos.x },
+      { side: "bottom", distance: 49 - pos.y },
+      { side: "left", distance: pos.x },
+    ];
+    var best = distances[0];
+
+    for (var i = 1; i < distances.length; i++) {
+      if (distances[i].distance < best.distance) {
+        best = distances[i];
+      }
+    }
+
+    return best.side;
   },
 
   toSortedPositions(roomName, positionMap) {

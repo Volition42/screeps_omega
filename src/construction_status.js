@@ -165,6 +165,8 @@ module.exports = {
       controllerLinksNeeded: linkGoal.controller,
       sourceLinksNeeded: linkGoal.source,
       storageLinksNeeded: linkGoal.storage,
+      terminalLinksNeeded: linkGoal.terminal,
+      mineralLinksNeeded: linkGoal.mineral,
 
       terminalBuilt: terminalBuilt,
       terminalNeeded: terminalNeeded,
@@ -237,10 +239,10 @@ module.exports = {
       status.labsBuilt >= status.labsNeeded;
     status.fortificationComplete =
       status.specializationComplete &&
+      status.spawnsBuilt >= status.spawnsNeeded &&
       status.factoryBuilt >= status.factoryNeeded;
     status.commandComplete =
       status.fortificationComplete &&
-      status.spawnsBuilt >= status.spawnsNeeded &&
       status.observerBuilt >= status.observerNeeded &&
       status.powerSpawnBuilt >= status.powerSpawnNeeded &&
       status.nukerBuilt >= status.nukerNeeded;
@@ -298,6 +300,8 @@ module.exports = {
       controllerLinksNeeded: 0,
       sourceLinksNeeded: 0,
       storageLinksNeeded: 0,
+      terminalLinksNeeded: 0,
+      mineralLinksNeeded: 0,
 
       terminalBuilt: 0,
       terminalNeeded: 0,
@@ -811,19 +815,40 @@ module.exports = {
       goal.sourceLinks || 0,
     );
     var storageLinks = goal.storageLink ? 1 : 0;
-    var total = Math.min(maxLinks, controllerLinks + sourceLinks + storageLinks);
+    var terminalLinks = goal.terminalLink ? 1 : 0;
+    var mineralLinks = goal.mineralLink ? 1 : 0;
+    var total = Math.min(
+      maxLinks,
+      controllerLinks + sourceLinks + storageLinks + terminalLinks + mineralLinks,
+    );
     var controllerTarget = Math.min(controllerLinks, total);
     var sourceTarget = Math.max(
       0,
       Math.min(sourceLinks, total - controllerTarget),
     );
-    var storageTarget = Math.max(0, total - controllerTarget - sourceTarget);
+    var storageTarget = Math.max(
+      0,
+      Math.min(storageLinks, total - controllerTarget - sourceTarget),
+    );
+    var terminalTarget = Math.max(
+      0,
+      Math.min(
+        terminalLinks,
+        total - controllerTarget - sourceTarget - storageTarget,
+      ),
+    );
+    var mineralTarget = Math.max(
+      0,
+      total - controllerTarget - sourceTarget - storageTarget - terminalTarget,
+    );
 
     return {
       total: total,
       controller: controllerTarget,
       source: sourceTarget,
       storage: storageTarget,
+      terminal: terminalTarget,
+      mineral: mineralTarget,
     };
   },
 
@@ -842,10 +867,24 @@ module.exports = {
   getStructureGoal(room, plan, action, structureType) {
     if (!this.hasAction(plan, action)) return 0;
 
-    return roadmap.getDesiredStructureCount(
-      room.controller ? room.controller.level : 0,
+    var controllerLevel = room.controller ? room.controller.level : 0;
+    var desiredCount = roadmap.getDesiredStructureCount(
+      controllerLevel,
       structureType,
     );
+    var structureTargets = plan.goals && plan.goals.structureTargets
+      ? plan.goals.structureTargets
+      : null;
+    var overrideCount = structureTargets &&
+      typeof structureTargets[structureType] === "number"
+      ? structureTargets[structureType]
+      : null;
+
+    if (typeof overrideCount === "number") {
+      return Math.min(desiredCount, Math.max(0, overrideCount));
+    }
+
+    return desiredCount;
   },
 
   getUnlockedLabGoal(room, state, plan, status) {
