@@ -11,7 +11,9 @@ These items are no longer active roadmap work:
 - Named room phases are in place: `bootstrap -> foundation -> development -> logistics -> specialization -> fortification -> command`.
 - Construction roadmap, status, and placement now cover links, terminal, extractor, labs, factory, observer, power spawn, and nuker.
 - Advanced structure placement is planned from a cached future-plan instead of being recomputed every tick.
-- Home-room defense construction now uses terrain-based exit choke planning with two-tile rampart gates.
+- Home-room defense is now active-defense first: towers focus fire from shared threat math, and defenders spawn only when tower math says support is needed.
+- Wall and rampart construction is intentionally disabled for normal room buildout.
+- Extension placement uses compact hallway pods around the spawn core, storage placement has dense-terrain fallback search, internal roads prefer shared corridors, and RCL8 labs use a compact storage-adjacent stamp.
 - HUD and directives read the shared construction status and future-plan state.
 - Late structure runtime now includes lab reaction selection, a conservative factory policy, and advanced haul tasks for labs, factory, power spawn, and nuker staging.
 - A deterministic solo-room harness now validates named phases from `bootstrap` through `command`, plus late factory battery task selection.
@@ -19,12 +21,13 @@ These items are no longer active roadmap work:
 - Container usage is now intentional across the room lifecycle: up to `3` source containers, `1` hub container before storage, and `1` controller container until controller-link logistics take over.
 - Shared logistics now uses those typed containers to improve early worker flow and faster controller throughput without adding new expensive room scans.
 - `ops.help()` now prints the available operator console commands with short descriptions and examples.
+- `ops.room()` defaults to the remembered current room and `all` sections, so the common local flow is just `ops.room()` after selecting a room once.
 
 ## Active Remaining Work
 
 ## 1. Finish Live Solo-Room Validation
 
-Status: [~] Bootstrap and forced-stage PTR validation are now passing, full organic RCL8 climb is still pending
+Status: [~] Fresh PTR reset is stable at the 20 CPU cap; full organic RCL8 climb is still pending
 
 Purpose:
 
@@ -35,11 +38,13 @@ Work items:
 - [x] Validate first-spawn `bootstrap -> foundation` progress on the PTR private server at the real `20` CPU cap.
 - [x] Confirm RCL1 no longer burns all harvested energy into extra jrworkers before the first controller upgrade.
 - [x] Confirm the shared movement helper and source-harvest slot assignment no longer collapse multiple bootstrap creeps onto one tile.
+- [x] Confirm private-server browser/HUD flow is stable against the localhost route.
+- [x] Validate compact extension, storage, road, active-defense, and compact lab planner scenarios in the solo-room harness.
 - [ ] Continue live-validating the natural `development -> logistics -> specialization` climb without manual structure completion.
 - [ ] Validate `specialization` lab placement in a real RCL6 room.
 - [ ] Validate `fortification` factory placement in a real RCL7 room.
 - [ ] Validate `command` observer, power spawn, and nuker placement in a real RCL8 room.
-- [ ] Check that connector roads do not starve important structure sites under the global site cap.
+- [ ] Check that shared connector roads do not starve important structure sites under the global site cap during an organic climb.
 - [ ] Record any terrain shapes that force poor fallback placement and tune the planner if needed.
 
 Done when:
@@ -95,7 +100,7 @@ Done when:
 
 ## 4. Re-Measure CPU And Simplify Again
 
-Status: [~] Bootstrap and staged PTR checks are healthy, mature-room measurement still pending
+Status: [~] Runtime throttling and cached planning keep fresh PTR runtime under the local 20 CPU cap; mature-room measurement is still pending
 
 Purpose:
 
@@ -105,6 +110,8 @@ Work items:
 
 - [x] Re-check bootstrap / foundation CPU under the real `20` account cap on PTR.
 - [x] Re-check staged high-RCL planning CPU on PTR after the solo-room fixes.
+- [x] Add a 20-CPU soft ceiling and shed low-priority room work before the tick overruns.
+- [x] Reduce repeated build/status derivation and per-tick runtime memory churn.
 - [ ] Measure construction, HUD, directives, defense planning, and advanced ops during an organic mature-room climb.
 - [ ] Remove or cache any room scans that are no longer justified.
 - [ ] Re-check runtime throttling behavior under normal, tight, and critical CPU modes.
@@ -130,3 +137,5 @@ Done when:
 - Prefer shared room-state scans and cached planner output over fresh manager-local scans.
 - Keep the home-room path readable. If a late-game feature needs too much scaffolding, add the minimum working slice first.
 - Every major late-game addition should end with a CPU re-measure and a "what can be simplified again" pass.
+- Treat walls/ramparts as legacy or explicit future work, not part of the current default defense plan.
+- Prefer compact stamps and shared road corridors over broad rings or per-target road fans.

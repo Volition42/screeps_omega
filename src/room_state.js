@@ -110,12 +110,20 @@ module.exports = {
       ? "foundation"
       : "bootstrap";
     var desiredTotalHaulers = this.getDesiredTotalHaulers(sources);
-    phase = this.resolveRoomPhase(room, sharedState, phase, desiredTotalHaulers);
-
-    var finalState = this.hydrateDerivedState(
+    var resolution = this.resolveRoomPhase(
       room,
-      this.createState(sharedState, phase),
+      sharedState,
+      phase,
+      desiredTotalHaulers,
     );
+    var finalState =
+      resolution && resolution.state
+        ? resolution.state
+        : this.hydrateDerivedState(
+            room,
+            this.createState(sharedState, resolution.phase),
+          );
+
     finalState.defense = defenseManager.collect(room, finalState);
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
 
@@ -130,9 +138,12 @@ module.exports = {
 
   resolveRoomPhase(room, sharedState, initialPhase, desiredTotalHaulers) {
     var phase = roadmap.normalizePhase(initialPhase);
-    var provisionalState = this.hydrateDerivedState(
+    var phaseCache = {};
+    var provisionalState = this.getDerivedPhaseState(
       room,
-      this.createState(sharedState, phase),
+      sharedState,
+      phase,
+      phaseCache,
     );
     var buildStatus = provisionalState.buildStatus;
 
@@ -146,9 +157,11 @@ module.exports = {
       )
     ) {
       phase = "development";
-      provisionalState = this.hydrateDerivedState(
+      provisionalState = this.getDerivedPhaseState(
         room,
-        this.createState(sharedState, phase),
+        sharedState,
+        phase,
+        phaseCache,
       );
       buildStatus = provisionalState.buildStatus;
     }
@@ -163,9 +176,11 @@ module.exports = {
       )
     ) {
       phase = "logistics";
-      provisionalState = this.hydrateDerivedState(
+      provisionalState = this.getDerivedPhaseState(
         room,
-        this.createState(sharedState, phase),
+        sharedState,
+        phase,
+        phaseCache,
       );
       buildStatus = provisionalState.buildStatus;
     }
@@ -175,9 +190,11 @@ module.exports = {
       this.shouldEnterSpecialization(room, provisionalState, buildStatus)
     ) {
       phase = "specialization";
-      provisionalState = this.hydrateDerivedState(
+      provisionalState = this.getDerivedPhaseState(
         room,
-        this.createState(sharedState, phase),
+        sharedState,
+        phase,
+        phaseCache,
       );
       buildStatus = provisionalState.buildStatus;
     }
@@ -187,9 +204,11 @@ module.exports = {
       this.shouldEnterFortification(room, provisionalState, buildStatus)
     ) {
       phase = "fortification";
-      provisionalState = this.hydrateDerivedState(
+      provisionalState = this.getDerivedPhaseState(
         room,
-        this.createState(sharedState, phase),
+        sharedState,
+        phase,
+        phaseCache,
       );
       buildStatus = provisionalState.buildStatus;
     }
@@ -199,9 +218,32 @@ module.exports = {
       this.shouldEnterCommand(room, provisionalState, buildStatus)
     ) {
       phase = "command";
+      provisionalState = this.getDerivedPhaseState(
+        room,
+        sharedState,
+        phase,
+        phaseCache,
+      );
     }
 
-    return phase;
+    return {
+      phase: phase,
+      state: provisionalState,
+    };
+  },
+
+  getDerivedPhaseState(room, sharedState, phase, phaseCache) {
+    var key = roadmap.normalizePhase(phase);
+    if (phaseCache[key]) {
+      return phaseCache[key];
+    }
+
+    var state = this.hydrateDerivedState(
+      room,
+      this.createState(sharedState, key),
+    );
+    phaseCache[key] = state;
+    return state;
   },
 
   hydrateDerivedState(room, state) {
@@ -529,19 +571,40 @@ module.exports = {
   shouldEnterSpecialization(room, state, buildStatus) {
     if (!room.controller || room.controller.level < 6) return false;
 
-    return !!buildStatus.logisticsComplete;
+    if (buildStatus.logisticsComplete) return true;
+
+    return (
+      buildStatus.extensionsBuilt >= buildStatus.extensionsNeeded &&
+      buildStatus.towersBuilt >= buildStatus.towersNeeded &&
+      buildStatus.storageBuilt >= buildStatus.storageNeeded &&
+      buildStatus.linksBuilt >= buildStatus.linksNeeded
+    );
   },
 
   shouldEnterFortification(room, state, buildStatus) {
     if (!room.controller || room.controller.level < 7) return false;
 
-    return !!buildStatus.specializationComplete;
+    if (buildStatus.specializationComplete) return true;
+
+    return (
+      this.shouldEnterSpecialization(room, state, buildStatus) &&
+      buildStatus.terminalBuilt >= buildStatus.terminalNeeded &&
+      buildStatus.mineralContainersBuilt >= buildStatus.mineralContainersNeeded &&
+      buildStatus.extractorBuilt >= buildStatus.extractorNeeded &&
+      buildStatus.labsBuilt >= buildStatus.labsNeeded
+    );
   },
 
   shouldEnterCommand(room, state, buildStatus) {
     if (!room.controller || room.controller.level < 8) return false;
 
-    return !!buildStatus.fortificationComplete;
+    if (buildStatus.fortificationComplete) return true;
+
+    return (
+      this.shouldEnterFortification(room, state, buildStatus) &&
+      buildStatus.spawnsBuilt >= buildStatus.spawnsNeeded &&
+      buildStatus.factoryBuilt >= buildStatus.factoryNeeded
+    );
   },
 
   getDesiredTotalHaulers(sources) {

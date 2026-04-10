@@ -45,10 +45,10 @@ Important consequences:
 | --- | --- | --- | --- |
 | `bootstrap` | survive and reach RCL2 | controller below RCL2 | controller reaches RCL2 |
 | `foundation` | containers and backbone roads | RCL2+ and not yet development-ready | economy backbone exists and foundation is complete enough |
-| `development` | core economy and defenses | foundation gate passed | RCL5+, stable economy, and development is complete enough |
+| `development` | compact core economy and active defense | foundation gate passed | RCL5+, stable economy, and development is complete enough |
 | `logistics` | first link backbone | RCL5+ and development gate passed | RCL6+ and logistics link goal is complete |
 | `specialization` | terminal, mineral access, labs | RCL6+ and logistics complete | RCL7+ and specialization targets are complete |
-| `fortification` | factory and mature-room hardening | RCL7+ and specialization complete | RCL8+ and factory is complete |
+| `fortification` | factory and mature infrastructure | RCL7+ and specialization complete | RCL8+ and factory is complete |
 | `command` | final RCL8 structures | RCL8+ and fortification complete | no later phase; command is "done" when observer, power spawn, nuker, and spawn targets are complete |
 
 ## Global Notes
@@ -56,6 +56,8 @@ Important consequences:
 - `bootstrap` is the only phase with no formal construction completion flag.
 - Construction intent is broader than the actual advance gate. Some phases place optional or opportunistic work that does not block the next phase.
 - Reactive defense spawning can happen in every phase.
+- Default defense is tower/creep based. Wall and rampart construction is not part of the current default room buildout.
+- Core placement favors compact stamps and shared road corridors over broad rings or per-target road fans.
 - Recovery logic can temporarily force bootstrap-style spawning even in later rooms if the economy collapses.
 
 ## Bootstrap
@@ -172,7 +174,7 @@ Typical blockers:
 
 Purpose:
 
-- Build the first durable home-room core.
+- Build the first durable compact home-room core.
 
 Entry:
 
@@ -194,15 +196,15 @@ What `developmentComplete` means:
 - Extension target is met
 - Tower target is met
 - Storage target is met
-- Baseline wall target is met
-- Baseline rampart target is met
+- Wall target is zero in the current active-defense model
+- Rampart target is zero in the current active-defense model
 
 Primary steps:
 
 1. Fill extension capacity for the current controller level.
 2. Build the first tower baseline.
 3. Place and finish storage as soon as the controller unlock allows it.
-4. Build internal roads and the first defense shell.
+4. Build compact internal roads using shared corridors.
 5. Stabilize a normal miner-hauler-upgrader economy.
 
 Spawn and workforce behavior:
@@ -220,7 +222,7 @@ Construction scope from the roadmap:
 - `towerStamp`
 - `storage`
 - `internalRoads`
-- `defense`
+- `defense` is present as a legacy no-op build action; active defense lives in tower/defender runtime
 - `mineralAccessRoad`
 
 What actually blocks advancement:
@@ -229,8 +231,6 @@ What actually blocks advancement:
 - Extensions
 - Towers
 - Storage
-- Walls
-- Ramparts
 - Enough labor, miners, haulers, and an upgrader
 
 Typical blockers:
@@ -239,8 +239,6 @@ Typical blockers:
 - `extensions incomplete`
 - `towers incomplete`
 - `storage missing`
-- `walls below target`
-- `ramparts below target`
 - `worker labor thin`
 - `upgrader missing`
 - `miners below target`
@@ -336,7 +334,7 @@ Primary steps:
 1. Add a storage-adjacent logistics link.
 2. Build the terminal.
 3. Open mineral harvesting with container and extractor support.
-4. Place the first lab cluster.
+4. Place the first compact lab cluster.
 
 Spawn and workforce behavior:
 
@@ -372,7 +370,7 @@ Typical blockers:
 
 Purpose:
 
-- Start the mature RCL7 room shape and late-game hardening layer.
+- Start the mature RCL7 room shape and late-game infrastructure layer.
 
 Entry:
 
@@ -391,7 +389,7 @@ What `fortificationComplete` means today:
 
 Important note:
 
-- The fortification roadmap includes stronger late-room goals such as more labs, more links, and hardened infrastructure.
+- The fortification roadmap includes stronger late-room goals such as more labs, more links, and mature infrastructure.
 - The current advance gate is intentionally narrower than the full roadmap and only hard-requires the factory after specialization is done.
 
 Current fortification goals in the roadmap:
@@ -404,9 +402,9 @@ Primary steps:
 
 1. Catch up newly unlocked RCL7 core structures if needed.
 2. Add the second source link.
-3. Expand the lab cluster.
+3. Expand the compact lab cluster.
 4. Place and complete the factory.
-5. Continue hardening roads and defenses.
+5. Continue maintaining compact roads and active defense coverage.
 
 Spawn and workforce behavior:
 
@@ -428,7 +426,7 @@ Construction scope from the roadmap:
 - `extensionStamps`
 - `towerStamp`
 - `internalRoads`
-- `defense`
+- `defense` is present as a legacy no-op build action in the current active-defense model
 
 What actually blocks advancement:
 
@@ -462,7 +460,7 @@ Current command goals in the roadmap:
 - `1` observer
 - `1` power spawn
 - `1` nuker
-- Continued factory, lab, storage, link, road, and defense support
+- Continued factory, lab, storage, link, compact road, and active-defense support
 
 Primary steps:
 
@@ -495,7 +493,7 @@ Construction scope from the roadmap:
 - `extensionStamps`
 - `towerStamp`
 - `internalRoads`
-- `defense`
+- `defense` is present as a legacy no-op build action in the current active-defense model
 
 What actually marks the phase complete:
 
@@ -515,6 +513,7 @@ Typical blockers:
 
 - If a room looks "stuck," check the current phase first, then the build-status counters, then the spawn queue.
 - If an advanced room unexpectedly shows `development`, verify whether the latest RCL unlock increased extension or tower goals.
+- If the HUD is missing in local browser testing, verify the client was opened through `http://127.0.0.1:8080/` or the wrapped localhost route.
 - If a room has the controller level for a later phase but is not advancing, check the exact completion flag for the current phase:
 - `foundationComplete`
 - `developmentComplete`

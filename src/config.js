@@ -326,6 +326,7 @@ module.exports = {
 
   STATS: {
     RUNTIME_POLICY: {
+      SOFT_CPU_LIMIT: 20,
       TIGHT_CPU_RATIO: 0.8,
       CRITICAL_CPU_RATIO: 0.92,
       TIGHT_BUCKET: 8000,
@@ -333,16 +334,16 @@ module.exports = {
       DETAIL_DOWNGRADE_AT_TIGHT: true,
       THINK_INTERVAL_MULTIPLIER: {
         normal: 1,
-        tight: 2,
-        critical: 3,
+        tight: 3,
+        critical: 5,
       },
       CONSTRUCTION_INTERVAL_MULTIPLIER: {
         normal: 1,
-        tight: 2,
-        critical: 3,
+        tight: 4,
+        critical: 8,
       },
       SKIP_DIRECTIVES_AT: "tight",
-      SKIP_HUD_AT: "critical",
+      SKIP_HUD_AT: "tight",
     },
   },
 

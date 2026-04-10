@@ -397,7 +397,9 @@ class RoomPosition {
   findClosestByRange(findType, options) {
     const room = this.room;
     if (!room) return null;
-    const candidates = room.find(findType, options);
+    const candidates = Array.isArray(findType)
+      ? findType.slice()
+      : room.find(findType, options);
     if (!candidates || candidates.length === 0) return null;
 
     let best = candidates[0];
@@ -722,6 +724,33 @@ function createStructure(structureType, x, y, options) {
     };
   }
 
+  if (structureType === STRUCTURE_TOWER) {
+    structure.attack = function (target) {
+      currentRuntime.towerActions.push({
+        towerId: this.id,
+        action: "attack",
+        targetId: target ? target.id || null : null,
+      });
+      return OK;
+    };
+    structure.heal = function (target) {
+      currentRuntime.towerActions.push({
+        towerId: this.id,
+        action: "heal",
+        targetId: target ? target.id || null : null,
+      });
+      return OK;
+    };
+    structure.repair = function (target) {
+      currentRuntime.towerActions.push({
+        towerId: this.id,
+        action: "repair",
+        targetId: target ? target.id || null : null,
+      });
+      return OK;
+    };
+  }
+
   return structure;
 }
 
@@ -765,7 +794,7 @@ function createCreep(name, role, x, y, options) {
   const creep = {
     id: spec.id || nextId("creep"),
     name: name,
-    my: true,
+    my: spec.my !== false,
     body: spec.body || [{ type: WORK }, { type: CARRY }, { type: MOVE }],
     memory: Object.assign(
       {
@@ -785,6 +814,39 @@ function createCreep(name, role, x, y, options) {
         if (this.body[i].type === partType) count++;
       }
       return count;
+    },
+    attack(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "attack",
+        targetId: target ? target.id || null : null,
+      });
+      return this.pos.getRangeTo(target) <= 1 ? OK : ERR_NOT_IN_RANGE;
+    },
+    rangedAttack(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "rangedAttack",
+        targetId: target ? target.id || null : null,
+      });
+      return this.pos.getRangeTo(target) <= 3 ? OK : ERR_NOT_IN_RANGE;
+    },
+    heal(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "heal",
+        targetId: target ? target.id || null : null,
+      });
+      return this.pos.getRangeTo(target) <= 1 ? OK : ERR_NOT_IN_RANGE;
+    },
+    moveTo(target, options) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "moveTo",
+        targetId: target && target.id ? target.id : null,
+        range: options && typeof options.range === "number" ? options.range : null,
+      });
+      return OK;
     },
   };
 
@@ -806,6 +868,8 @@ function resetRuntime(tick) {
     rooms: {},
     objectsById: {},
     spawnEvents: [],
+    towerActions: [],
+    creepActions: [],
   };
 
   global.Memory = { rooms: {}, creeps: {}, runtime: {}, stats: {} };
@@ -1025,6 +1089,28 @@ function buildRoomScenario(name, options) {
     }
   }
 
+  if (options.hostiles) {
+    for (let i = 0; i < options.hostiles.length; i++) {
+      const spec = options.hostiles[i];
+      const hostile = createCreep(
+        spec.name || `hostile${i + 1}`,
+        spec.role || "hostile",
+        spec.x,
+        spec.y,
+        {
+          roomName: name,
+          my: false,
+          body: spec.body,
+          memory: spec.memory || {},
+          store: spec.store,
+          storeCapacity: spec.storeCapacity,
+        },
+      );
+      hostile.owner = { username: spec.username || "Invader" };
+      room._hostileCreeps.push(hostile);
+    }
+  }
+
   room.energyAvailable = options.energyAvailable !== undefined ? options.energyAvailable : spawn.store.energy;
   room.energyCapacityAvailable = options.energyCapacityAvailable !== undefined ? options.energyCapacityAvailable : 300;
 
@@ -1054,6 +1140,62 @@ function buildOpenEdgeDefenseTerrainWalls() {
   return walls;
 }
 
+function buildLeftCorridorDefenseTerrainWalls() {
+  const walls = [];
+
+  for (let x = 0; x <= 49; x++) {
+    walls.push([x, 0]);
+    walls.push([x, 49]);
+  }
+  for (let y = 0; y <= 49; y++) {
+    walls.push([49, y]);
+    if (y < 17 || y > 24) {
+      walls.push([0, y]);
+    }
+  }
+
+  return walls;
+}
+
+function buildTopSplitDefenseTerrainWalls() {
+  const walls = [];
+
+  for (let x = 0; x <= 49; x++) {
+    if (x < 18 || x > 26) {
+      walls.push([x, 0]);
+    }
+    walls.push([x, 49]);
+  }
+  for (let y = 0; y <= 49; y++) {
+    walls.push([0, y]);
+    walls.push([49, y]);
+  }
+  for (let x = 21; x <= 23; x++) {
+    walls.push([x, 2]);
+  }
+
+  return walls;
+}
+
+function buildCornerApproachDefenseTerrainWalls() {
+  const walls = [];
+
+  for (let x = 0; x <= 49; x++) {
+    if (x < 10 || x > 16) {
+      walls.push([x, 0]);
+    }
+    walls.push([x, 49]);
+  }
+  for (let y = 0; y <= 49; y++) {
+    if (y < 10 || y > 16) {
+      walls.push([0, y]);
+    }
+    walls.push([49, y]);
+  }
+
+  return walls;
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
@@ -1062,6 +1204,38 @@ function assert(condition, message) {
 
 function getSiteTypes(room) {
   return room.find(FIND_CONSTRUCTION_SITES).map((site) => site.structureType);
+}
+
+function hasHorizontalGatePair(positions, maxY) {
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      if (
+        positions[i].y === positions[j].y &&
+        Math.abs(positions[i].x - positions[j].x) === 1 &&
+        (maxY === undefined || positions[i].y <= maxY)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function hasVerticalGatePair(positions, maxX) {
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      if (
+        positions[i].x === positions[j].x &&
+        Math.abs(positions[i].y - positions[j].y) === 1 &&
+        (maxX === undefined || positions[i].x <= maxX)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function completeAllSites(room) {
@@ -1084,14 +1258,18 @@ const bodies = require("bodies");
 const spawnManager = require("spawn_manager");
 const constructionManager = require("construction_manager");
 const constructionStatus = require("construction_status");
+const constructionRoadmap = require("construction_roadmap");
 const roomReporting = require("room_reporting");
 const advancedStructureManager = require("advanced_structure_manager");
+const defenseManager = require("defense_manager");
 const defenseLayout = require("defense_layout");
 const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
 const roleWorker = require("role_worker");
+const towerManager = require("tower_manager");
 const utils = require("utils");
 const config = require("config");
+const stamps = require("stamp_library");
 
 function getOccupiedKey(x, y) {
   return `${x}:${y}`;
@@ -1150,7 +1328,11 @@ function addBackboneRoads(room) {
     addRoadPath(room, spawn.pos, containers[i].pos, 1);
   }
 
-  if (controller) {
+  const hasControllerContainer = controller && containers.some((structure) => {
+    return structure.pos.getRangeTo(controller) <= 4;
+  });
+
+  if (controller && !hasControllerContainer) {
     addRoadPath(room, spawn.pos, controller.pos, 2);
   }
 }
@@ -1532,6 +1714,350 @@ function runDevelopmentScenario() {
   );
 }
 
+function runCompactExtensionCoreScenario() {
+  const room = buildRoomScenario("VAL_EXTENSION_CORE", {
+    tick: 300,
+    controllerLevel: 5,
+    controllerX: 40,
+    controllerY: 40,
+    spawnEnergy: 300,
+    energyAvailable: 550,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+  });
+
+  const originalMaxSites = config.CONSTRUCTION.MAX_SITES;
+  config.CONSTRUCTION.MAX_SITES = 100;
+
+  try {
+    const state = roomState.collect(room);
+    const context = constructionManager.createPlanContext(room, state);
+    const plan = constructionManager.getPlanningPlan(
+      room,
+      state,
+      constructionRoadmap.getPlan(state.phase, room.controller.level),
+    );
+    const memory = constructionManager.getRoomConstructionMemory(room);
+
+    context.planningPlan = plan;
+    constructionManager.refreshCoreLayoutPlan(context, plan, memory);
+    context.futurePlan = memory.futurePlan;
+
+    const extensionPlan = context.futurePlan && context.futurePlan.extensionStamps
+      ? context.futurePlan.extensionStamps
+      : null;
+    assert(extensionPlan, "expected compact extension plan");
+    assert(extensionPlan.origins.length === 3, `expected 3 compact extension pods, got ${extensionPlan.origins.length}`);
+    assert(extensionPlan.plannedCapacity === 30, `expected exact compact extension capacity of 30, got ${extensionPlan.plannedCapacity}`);
+
+    constructionManager.placeExtensionStamps(context);
+
+    const extensionSites = room.find(FIND_CONSTRUCTION_SITES, {
+      filter(site) {
+        return site.structureType === STRUCTURE_EXTENSION;
+      },
+    });
+    const roadSites = room.find(FIND_CONSTRUCTION_SITES, {
+      filter(site) {
+        return site.structureType === STRUCTURE_ROAD;
+      },
+    });
+    const maxRange = extensionSites.reduce((best, site) => {
+      return Math.max(best, room.spawn.pos.getRangeTo(site.pos));
+    }, 0);
+
+    assert(extensionSites.length === 30, `expected 30 compact extension sites, got ${extensionSites.length}`);
+    assert(roadSites.length === 6, `expected 6 compact extension roads, got ${roadSites.length}`);
+    assert(maxRange <= 7, `expected compact extension footprint within range 7, got ${maxRange}`);
+  } finally {
+    config.CONSTRUCTION.MAX_SITES = originalMaxSites;
+  }
+}
+
+function runTerrainAwareExtensionPlanScenario() {
+  const room = buildRoomScenario("VAL_EXTENSION_TERRAIN", {
+    tick: 301,
+    controllerLevel: 5,
+    controllerX: 40,
+    controllerY: 40,
+    spawnEnergy: 300,
+    energyAvailable: 550,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    terrainWalls: [
+      [20, 18],
+      [21, 18],
+      [22, 18],
+      [20, 19],
+      [21, 19],
+      [22, 19],
+      [20, 20],
+      [21, 20],
+      [22, 20],
+      [20, 21],
+      [21, 21],
+      [22, 21],
+    ],
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+  });
+
+  const originalMaxSites = config.CONSTRUCTION.MAX_SITES;
+  config.CONSTRUCTION.MAX_SITES = 100;
+
+  try {
+    const state = roomState.collect(room);
+    const context = constructionManager.createPlanContext(room, state);
+    const plan = constructionManager.getPlanningPlan(
+      room,
+      state,
+      constructionRoadmap.getPlan(state.phase, room.controller.level),
+    );
+    const memory = constructionManager.getRoomConstructionMemory(room);
+
+    context.planningPlan = plan;
+    constructionManager.refreshCoreLayoutPlan(context, plan, memory);
+    context.futurePlan = memory.futurePlan;
+
+    const extensionPlan = context.futurePlan && context.futurePlan.extensionStamps
+      ? context.futurePlan.extensionStamps
+      : null;
+    assert(extensionPlan && extensionPlan.origins.length >= 3, "expected terrain-aware extension plan");
+    assert(
+      !(extensionPlan.origins[0].x === 21 && extensionPlan.origins[0].y === 19),
+      `expected blocked compact pod to be skipped, got ${JSON.stringify(extensionPlan.origins[0])}`,
+    );
+    assert(
+      extensionPlan.plannedCapacity >= 30,
+      `expected terrain-aware plan to keep full RCL5 extension capacity, got ${extensionPlan.plannedCapacity}`,
+    );
+
+    constructionManager.placeExtensionStamps(context);
+
+    const extensionSites = room.find(FIND_CONSTRUCTION_SITES, {
+      filter(site) {
+        return site.structureType === STRUCTURE_EXTENSION;
+      },
+    });
+
+    assert(extensionSites.length === 30, `expected 30 terrain-aware extension sites, got ${extensionSites.length}`);
+    assert(
+      extensionSites.every((site) => room.spawn.pos.getRangeTo(site.pos) <= 9),
+      "expected terrain-aware compact farm to stay near the spawn core",
+    );
+  } finally {
+    config.CONSTRUCTION.MAX_SITES = originalMaxSites;
+  }
+}
+
+function runControllerRoadDedupScenario() {
+  const room = buildRoomScenario("VAL_CONTROLLER_ROAD_DEDUP", {
+    tick: 302,
+    controllerLevel: 3,
+    extraStructures: [
+      {
+        type: STRUCTURE_CONTAINER,
+        x: 19,
+        y: 18,
+        options: {
+          store: { energy: 400 },
+          storeCapacity: 2000,
+          hits: 250000,
+          hitsMax: 250000,
+        },
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+
+  assert(state.controllerContainer, "controller road dedup scenario should classify the controller container");
+
+  constructionManager.placeBackboneRoads(context);
+
+  const roadSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_ROAD;
+    },
+  });
+  const expectedPath = spawn.pos.findPathTo(state.controllerContainer.pos, {
+    ignoreCreeps: true,
+    range: 0,
+  });
+  const expectedKeys = new Set(expectedPath.map((step) => getOccupiedKey(step.x, step.y)));
+  const actualKeys = new Set(roadSites.map((site) => getOccupiedKey(site.pos.x, site.pos.y)));
+
+  assert(roadSites.length === expectedPath.length, `expected exactly one controller road path, got ${roadSites.length} sites for ${expectedPath.length} steps`);
+  assert(actualKeys.size === expectedKeys.size, "expected unique controller road sites without duplicate lane spread");
+  expectedKeys.forEach((key) => {
+    assert(actualKeys.has(key), `expected controller road site at ${key}`);
+  });
+}
+
+function runStampRoadBudgetScenario() {
+  const room = buildRoomScenario("VAL_STAMP_ROAD_BUDGET", {
+    tick: 303,
+    controllerLevel: 6,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+
+  const anchor = stamps.getAnchorOrigin(room, roomState.collect(room));
+  const storageOrigin = new RoomPosition(anchor.x, anchor.y + 4, room.name);
+  const labOrigin = new RoomPosition(anchor.x, anchor.y + 6, room.name);
+
+  assert(
+    constructionStatus.countStampRoadCells(room, anchor, "anchor_v1") === 7,
+    "expected minimal anchor stamp road budget of 7",
+  );
+  assert(
+    constructionStatus.countStampRoadCells(room, storageOrigin, "storage_hub_v1") === 4,
+    "expected minimal storage hub stamp road budget of 4",
+  );
+  assert(
+    constructionStatus.countStampRoadCells(room, labOrigin, "lab_cluster_v1") === 2,
+    "expected minimal lab cluster stamp road budget of 2",
+  );
+}
+
+function runSharedInternalRoadScenario() {
+  const room = buildRoomScenario("VAL_SHARED_INTERNAL_ROADS", {
+    tick: 304,
+    controllerLevel: 5,
+    sourceContainers: true,
+    supportContainers: true,
+    energyAvailable: 550,
+    energyCapacityAvailable: 800,
+  });
+
+  const state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+  const plan = constructionManager.getPlanningPlan(
+    room,
+    state,
+    constructionRoadmap.getPlan(state.phase, room.controller.level),
+  );
+  const memory = constructionManager.getRoomConstructionMemory(room);
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+
+  context.planningPlan = plan;
+  constructionManager.refreshCoreLayoutPlan(context, plan, memory);
+  context.futurePlan = memory.futurePlan;
+
+  const extensionOrigins = constructionManager.getPlannedExtensionStampOrigins(context);
+  const anchor = constructionManager.getAnchorOrigin(context);
+  const desiredTowers = constructionRoadmap.getDesiredTowerCount(room.controller.level);
+  const towerOrigins = stamps.getTowerStampOrigins(anchor).slice(0, desiredTowers);
+
+  constructionManager.placeInternalRoads(context);
+
+  const roadSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_ROAD;
+    },
+  });
+  const naiveKeys = new Set();
+  const targets = extensionOrigins.concat(
+    towerOrigins.map((origin) => new RoomPosition(origin.x, origin.y, origin.roomName)),
+  );
+
+  for (let i = 0; i < targets.length; i++) {
+    const path = spawn.pos.findPathTo(targets[i], {
+      ignoreCreeps: true,
+      range: 1,
+    });
+    for (let j = 0; j < path.length; j++) {
+      naiveKeys.add(getOccupiedKey(path[j].x, path[j].y));
+    }
+  }
+
+  assert(roadSites.length > 0, "expected shared internal roads to place road sites");
+  assert(
+    roadSites.length < naiveKeys.size,
+    `expected shared internal corridor to use fewer roads than star routing, got ${roadSites.length} vs ${naiveKeys.size}`,
+  );
+}
+
+function runCompactLabPlanScenario() {
+  const room = buildRoomScenario("VAL_COMPACT_LABS", {
+    tick: 305,
+    controllerLevel: 8,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    extraStructures: [
+      {
+        type: STRUCTURE_STORAGE,
+        x: 25,
+        y: 29,
+        options: {
+          store: { energy: 50000 },
+          storeCapacity: 1000000,
+          hits: 10000,
+          hitsMax: 10000,
+        },
+      },
+      {
+        type: STRUCTURE_TERMINAL,
+        x: 27,
+        y: 29,
+        options: {
+          store: { energy: 10000 },
+          storeCapacity: 300000,
+          hits: 3000,
+          hitsMax: 3000,
+        },
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+  const labPlan = constructionManager.buildLabPlan(
+    context,
+    { goals: { advancedStructures: { labs: 10 } } },
+    room.storage.pos,
+    { pos: constructionManager.serializePos(room.terminal.pos) },
+    {},
+  );
+
+  assert(labPlan.ready, "expected compact lab plan to be ready");
+  assert(
+    labPlan.stampName === "lab_compact_v1",
+    `expected compact multi-lab stamp, got ${labPlan.stampName || "none"}`,
+  );
+  assert(
+    labPlan.positions.length === 10,
+    `expected full compact lab set of 10, got ${labPlan.positions.length}`,
+  );
+
+  const positions = labPlan.positions.map((pos) => constructionManager.deserializePos(pos));
+  assert(
+    positions.every((pos) => room.storage.pos.getRangeTo(pos) <= 4),
+    "expected compact lab cluster to stay within range 4 of storage",
+  );
+}
+
 function runDevelopmentStorageGateScenario() {
   const room = buildRoomScenario("VAL_DEVELOPMENT_STORAGE_GATE", {
     tick: 301,
@@ -1594,6 +2120,123 @@ function runStoragePlanningRoadConflictScenario() {
     storageSites[0].pos.x === 18 && storageSites[0].pos.y === 19,
     `expected storage at 18,19, got ${storageSites[0].pos.x},${storageSites[0].pos.y}`,
   );
+}
+
+function runStoragePlanningDenseTerrainScenario() {
+  const room = buildRoomScenario("VAL_STORAGE_DENSE_TERRAIN", {
+    tick: 303,
+    controllerLevel: 4,
+    controllerX: 40,
+    controllerY: 40,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    terrainWalls: [
+      [25, 29],
+      [29, 25],
+      [21, 25],
+      [25, 21],
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+  const storagePos = constructionManager.getStoragePlanningPosition(context);
+
+  assert(storagePos, "expected dense terrain room to still find a storage position");
+  assert(
+    !(
+      (storagePos.x === 25 && storagePos.y === 29) ||
+      (storagePos.x === 29 && storagePos.y === 25) ||
+      (storagePos.x === 21 && storagePos.y === 25) ||
+      (storagePos.x === 25 && storagePos.y === 21)
+    ),
+    `expected planner to move off blocked legacy storage slots, got ${storagePos.x},${storagePos.y}`,
+  );
+  assert(
+    room.spawn.pos.getRangeTo(storagePos) <= 6,
+    `expected compact fallback storage position, got range ${room.spawn.pos.getRangeTo(storagePos)}`,
+  );
+
+  constructionManager.placeStorage(context);
+
+  const storageSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_STORAGE;
+    },
+  });
+
+  assert(storageSites.length === 1, `expected one storage site in dense terrain room, got ${storageSites.length}`);
+}
+
+function buildHarshStorageTerrainWalls() {
+  const walls = [];
+  const keep = {
+    "25:33": true,
+    "24:32": true,
+    "25:32": true,
+    "26:32": true,
+    "24:33": true,
+    "26:33": true,
+    "24:34": true,
+    "25:34": true,
+    "26:34": true,
+    "23:33": true,
+    "27:33": true,
+  };
+
+  for (let x = 16; x <= 34; x++) {
+    for (let y = 16; y <= 34; y++) {
+      const range = Math.max(Math.abs(x - 25), Math.abs(y - 25));
+      if (range < 3 || range > 8) continue;
+      if (keep[`${x}:${y}`]) continue;
+      walls.push([x, y]);
+    }
+  }
+
+  return walls;
+}
+
+function runStoragePlanningHarshTerrainScenario() {
+  const room = buildRoomScenario("VAL_STORAGE_HARSH_TERRAIN", {
+    tick: 304,
+    controllerLevel: 4,
+    controllerX: 40,
+    controllerY: 40,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    terrainWalls: buildHarshStorageTerrainWalls(),
+  });
+
+  const state = roomState.collect(room);
+  const context = constructionManager.createPlanContext(room, state);
+  const storagePos = constructionManager.getStoragePlanningPosition(context);
+  const storagePlan = constructionManager.getStoragePlanningDebug(context);
+
+  assert(storagePos, "expected harsh terrain room to still find a storage position");
+  assert(
+    storagePos.x === 25 && storagePos.y === 33,
+    `expected harsh terrain fallback storage at 25,33, got ${storagePos.x},${storagePos.y}`,
+  );
+  assert(
+    storagePlan && storagePlan.mode === "fallback",
+    `expected harsh terrain storage plan to use fallback mode, got ${storagePlan ? storagePlan.mode : "none"}`,
+  );
+
+  constructionManager.placeStorage(context);
+
+  const storageSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_STORAGE;
+    },
+  });
+
+  assert(storageSites.length === 1, `expected one storage site in harsh terrain room, got ${storageSites.length}`);
 }
 
 function runContainerUsageScenario() {
@@ -2355,9 +2998,8 @@ function runDefenseBorderSupportScenario() {
     `expected border-adjacent top defense tiles to be skipped, got walls=${JSON.stringify(plan.walls)} gates=${JSON.stringify(plan.gates)}`,
   );
   assert(
-    plan.gates.some((pos) => pos.x === 31 && pos.y === 2) &&
-      plan.gates.some((pos) => pos.x === 32 && pos.y === 2),
-    `expected repaired top gates at 31,2 and 32,2, got ${JSON.stringify(plan.gates)}`,
+    hasHorizontalGatePair(plan.gates, 10),
+    `expected top-side gate coverage away from the border, got ${JSON.stringify(plan.gates)}`,
   );
   assert(
     room.createConstructionSite(31, 1, STRUCTURE_RAMPART) === ERR_INVALID_TARGET,
@@ -2365,246 +3007,353 @@ function runDefenseBorderSupportScenario() {
   );
 }
 
-function runDefensePlanLockScenario() {
-  const room = buildRoomScenario("VAL_DEFENSE_PLAN_LOCK", {
-    tick: 590,
+function runDefenseWestGateCenteringScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_WEST_GATE", {
+    tick: 589,
     controllerLevel: 4,
-    spawnEnergy: 300,
-    energyAvailable: 300,
-    energyCapacityAvailable: 800,
-    sourceContainers: true,
-    supportContainers: true,
-    foundationRoads: true,
-    backboneRoads: true,
-    terrainWalls: buildOpenEdgeDefenseTerrainWalls(),
-    creeps: [
-      { name: "worker1", role: "worker", x: 24, y: 25 },
-      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
-      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
-      { name: "hauler1", role: "hauler", x: 25, y: 24 },
-      { name: "hauler2", role: "hauler", x: 26, y: 24 },
-      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    spawnX: 32,
+    spawnY: 17,
+    controllerX: 40,
+    controllerY: 40,
+    sourceAX: 41,
+    sourceAY: 25,
+    sourceBX: 34,
+    sourceBY: 40,
+    mineralX: 40,
+    mineralY: 10,
+    terrainWalls: buildLeftCorridorDefenseTerrainWalls(),
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 32, y: 17, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
     ],
   });
 
-  let state = roomState.collect(room);
-  const initialPlan = defenseLayout.getPlan(room, state);
+  const anchor = new RoomPosition(32, 17, room.name);
+  const plan = defenseLayout.getPlanForAnchor(room, anchor);
 
-  assert(initialPlan && initialPlan.gates.length > 0, "expected initial defense gate plan");
-  assert(initialPlan.walls.length > 0, "expected initial defense wall plan");
-
-  const firstGate = initialPlan.gates[0];
-  const placeResult = room.createConstructionSite(
-    firstGate.x,
-    firstGate.y,
-    STRUCTURE_RAMPART,
-  );
-  assert(placeResult === OK, `expected first defense site to place, got ${placeResult}`);
-
-  const storagePos = pickOpenPositions(
-    room,
-    1,
-    [[room.spawn.pos.x - 1, room.spawn.pos.y + 4, 3, 3]],
-  )[0];
-  assert(storagePos, "expected open storage position for defense lock test");
-  room.addStructure(
-    createStructure(STRUCTURE_STORAGE, storagePos[0], storagePos[1], {
-      roomName: room.name,
-      store: { energy: 100000 },
-      storeCapacity: 1000000,
-      hits: 10000,
-      hitsMax: 10000,
-    }),
-  );
-
-  state = roomState.collect(room);
-  const preservedPlan = defenseLayout.getPlan(room, state);
-
-  const initialGateKeys = initialPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
-  const preservedGateKeys = preservedPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
-  const initialWallKeys = initialPlan.walls.map((pos) => `${pos.x}:${pos.y}`).join(",");
-  const preservedWallKeys = preservedPlan.walls.map((pos) => `${pos.x}:${pos.y}`).join(",");
-
+  assert(plan, "expected defense plan for west corridor room");
   assert(
-    preservedGateKeys === initialGateKeys,
-    `expected defense gate plan to stay locked after first placement, got ${preservedGateKeys} instead of ${initialGateKeys}`,
+    hasVerticalGatePair(plan.gates, 10),
+    `expected west-side gate coverage away from the border, got ${JSON.stringify(plan.gates)}`,
   );
-  assert(
-    preservedWallKeys === initialWallKeys,
-    `expected defense wall plan to stay locked after first placement, got ${preservedWallKeys} instead of ${initialWallKeys}`,
-  );
-
-  const strayWallPos = pickOpenPositions(room, 1, [[room.spawn.pos.x + 7, room.spawn.pos.y + 7, 2, 2]])[0];
-  assert(strayWallPos, "expected stray wall site position");
-  const strayCreate = room.createConstructionSite(
-    strayWallPos[0],
-    strayWallPos[1],
-    STRUCTURE_WALL,
-  );
-  assert(strayCreate === OK, `expected stray wall site to place for cleanup test, got ${strayCreate}`);
-
-  state = roomState.collect(room);
-  const context = constructionManager.createPlanContext(room, state);
-  constructionManager.placeDefense(context);
-
-  const strayStillExists = room.find(FIND_CONSTRUCTION_SITES, {
-    filter(site) {
-      return (
-        site.structureType === STRUCTURE_WALL &&
-        site.pos.x === strayWallPos[0] &&
-        site.pos.y === strayWallPos[1]
-      );
-    },
-  }).length > 0;
-  assert(!strayStillExists, "expected off-plan wall site to be removed once defense plan is locked");
 }
 
-function runDefenseConflictCleanupScenario() {
-  const room = buildRoomScenario("VAL_DEFENSE_CONFLICT_CLEANUP", {
-    tick: 595,
+function runDefenseNorthSplitGateScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_NORTH_SPLIT", {
+    tick: 589,
     controllerLevel: 4,
-    spawnEnergy: 300,
-    energyAvailable: 300,
-    energyCapacityAvailable: 800,
+    spawnX: 22,
+    spawnY: 20,
+    controllerX: 40,
+    controllerY: 40,
+    sourceAX: 41,
+    sourceAY: 25,
+    sourceBX: 34,
+    sourceBY: 40,
+    mineralX: 40,
+    mineralY: 10,
+    terrainWalls: buildTopSplitDefenseTerrainWalls(),
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 22, y: 20, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+    ],
+  });
+
+  const anchor = new RoomPosition(22, 20, room.name);
+  const plan = defenseLayout.getPlanForAnchor(room, anchor);
+
+  assert(plan, "expected defense plan for north split corridor room");
+  assert(
+    hasHorizontalGatePair(plan.gates, 10),
+    `expected north-side gate coverage for the split opening, got ${JSON.stringify(plan.gates)}`,
+  );
+}
+
+function runDefenseCornerGateCoalesceScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_CORNER_COALESCE", {
+    tick: 589,
+    controllerLevel: 4,
+    spawnX: 25,
+    spawnY: 25,
+    controllerX: 40,
+    controllerY: 40,
+    sourceAX: 41,
+    sourceAY: 25,
+    sourceBX: 34,
+    sourceBY: 40,
+    mineralX: 40,
+    mineralY: 10,
+  });
+
+  const anchor = new RoomPosition(25, 25, room.name);
+  const normalized = defenseLayout.coalesceCornerGatePlan(
+    room.name,
+    {
+      walls: [
+        new RoomPosition(2, 6, room.name),
+        new RoomPosition(3, 6, room.name),
+        new RoomPosition(4, 6, room.name),
+        new RoomPosition(5, 6, room.name),
+        new RoomPosition(6, 6, room.name),
+        new RoomPosition(7, 6, room.name),
+        new RoomPosition(8, 6, room.name),
+        new RoomPosition(9, 6, room.name),
+        new RoomPosition(10, 6, room.name),
+      ],
+      gates: [
+        new RoomPosition(2, 4, room.name),
+        new RoomPosition(2, 5, room.name),
+        new RoomPosition(11, 6, room.name),
+        new RoomPosition(12, 6, room.name),
+      ],
+    },
+    anchor,
+  );
+
+  assert(normalized, "expected connected corner plan to normalize");
+  assert(
+    normalized.gates.length === 4,
+    `expected connected corner component to preserve both corner gate pairs, got ${JSON.stringify(normalized.gates)}`,
+  );
+  assert(
+    normalized.gates.some((pos) => pos.x === 2 && pos.y === 4) &&
+      normalized.gates.some((pos) => pos.x === 2 && pos.y === 5) &&
+    normalized.gates.some((pos) => pos.x === 11 && pos.y === 6) &&
+      normalized.gates.some((pos) => pos.x === 12 && pos.y === 6),
+    `expected corner-connected plan to keep both west and north gate pairs, got ${JSON.stringify(normalized.gates)}`,
+  );
+  assert(
+    !normalized.walls.some((pos) => pos.x === 2 && pos.y === 4) &&
+      !normalized.walls.some((pos) => pos.x === 2 && pos.y === 5),
+    `expected preserved west gate pair to stay out of the wall set, got walls=${JSON.stringify(normalized.walls)} gates=${JSON.stringify(normalized.gates)}`,
+  );
+}
+
+function runDefenseCornerApproachGroupingScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_CORNER_APPROACH", {
+    tick: 589,
+    controllerLevel: 4,
+    spawnX: 25,
+    spawnY: 25,
+    controllerX: 40,
+    controllerY: 40,
+    sourceAX: 41,
+    sourceAY: 25,
+    sourceBX: 34,
+    sourceBY: 40,
+    mineralX: 40,
+    mineralY: 10,
+    terrainWalls: buildCornerApproachDefenseTerrainWalls(),
+  });
+
+  const approaches = defenseLayout.getExitApproaches(room.name, room.getTerrain());
+
+  assert(approaches.length === 1, `expected connected top/left openings to merge into one approach, got ${JSON.stringify(approaches)}`);
+  assert(
+    approaches[0].passages.some((passage) => passage.side === "top") &&
+      approaches[0].passages.some((passage) => passage.side === "left"),
+    `expected merged corner approach to include top and left passages, got ${JSON.stringify(approaches[0])}`,
+  );
+
+  const anchor = new RoomPosition(25, 25, room.name);
+  const plan = defenseLayout.getPlanForAnchor(room, anchor);
+
+  assert(plan, "expected merged corner approach to produce a defense plan");
+  assert(
+    plan.gates.some((pos) => pos.y <= 8) &&
+      plan.gates.some((pos) => pos.x <= 8),
+    `expected merged corner approach to keep gate coverage on both north and west runs, got ${JSON.stringify(plan.gates)}`,
+  );
+  assert(
+    plan.gates.length >= 4,
+    `expected merged corner approach to preserve at least two gate pairs, got ${JSON.stringify(plan.gates)}`,
+  );
+}
+
+function runDefenseAssetPerimeterScenario() {
+  const room = buildRoomScenario("VAL_DEFENSE_ASSET_PERIMETER", {
+    tick: 589,
+    controllerLevel: 4,
+    spawnX: 25,
+    spawnY: 25,
+    controllerX: 25,
+    controllerY: 34,
+    sourceAX: 17,
+    sourceAY: 25,
+    sourceBX: 33,
+    sourceBY: 25,
+    mineralX: 40,
+    mineralY: 10,
     sourceContainers: true,
     supportContainers: true,
     foundationRoads: true,
     backboneRoads: true,
-    terrainWalls: buildOpenEdgeDefenseTerrainWalls(),
   });
 
-  let state = roomState.collect(room);
-  const initialPlan = defenseLayout.getPlan(room, state);
-  assert(initialPlan && initialPlan.gates.length > 0, "expected initial defense plan");
+  const state = roomState.collect(room);
+  const plan = defenseLayout.getPlan(room, state);
 
-  const initialGate = initialPlan.gates[0];
-  room.addStructure(
-    createStructure(STRUCTURE_RAMPART, initialGate.x, initialGate.y, {
-      roomName: room.name,
-      hits: 6000,
-      hitsMax: 6000,
-    }),
-  );
-
-  const storagePos = pickOpenPositions(
-    room,
-    1,
-    [[room.spawn.pos.x - 1, room.spawn.pos.y + 4, 3, 3]],
-  )[0];
-  assert(storagePos, "expected open storage position for defense cleanup test");
-  room.addStructure(
-    createStructure(STRUCTURE_STORAGE, storagePos[0], storagePos[1], {
-      roomName: room.name,
-      store: { energy: 50000 },
-      storeCapacity: 1000000,
-      hits: 10000,
-      hitsMax: 10000,
-    }),
-  );
-
-  const storagePlan = defenseLayout.getPlanForAnchor(room, room.storage.pos);
-  assert(storagePlan && storagePlan.gates.length > 0, "expected storage defense plan");
-
-  const initialTiles = {};
-  for (let i = 0; i < initialPlan.gates.length; i++) {
-    initialTiles[`${initialPlan.gates[i].x}:${initialPlan.gates[i].y}`] = STRUCTURE_RAMPART;
-  }
-  for (let j = 0; j < initialPlan.walls.length; j++) {
-    initialTiles[`${initialPlan.walls[j].x}:${initialPlan.walls[j].y}`] = STRUCTURE_WALL;
-  }
-
-  let storageConflict = null;
-  let storageConflictType = null;
-  for (let k = 0; k < storagePlan.gates.length; k++) {
-    const key = `${storagePlan.gates[k].x}:${storagePlan.gates[k].y}`;
-    if (initialTiles[key] !== STRUCTURE_RAMPART) {
-      storageConflict = storagePlan.gates[k];
-      storageConflictType = STRUCTURE_RAMPART;
-      break;
-    }
-  }
-  if (!storageConflict) {
-    for (let m = 0; m < storagePlan.walls.length; m++) {
-      const key = `${storagePlan.walls[m].x}:${storagePlan.walls[m].y}`;
-      if (initialTiles[key] !== STRUCTURE_WALL) {
-        storageConflict = storagePlan.walls[m];
-        storageConflictType = STRUCTURE_WALL;
-        break;
-      }
-    }
-  }
-  assert(storageConflict, "expected a storage-conflict defense tile for cleanup test");
-
-  const storageConflictKey = `${storageConflict.x}:${storageConflict.y}`;
-  const originalConflictType = initialTiles[storageConflictKey] || null;
-
-  if (originalConflictType) {
-    room.addStructure(
-      createStructure(originalConflictType, storageConflict.x, storageConflict.y, {
-        roomName: room.name,
-        hits: 4500,
-        hitsMax: 4500,
-      }),
-    );
-  }
-
-  room.addStructure(
-    createStructure(storageConflictType, storageConflict.x, storageConflict.y, {
-      roomName: room.name,
-      hits: 1500,
-      hitsMax: 1500,
-    }),
-  );
-  room.addStructure(
-    createStructure(STRUCTURE_WALL, initialGate.x, initialGate.y, {
-      roomName: room.name,
-      hits: 500,
-      hitsMax: 500,
-    }),
-  );
-
-  state = roomState.collect(room);
-  const resolvedPlan = defenseLayout.getPlan(room, state);
-  const initialGateKeys = initialPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
-  const resolvedGateKeys = resolvedPlan.gates.map((pos) => `${pos.x}:${pos.y}`).join(",");
-
+  assert(plan, "expected asset-perimeter room to produce a defense plan");
   assert(
-    resolvedGateKeys === initialGateKeys,
-    `expected cleanup to keep the original defense gate plan, got ${resolvedGateKeys} instead of ${initialGateKeys}`,
-  );
-
-  const context = constructionManager.createPlanContext(room, state);
-  constructionManager.placeDefense(context);
-
-  const overlappingWalls = room.lookForAt(LOOK_STRUCTURES, initialGate.x, initialGate.y)
-    .filter((structure) => structure.structureType === STRUCTURE_WALL);
-  const overlappingRamparts = room.lookForAt(LOOK_STRUCTURES, initialGate.x, initialGate.y)
-    .filter((structure) => structure.structureType === STRUCTURE_RAMPART);
-  assert(
-    overlappingWalls.length === 0,
-    "expected later wall overlap on the original gate tile to be destroyed",
+    !plan.walls.some((pos) => pos.x <= 3 || pos.y <= 3 || pos.x >= 46 || pos.y >= 46) &&
+      !plan.gates.some((pos) => pos.x <= 3 || pos.y <= 3 || pos.x >= 46 || pos.y >= 46),
+    `expected asset-perimeter defense to stay off room edges, got walls=${JSON.stringify(plan.walls)} gates=${JSON.stringify(plan.gates)}`,
   );
   assert(
-    overlappingRamparts.length === 1,
-    "expected the original gate rampart to remain after cleanup",
+    plan.walls.some((pos) => (
+      pos.getRangeTo(room.spawn.pos) <= 18 ||
+      pos.getRangeTo(room.controller.pos) <= 10 ||
+      pos.getRangeTo(room.find(FIND_SOURCES)[0].pos) <= 10 ||
+      pos.getRangeTo(room.find(FIND_SOURCES)[1].pos) <= 10
+    )) ||
+      plan.gates.some((pos) => (
+        pos.getRangeTo(room.spawn.pos) <= 18 ||
+        pos.getRangeTo(room.controller.pos) <= 10 ||
+        pos.getRangeTo(room.find(FIND_SOURCES)[0].pos) <= 10 ||
+        pos.getRangeTo(room.find(FIND_SOURCES)[1].pos) <= 10
+      )),
+    `expected asset-perimeter defense to stay near the protected economy footprint, got walls=${JSON.stringify(plan.walls)} gates=${JSON.stringify(plan.gates)}`,
+  );
+}
+
+function runDefensePlanLockScenario() {
+  const room = buildRoomScenario("VAL_ACTIVE_DEFENSE_TOWER_ONLY", {
+    tick: 590,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1800,
+    energyCapacityAvailable: 1800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 100000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TOWER, x: 28, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "invader1",
+        x: 23,
+        y: 21,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: ATTACK },
+          { type: ATTACK },
+        ],
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const threat = state.defense.homeThreat;
+
+  assert(threat && threat.active, "expected hostile pressure to produce an active threat");
+  assert(threat.towerCanHandle, "expected towers to fully cover a weak intruder");
+  assert(
+    threat.desiredDefenders === 0,
+    `expected no defender spawn request when towers can hold, got ${threat.desiredDefenders}`,
+  );
+  assert(
+    threat.responseMode === "tower_only",
+    `expected tower-only defense mode, got ${threat.responseMode}`,
+  );
+  assert(threat.towerTargetId, "expected a selected tower focus target");
+
+  towerManager.run(room, state);
+
+  assert(
+    currentRuntime.towerActions.length === 2,
+    `expected both towers to fire, got ${currentRuntime.towerActions.length}`,
+  );
+  assert(
+    currentRuntime.towerActions.every((action) => action.targetId === threat.towerTargetId),
+    `expected tower focus fire on ${threat.towerTargetId}, got ${JSON.stringify(currentRuntime.towerActions)}`,
+  );
+}
+
+function runDefenseConflictCleanupScenario() {
+  const room = buildRoomScenario("VAL_ACTIVE_DEFENSE_ESCALATION", {
+    tick: 595,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 150 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "invader_healer",
+        x: 5,
+        y: 5,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: HEAL },
+          { type: HEAL },
+          { type: TOUGH },
+        ],
+      },
+      {
+        name: "invader_melee",
+        x: 7,
+        y: 6,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+        ],
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const threat = state.defense.homeThreat;
+
+  assert(threat && threat.active, "expected hostile pressure to produce an active threat");
+  assert(
+    !threat.towerCanHandle,
+    "expected low-energy edge pressure with healing support to require creeps",
+  );
+  assert(
+    threat.desiredDefenders >= 1,
+    `expected defender escalation, got ${threat.desiredDefenders}`,
+  );
+  assert(
+    threat.responseMode === "tower_support",
+    `expected tower-support mode, got ${threat.responseMode}`,
   );
 
-  const strayDefense = room.lookForAt(LOOK_STRUCTURES, storageConflict.x, storageConflict.y)
-    .filter((structure) => (
-      structure.structureType === STRUCTURE_WALL ||
-      structure.structureType === STRUCTURE_RAMPART
-    ));
-  if (originalConflictType) {
-    assert(
-      strayDefense.length === 1 && strayDefense[0].structureType === originalConflictType,
-      "expected the original defense type to remain on the conflicting tile",
-    );
-  } else {
-    assert(
-      strayDefense.length === 0,
-      "expected storage-driven stray defense structure to be destroyed",
-    );
-  }
+  const requests = spawnManager.getSpawnRequests(room, state);
+  const defenseRequests = requests.filter((request) => request.role === "defender");
+
+  assert(
+    defenseRequests.length >= 1,
+    `expected at least one defender request, got ${JSON.stringify(requests)}`,
+  );
+  assert(
+    defenseRequests[0].responseMode === "tower_support",
+    `expected defender request to preserve tower-support mode, got ${defenseRequests[0].responseMode}`,
+  );
+
+  const plan = bodies.plan("defender", room, defenseRequests[0], state);
+  assert(
+    plan.body.includes(RANGED_ATTACK),
+    `expected tower-support defender body to include ranged damage, got ${JSON.stringify(plan.body)}`,
+  );
 }
 
 function runFortificationScenario() {
@@ -3280,8 +4029,16 @@ function main() {
     ["foundation_worker_harvest_spread", runFoundationWorkerHarvestSpreadScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
+    ["extension_core", runCompactExtensionCoreScenario],
+    ["extension_terrain", runTerrainAwareExtensionPlanScenario],
+    ["controller_road_dedup", runControllerRoadDedupScenario],
+    ["stamp_road_budget", runStampRoadBudgetScenario],
+    ["shared_internal_roads", runSharedInternalRoadScenario],
+    ["compact_lab_plan", runCompactLabPlanScenario],
     ["development_storage_gate", runDevelopmentStorageGateScenario],
     ["storage_planning_road_conflict", runStoragePlanningRoadConflictScenario],
+    ["storage_planning_dense_terrain", runStoragePlanningDenseTerrainScenario],
+    ["storage_planning_harsh_terrain", runStoragePlanningHarshTerrainScenario],
     ["container_usage", runContainerUsageScenario],
     ["logistics", runLogisticsScenario],
     ["specialization", runSpecializationScenario],
@@ -3295,8 +4052,13 @@ function main() {
     ["tower_banking_threshold", runTowerBankingThresholdScenario],
     ["mineral_access_road", runMineralAccessRoadScenario],
     ["defense_border_support", runDefenseBorderSupportScenario],
-    ["defense_plan_lock", runDefensePlanLockScenario],
-    ["defense_conflict_cleanup", runDefenseConflictCleanupScenario],
+    ["defense_west_gate_centering", runDefenseWestGateCenteringScenario],
+    ["defense_north_split_gate", runDefenseNorthSplitGateScenario],
+    ["defense_corner_gate_coalesce", runDefenseCornerGateCoalesceScenario],
+    ["defense_corner_approach_grouping", runDefenseCornerApproachGroupingScenario],
+    ["defense_asset_perimeter", runDefenseAssetPerimeterScenario],
+    ["defense_tower_only", runDefensePlanLockScenario],
+    ["defense_spawn_escalation", runDefenseConflictCleanupScenario],
     ["fortification", runFortificationScenario],
     ["rcl7_transition", runRcl7UpgradeTransitionScenario],
     ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],

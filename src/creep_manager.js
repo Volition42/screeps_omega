@@ -20,6 +20,7 @@ const roleHauler = require("role_hauler");
 const roleUpgrader = require("role_upgrader");
 const roleRepair = require("role_repair");
 const roleDefender = require("role_defender");
+const statsManager = require("stats_manager");
 const utils = require("utils");
 
 const RETREAT_MOVE_OPTIONS = {
@@ -28,7 +29,7 @@ const RETREAT_MOVE_OPTIONS = {
 
 module.exports = {
   run(room, state, profiler, roomLabelPrefix, runtimeMode) {
-    const creeps = state && state.homeCreeps ? state.homeCreeps : [];
+    const creeps = state && state.homeCreeps ? state.homeCreeps.slice() : [];
     const roleLabelPrefix =
       profiler && roomLabelPrefix ? `${roomLabelPrefix}.creeps.role.` : null;
     const thinkMultiplier =
@@ -36,8 +37,17 @@ module.exports = {
         ? runtimeMode.thinkIntervalMultiplier
         : 1;
 
+    creeps.sort(function (a, b) {
+      return module.exports.getRoleCpuPriority(a.memory.role) -
+        module.exports.getRoleCpuPriority(b.memory.role);
+    });
+
     for (let i = 0; i < creeps.length; i++) {
       const creep = creeps[i];
+
+      if (this.shouldSkipForCpuBudget(creep, runtimeMode)) {
+        continue;
+      }
 
       if (this.runDefenseRetreat(creep, state)) {
         continue;
@@ -132,6 +142,47 @@ module.exports = {
         : 1;
 
     return Math.max(1, configured * Math.max(1, multiplier || 1));
+  },
+
+  getRoleCpuPriority(role) {
+    switch (role) {
+      case "defender":
+        return 0;
+      case "hauler":
+        return 1;
+      case "miner":
+        return 2;
+      case "worker":
+        return 3;
+      case "jrworker":
+        return 4;
+      case "upgrader":
+        return 5;
+      case "repair":
+        return 6;
+      case "mineral_miner":
+        return 7;
+      default:
+        return 8;
+    }
+  },
+
+  shouldSkipForCpuBudget(creep, runtimeMode) {
+    if (!creep || !creep.memory) return false;
+    if (!statsManager.isPastSoftCpuLimit(0)) return false;
+
+    const role = creep.memory.role;
+    if (role === "defender") return false;
+
+    if (!runtimeMode || runtimeMode.pressure === "normal") {
+      return role !== "hauler" && role !== "miner";
+    }
+
+    if (runtimeMode.pressure === "tight") {
+      return role !== "hauler" && role !== "miner";
+    }
+
+    return true;
   },
 
   runDefenseRetreat(creep, state) {

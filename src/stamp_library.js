@@ -9,15 +9,17 @@ Purpose:
 
 Current Stamps:
 - anchor_v1:
-    spawn-centered road spine / hub seed
-- extension_plus_v1:
-    tileable extension field with road cross
+    spawn-centered minimal road spine / hub seed
+- extension_hall_v1:
+    compact extension pod with a short internal hallway
 - tower_cluster_v1:
     compact tower support stamp
 - storage_hub_v1:
-    storage-centered utility hub with reserved slots for advanced logistics
+    storage-centered utility hub with minimal cardinals for advanced logistics
 - lab_cluster_v1:
-    first 3-lab cluster for RCL6 bootstrap chemistry
+    first 3-lab cluster with minimal access roads
+- lab_compact_v1:
+    compact multi-lab cluster for the full reaction set
 
 Important Notes:
 - The anchor uses the first owned spawn as its origin.
@@ -35,13 +37,8 @@ module.exports = {
         { x: 0, y: -1 },
         { x: -1, y: -1 },
         { x: 1, y: -1 },
-        { x: -1, y: 0 },
-        { x: 1, y: 0 },
-        { x: -1, y: 1 },
         { x: 0, y: 1 },
-        { x: 1, y: 1 },
         { x: 0, y: 2 },
-        { x: 0, y: 3 },
       ],
       extensions: [],
       towers: [],
@@ -61,23 +58,22 @@ module.exports = {
       ],
     },
 
-    extension_plus_v1: {
-      name: "extension_plus_v1",
+    extension_hall_v1: {
+      name: "extension_hall_v1",
       roads: [
-        { x: 0, y: -1 },
         { x: 0, y: 0 },
         { x: 0, y: 1 },
       ],
       extensions: [
-        { x: -1, y: -2 },
-        { x: 1, y: -2 },
-        { x: -2, y: -1 },
-        { x: 2, y: -1 },
-        { x: -2, y: 0 },
-        { x: 2, y: 0 },
-        { x: -2, y: 1 },
-        { x: 2, y: 1 },
+        { x: -1, y: -1 },
+        { x: 0, y: -1 },
+        { x: 1, y: -1 },
+        { x: -1, y: 0 },
+        { x: 1, y: 0 },
+        { x: -1, y: 1 },
+        { x: 1, y: 1 },
         { x: -1, y: 2 },
+        { x: 0, y: 2 },
         { x: 1, y: 2 },
       ],
       towers: [],
@@ -99,8 +95,6 @@ module.exports = {
         { x: -1, y: 0 },
         { x: 1, y: 0 },
         { x: 0, y: 1 },
-        { x: -1, y: 1 },
-        { x: 1, y: 1 },
       ],
       storages: [{ x: 0, y: 0 }],
       extensions: [],
@@ -121,7 +115,6 @@ module.exports = {
       roads: [
         { x: 1, y: 0 },
         { x: 0, y: 1 },
-        { x: 2, y: 1 },
       ],
       storages: [],
       extensions: [],
@@ -130,6 +123,30 @@ module.exports = {
         { x: 0, y: 0 },
         { x: 1, y: 1 },
         { x: 2, y: 0 },
+      ],
+      reserved: [],
+    },
+
+    lab_compact_v1: {
+      name: "lab_compact_v1",
+      roads: [
+        { x: 0, y: 1 },
+        { x: 1, y: 0 },
+      ],
+      storages: [],
+      extensions: [],
+      towers: [],
+      labs: [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+        { x: -1, y: 0 },
+        { x: 0, y: -1 },
+        { x: 1, y: -1 },
+        { x: 2, y: 0 },
+        { x: -1, y: 1 },
+        { x: 0, y: 2 },
+        { x: 1, y: 2 },
+        { x: 2, y: 1 },
       ],
       reserved: [],
     },
@@ -196,17 +213,24 @@ module.exports = {
     };
   },
 
+  getDefaultExtensionStampName() {
+    return "extension_hall_v1";
+  },
+
   getExtensionStampOrigins(anchor) {
     if (!anchor) return [];
 
     return this.filterValidOrigins([
-      { x: anchor.x, y: anchor.y - 6, roomName: anchor.roomName },
-      { x: anchor.x + 6, y: anchor.y - 5, roomName: anchor.roomName },
-      { x: anchor.x + 8, y: anchor.y + 1, roomName: anchor.roomName },
-      { x: anchor.x + 6, y: anchor.y + 7, roomName: anchor.roomName },
-      { x: anchor.x - 6, y: anchor.y + 7, roomName: anchor.roomName },
-      { x: anchor.x - 8, y: anchor.y + 1, roomName: anchor.roomName },
-      { x: anchor.x - 6, y: anchor.y - 5, roomName: anchor.roomName },
+      { x: anchor.x - 4, y: anchor.y - 6, roomName: anchor.roomName },
+      { x: anchor.x + 4, y: anchor.y - 6, roomName: anchor.roomName },
+      { x: anchor.x - 6, y: anchor.y - 1, roomName: anchor.roomName },
+      { x: anchor.x + 6, y: anchor.y - 1, roomName: anchor.roomName },
+      { x: anchor.x - 4, y: anchor.y + 4, roomName: anchor.roomName },
+      { x: anchor.x + 4, y: anchor.y + 4, roomName: anchor.roomName },
+      { x: anchor.x - 8, y: anchor.y + 4, roomName: anchor.roomName },
+      { x: anchor.x + 8, y: anchor.y + 4, roomName: anchor.roomName },
+      { x: anchor.x - 8, y: anchor.y - 4, roomName: anchor.roomName },
+      { x: anchor.x + 8, y: anchor.y - 4, roomName: anchor.roomName },
     ]);
   },
 
@@ -231,6 +255,19 @@ module.exports = {
       { x: anchor.x + 4, y: anchor.y, roomName: anchor.roomName },
       { x: anchor.x - 4, y: anchor.y, roomName: anchor.roomName },
       { x: anchor.x, y: anchor.y - 4, roomName: anchor.roomName },
+    ]);
+  },
+
+  getLabCompactStampOrigins(storagePos) {
+    if (!this.isOriginValid(storagePos)) return [];
+
+    return this.filterValidOrigins([
+      { x: storagePos.x + 2, y: storagePos.y + 2, roomName: storagePos.roomName },
+      { x: storagePos.x - 3, y: storagePos.y + 2, roomName: storagePos.roomName },
+      { x: storagePos.x + 2, y: storagePos.y - 3, roomName: storagePos.roomName },
+      { x: storagePos.x - 3, y: storagePos.y - 3, roomName: storagePos.roomName },
+      { x: storagePos.x + 4, y: storagePos.y + 1, roomName: storagePos.roomName },
+      { x: storagePos.x - 5, y: storagePos.y + 1, roomName: storagePos.roomName },
     ]);
   },
 

@@ -13,11 +13,11 @@ As of April 2, 2026:
 
 ## Local Paths
 
-- PTR private server root: `/Users/jaysheldon/screeps_private_server_ptr`
-- Optional alternate local server root: `/Users/jaysheldon/screeps_private_server`
-- Browser client root: `/Users/jaysheldon/screeps_browser_client`
-- PTR Node binary path: `/opt/homebrew/opt/node@24/bin`
-- Alternate local Node binary path: `/opt/homebrew/opt/node@24/bin`
+- PTR private server root: `/home/vadmin/screeps_private_server_ptr`
+- Optional alternate local server root: `/home/vadmin/screeps_private_server`
+- Browser client root: `/home/vadmin/screeps_browser_client`
+- PTR Node binary path: `/usr/bin`
+- Browser client Node binary path: `/home/vadmin/.local/opt/node24/bin`
 - PTR server URL: `http://127.0.0.1:21035`
 - PTR CLI port: `21036`
 - Local dev auth token: `screeps-omega-dev-token`
@@ -35,6 +35,7 @@ The private server stays outside the repo on purpose. Only the helper scripts an
 - The local no-auth patch now also bridges `/api/auth/steam-ticket`, so the Screeps client login flow can complete without live Steam auth against this private server.
 - Browser access is provided by a separate `screepers-steamless-client` install on `http://127.0.0.1:8080/`, not by the private server itself.
 - The private server also loads `node_modules/screepsmod-auth`, which provides `/api/auth/signin` and password auth for the browser client.
+- The browser helper now defaults both the public browser URL and the public server URL to `127.0.0.1`. Keep this unless intentionally testing through a remote/Tailscale route; stale public routes can break room subscriptions and make the room view show `WAITING FOR DATA / Too many tabs opened`.
 - All repo helper scripts source `scripts/private_server/load_server_profile.sh`. The default `ptr` profile now uses Node 24. Set `SCREEPS_SERVER_PROFILE=feat-node24` only when you intentionally want the alternate local install.
 
 ## Repo Helpers
@@ -122,6 +123,8 @@ or the direct local-server route:
   http://127.0.0.1:8080/(http://127.0.0.1:21035)/
 ```
 
+Avoid using the Tailscale/public hostname for normal local testing unless the server and browser client were both started with matching public host overrides.
+
 3. Sign in with:
 
 ```text
@@ -160,6 +163,13 @@ Full world reset back to a fresh `src/` room:
 scripts/private_server/reset_dev_world.sh
 ```
 
+If the room view is stuck at `WAITING FOR DATA` after a reset, restart the browser client and reopen the localhost route:
+
+```bash
+scripts/private_server/stop_browser_client.sh
+scripts/private_server/start_browser_client.sh
+```
+
 Simulation control:
 
 ```bash
@@ -182,5 +192,7 @@ The private server has already been bootstrapped successfully enough to:
 - create a local user
 - place a first spawn in `W5N5`
 - observe the uploaded code spawning a `jrworker`
+- run the current HUD/client path through the localhost browser route
+- maintain the local user at the configured `20` CPU cap
 
 That means `src/` is now executing on the private PTR server instead of being limited to syntax checks.

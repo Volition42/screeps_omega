@@ -9,7 +9,7 @@ Purpose:
 
 Current stamp behavior:
 - Anchor uses the first spawn as the base origin
-- Extension fields use tileable plus-shaped stamps around the anchor
+- Extension fields use compact hallway-style pods around the anchor
 - Tower uses a compact tower cluster stamp near the anchor
 
 Important Notes:
@@ -25,7 +25,6 @@ const constructionStatus = require("construction_status");
 const roadmap = require("construction_roadmap");
 const statsManager = require("stats_manager");
 const stamps = require("stamp_library");
-const defenseLayout = require("defense_layout");
 
 module.exports = {
   plan(room, state, profiler, roomLabelPrefix) {
@@ -60,6 +59,7 @@ module.exports = {
     if (!planningPlan || !planningPlan.buildList) return;
     context.planningPlan = planningPlan;
 
+    this.refreshCoreLayoutPlan(context, planningPlan, mem);
     this.refreshFuturePlan(context, planningPlan, mem);
     context.futurePlan = mem.futurePlan || null;
 
@@ -291,6 +291,8 @@ module.exports = {
       buildStatus: state.buildStatus || constructionStatus.getStatus(room, state),
       plannedSitesByType: {},
       anchorOrigin: undefined,
+      storagePlanningPosition: undefined,
+      storagePlanningDetails: undefined,
       roadmapPhase: roadmap.getPlan(
         state.phase,
         room.controller ? room.controller.level : 0,
@@ -308,6 +310,15 @@ module.exports = {
     }
 
     return context.anchorOrigin;
+  },
+
+  refreshCoreLayoutPlan(context, plan, memory) {
+    memory = memory || this.getRoomConstructionMemory(context.room);
+    if (!memory.futurePlan) memory.futurePlan = {};
+
+    var extensionPlan = this.buildExtensionStampPlan(context, plan);
+    memory.futurePlan.extensionStampPlanReady = !!extensionPlan.ready;
+    memory.futurePlan.extensionStamps = extensionPlan;
   },
 
   refreshFuturePlan(context, plan, memory) {
@@ -341,7 +352,11 @@ module.exports = {
     }
 
     memory.lastAdvancedPlan = Game.time;
-    memory.futurePlan = this.buildFuturePlan(context, plan);
+    memory.futurePlan = Object.assign(
+      {},
+      memory.futurePlan || {},
+      this.buildFuturePlan(context, plan),
+    );
     memory.futurePlan.signature = signature;
   },
 
@@ -380,6 +395,7 @@ module.exports = {
   buildFuturePlan(context, plan) {
     var room = context.room;
     var storagePos = this.getStoragePlanningPosition(context);
+    var storagePlan = this.getStoragePlanningDebug(context);
     var linkPlan = this.buildLinkPlan(context, plan, storagePos);
     var used = {};
     var terminalPlan = this.buildTerminalPlan(
@@ -428,6 +444,7 @@ module.exports = {
       tick: Game.time,
       roadmapPhase: plan.roadmapPhase,
       storagePos: this.serializePos(storagePos),
+      storagePlan: storagePlan,
       linkPlanReady: !!linkPlan.ready,
       terminalPlanReady: !!terminalPlan.ready,
       mineralContainerPlanReady: !!mineralContainerPlan.ready,
@@ -447,6 +464,136 @@ module.exports = {
       powerSpawn: powerSpawnPlan,
       nuker: nukerPlan,
     };
+  },
+
+  buildExtensionStampPlan(context, plan) {
+    var room = context.room;
+    var anchor = this.getAnchorOrigin(context);
+    var desiredExtensions = room.controller
+      ? roadmap.getDesiredExtensionCount(room.controller.level)
+      : 0;
+
+    if (!anchor || !this.hasPlanAction(plan, "extensionStamps") || desiredExtensions <= 0) {
+      return {
+        enabled: false,
+        ready: false,
+        desiredExtensions: desiredExtensions,
+        plannedCapacity: 0,
+        origins: [],
+      };
+    }
+
+    var stampName = stamps.getDefaultExtensionStampName();
+    var candidates = stamps.getExtensionStampOrigins(anchor);
+    var selected = [];
+    var plannedCapacity = 0;
+    var anchorPos = new RoomPosition(anchor.x, anchor.y, anchor.roomName);
+    var used = {};
+    var remaining = [];
+
+    for (var i = 0; i < candidates.length; i++) {
+      remaining.push({
+        origin: candidates[i],
+        index: i,
+      });
+    }
+
+    while (remaining.length > 0 && plannedCapacity < desiredExtensions) {
+      var best = null;
+      var bestIndex = -1;
+
+      for (var j = 0; j < remaining.length; j++) {
+        var summary = this.getExtensionStampCandidateSummary(
+          context,
+          remaining[j].origin,
+          stampName,
+          anchorPos,
+          remaining[j].index,
+          used,
+        );
+
+        if (summary.placeableExtensions <= 0) continue;
+        if (!best || this.isBetterExtensionStampCandidate(summary, best)) {
+          best = summary;
+          bestIndex = j;
+        }
+      }
+
+      if (!best) break;
+
+      selected.push(this.serializePos(best.origin));
+      plannedCapacity += best.placeableExtensions;
+      this.markStampPlanningCellsUsed(used, best.origin, stampName);
+      remaining.splice(bestIndex, 1);
+    }
+
+    return {
+      enabled: true,
+      ready: plannedCapacity >= desiredExtensions,
+      desiredExtensions: desiredExtensions,
+      plannedCapacity: plannedCapacity,
+      origins: selected,
+    };
+  },
+
+  getExtensionStampCandidateSummary(context, origin, stampName, anchorPos, index, used) {
+    var placeableExtensions = 0;
+    var placeableRoads = 0;
+    var originPos = new RoomPosition(origin.x, origin.y, origin.roomName);
+    var self = this;
+
+    stamps.forEachExtensionPosition(origin, stampName, function (pos) {
+      if (used && self.isPosUsed(used, pos)) return;
+      if (self.canPlaceStructureSite(context, pos, STRUCTURE_EXTENSION, true)) {
+        placeableExtensions++;
+      }
+    });
+
+    stamps.forEachRoadPosition(origin, stampName, function (pos) {
+      if (used && self.isPosUsed(used, pos)) return;
+      if (self.canPlaceStructureSite(context, pos, STRUCTURE_ROAD, true)) {
+        placeableRoads++;
+      }
+    });
+
+    return {
+      index: index,
+      origin: originPos,
+      anchorRange: anchorPos ? anchorPos.getRangeTo(originPos) : 0,
+      placeableExtensions: placeableExtensions,
+      placeableRoads: placeableRoads,
+      score:
+        placeableExtensions * 45 -
+        placeableRoads * 2 -
+        (anchorPos ? anchorPos.getRangeTo(originPos) * 30 : 0) -
+        index,
+    };
+  },
+
+  isBetterExtensionStampCandidate(candidate, currentBest) {
+    if (!currentBest) return true;
+    if (candidate.score !== currentBest.score) return candidate.score > currentBest.score;
+    if (candidate.anchorRange !== currentBest.anchorRange) {
+      return candidate.anchorRange < currentBest.anchorRange;
+    }
+    if (candidate.placeableExtensions !== currentBest.placeableExtensions) {
+      return candidate.placeableExtensions > currentBest.placeableExtensions;
+    }
+    if (candidate.placeableRoads !== currentBest.placeableRoads) {
+      return candidate.placeableRoads > currentBest.placeableRoads;
+    }
+    return candidate.index < currentBest.index;
+  },
+
+  markStampPlanningCellsUsed(used, origin, stampName) {
+    if (!used || !origin) return;
+
+    stamps.forEachExtensionPosition(origin, stampName, function (pos) {
+      this.markPosUsed(used, pos);
+    }, this);
+    stamps.forEachRoadPosition(origin, stampName, function (pos) {
+      this.markPosUsed(used, pos);
+    }, this);
   },
 
   buildLinkPlan(context, plan, storagePos) {
@@ -776,28 +923,18 @@ module.exports = {
 
     used = used || {};
     this.markSerializedPosUsed(used, terminalPlan && terminalPlan.pos);
-    var stampOrigin = storagePos
-      ? this.pickPreferredStorageSlot(
-          context,
-          storagePos,
-          used,
-          "lab_anchor_slot",
-          STRUCTURE_LAB,
-        )
-      : null;
-
     var centerPos = storagePos || (context.state.spawns && context.state.spawns[0]
       ? context.state.spawns[0].pos
       : null);
-    var positions = stampOrigin && targetCount <= 3
-      ? this.getStampLabPositions(
-          context,
-          stampOrigin,
-          "lab_cluster_v1",
-          targetCount,
-          used,
-        )
-      : [];
+    var stampPlan = this.getCompactLabStampPlan(
+      context,
+      storagePos,
+      targetCount,
+      used,
+    );
+    var stampOrigin = stampPlan ? stampPlan.origin : null;
+    var stampName = stampPlan ? stampPlan.stampName : null;
+    var positions = stampPlan ? stampPlan.positions : [];
 
     if (positions.length < targetCount) {
       positions = this.pickLabCompoundPositions(
@@ -809,6 +946,7 @@ module.exports = {
         STRUCTURE_LAB,
       );
       stampOrigin = null;
+      stampName = null;
     }
 
     return {
@@ -816,7 +954,94 @@ module.exports = {
       ready: positions.length >= targetCount,
       targetCount: targetCount,
       origin: this.serializePos(stampOrigin),
+      stampName: stampName,
       positions: _.map(positions, this.serializePos, this),
+    };
+  },
+
+  getCompactLabStampPlan(context, storagePos, targetCount, used) {
+    if (!storagePos || targetCount <= 0) return null;
+
+    if (targetCount <= 3) {
+      var clusterOrigin = this.pickPreferredStorageSlot(
+        context,
+        storagePos,
+        used,
+        "lab_anchor_slot",
+        STRUCTURE_LAB,
+      );
+
+      if (!clusterOrigin) return null;
+
+      var clusterUsed = Object.assign({}, used);
+      var clusterPositions = this.getStampLabPositions(
+        context,
+        clusterOrigin,
+        "lab_cluster_v1",
+        targetCount,
+        clusterUsed,
+      );
+
+      if (clusterPositions.length < targetCount) return null;
+
+      Object.assign(used, clusterUsed);
+      return {
+        origin: clusterOrigin,
+        stampName: "lab_cluster_v1",
+        positions: clusterPositions,
+      };
+    }
+
+    var origins = stamps.getLabCompactStampOrigins(storagePos);
+    var best = null;
+
+    for (var i = 0; i < origins.length; i++) {
+      var origin = new RoomPosition(origins[i].x, origins[i].y, origins[i].roomName);
+      var candidateUsed = Object.assign({}, used);
+      var positions = this.getStampLabPositions(
+        context,
+        origin,
+        "lab_compact_v1",
+        targetCount,
+        candidateUsed,
+      );
+
+      if (positions.length < targetCount) continue;
+
+      var roadOpen = 0;
+      stamps.forEachRoadPosition(origin, "lab_compact_v1", function (pos) {
+        if (this.canPlaceStructureSite(context, pos, STRUCTURE_ROAD, true)) {
+          roadOpen++;
+        }
+      }, this);
+
+      var summary = {
+        origin: origin,
+        positions: positions,
+        used: candidateUsed,
+        anchorRange: storagePos.getRangeTo(origin),
+        roadOpen: roadOpen,
+      };
+
+      if (
+        !best ||
+        summary.roadOpen > best.roadOpen ||
+        (
+          summary.roadOpen === best.roadOpen &&
+          summary.anchorRange < best.anchorRange
+        )
+      ) {
+        best = summary;
+      }
+    }
+
+    if (!best) return null;
+
+    Object.assign(used, best.used);
+    return {
+      origin: best.origin,
+      stampName: "lab_compact_v1",
+      positions: best.positions,
     };
   },
 
@@ -1013,37 +1238,281 @@ module.exports = {
   },
 
   getStoragePlanningPosition(context) {
+    if (context.storagePlanningPosition !== undefined) {
+      return context.storagePlanningPosition;
+    }
+
     var storage = context.state.structuresByType[STRUCTURE_STORAGE];
     if (storage && storage.length > 0) {
-      return storage[0].pos;
+      context.storagePlanningPosition = storage[0].pos;
+      context.storagePlanningDetails = {
+        mode: "existing",
+        fixedCandidateCount: 0,
+        fixedRejectedCount: 0,
+        fixedRejectCounts: {},
+      };
+      return context.storagePlanningPosition;
     }
 
     var storageSites = this.getSitesByType(context, STRUCTURE_STORAGE);
     if (storageSites.length > 0) {
-      return storageSites[0].pos;
+      context.storagePlanningPosition = storageSites[0].pos;
+      context.storagePlanningDetails = {
+        mode: "site",
+        fixedCandidateCount: 0,
+        fixedRejectedCount: 0,
+        fixedRejectCounts: {},
+      };
+      return context.storagePlanningPosition;
     }
 
     var anchor = this.getAnchorOrigin(context);
-    var candidates = anchor
+    var best = null;
+    var fixedRejectCounts = {};
+    var anchorPos = anchor
+      ? new RoomPosition(anchor.x, anchor.y, anchor.roomName)
+      : null;
+    var fixedCandidates = anchor
       ? _.map(stamps.getStorageStampOrigins(anchor), function (origin) {
           return new RoomPosition(origin.x, origin.y, origin.roomName);
         })
       : [];
 
-    for (var i = 0; i < candidates.length; i++) {
-      if (
-        this.isStructurePlanningPositionOpen(
-          context,
-          candidates[i],
-          STRUCTURE_STORAGE,
-          {},
-        )
-      ) {
-        return candidates[i];
+    for (var i = 0; i < fixedCandidates.length; i++) {
+      var summary = this.getStorageCandidateSummary(
+        context,
+        fixedCandidates[i],
+        anchorPos,
+        i,
+      );
+      if (!summary) {
+        this.incrementStorageRejectCount(
+          fixedRejectCounts,
+          this.getStorageCandidateBlockReason(context, fixedCandidates[i]),
+        );
+        continue;
+      }
+      if (!best || this.isBetterStorageCandidate(summary, best)) {
+        best = summary;
       }
     }
 
-    return null;
+    if (best) {
+      context.storagePlanningPosition = best.pos;
+      context.storagePlanningDetails = {
+        mode: "fixed",
+        fixedCandidateCount: fixedCandidates.length,
+        fixedRejectedCount: this.getStorageRejectCountTotal(fixedRejectCounts),
+        fixedRejectCounts: fixedRejectCounts,
+        criticalOpen: best.criticalOpen,
+        roadOpen: best.roadOpen,
+        utilityOpen: best.utilityOpen,
+      };
+      return context.storagePlanningPosition;
+    }
+
+    var candidates = this.getStorageOriginCandidates(context, anchor);
+    var fallbackScanned = 0;
+    for (var j = 0; j < candidates.length; j++) {
+      fallbackScanned++;
+      var fallbackSummary = this.getStorageCandidateSummary(
+        context,
+        candidates[j],
+        anchorPos,
+        j,
+      );
+      if (!fallbackSummary) continue;
+      if (!best || this.isBetterStorageCandidate(fallbackSummary, best)) {
+        best = fallbackSummary;
+      }
+    }
+
+    context.storagePlanningPosition = best ? best.pos : null;
+    context.storagePlanningDetails = {
+      mode: best ? "fallback" : "blocked",
+      fixedCandidateCount: fixedCandidates.length,
+      fixedRejectedCount: fixedCandidates.length,
+      fixedRejectCounts: fixedRejectCounts,
+      fallbackScanned: fallbackScanned,
+      criticalOpen: best ? best.criticalOpen : 0,
+      roadOpen: best ? best.roadOpen : 0,
+      utilityOpen: best ? best.utilityOpen : 0,
+    };
+    return context.storagePlanningPosition;
+  },
+
+  getStoragePlanningDebug(context) {
+    var pos = this.getStoragePlanningPosition(context);
+    var details = context.storagePlanningDetails || {};
+
+    return {
+      mode: details.mode || (pos ? "planned" : "blocked"),
+      pos: this.serializePos(pos),
+      fixedCandidateCount: details.fixedCandidateCount || 0,
+      fixedRejectedCount: details.fixedRejectedCount || 0,
+      fixedRejectCounts: details.fixedRejectCounts || {},
+      fallbackScanned: details.fallbackScanned || 0,
+      criticalOpen: details.criticalOpen || 0,
+      roadOpen: details.roadOpen || 0,
+      utilityOpen: details.utilityOpen || 0,
+    };
+  },
+
+  getStorageOriginCandidates(context, anchor) {
+    if (!anchor) return [];
+
+    var results = [];
+    var seen = {};
+    var fixed = stamps.getStorageStampOrigins(anchor);
+    var anchorPos = new RoomPosition(anchor.x, anchor.y, anchor.roomName);
+    var nearby = this.getNearbyPositions(anchorPos, 3, 10);
+
+    function push(pos) {
+      if (!pos) return;
+      var key = pos.x + ":" + pos.y;
+      if (seen[key]) return;
+      seen[key] = true;
+      results.push(pos);
+    }
+
+    for (var i = 0; i < fixed.length; i++) {
+      seen[fixed[i].x + ":" + fixed[i].y] = true;
+    }
+    for (var j = 0; j < nearby.length; j++) {
+      push(nearby[j]);
+    }
+
+    return results;
+  },
+
+  getStorageCandidateSummary(context, pos, anchorPos, index) {
+    if (!this.canPlaceStructureSite(context, pos, STRUCTURE_STORAGE, true)) {
+      return null;
+    }
+
+    var roadOpen = 0;
+    var roadBlocked = 0;
+    var reservedOpen = 0;
+    var criticalOpen = 0;
+    var utilityOpen = 0;
+    var self = this;
+    var criticalTags = {
+      storage_link_slot: true,
+      terminal_slot: true,
+      lab_anchor_slot: true,
+    };
+
+    stamps.forEachRoadPosition(pos, "storage_hub_v1", function (roadPos) {
+      if (self.canPlaceStructureSite(context, roadPos, STRUCTURE_ROAD, true)) {
+        roadOpen++;
+      } else {
+        roadBlocked++;
+      }
+    });
+
+    stamps.forEachReservedPosition(pos, "storage_hub_v1", function (reservedPos, cell) {
+      if (!self.isPlanningPositionOpen(context, reservedPos, {})) return;
+      reservedOpen++;
+      if (criticalTags[cell.tag]) {
+        criticalOpen++;
+      } else if (cell.tag === "utility_slot") {
+        utilityOpen++;
+      }
+    });
+
+    return {
+      pos: pos,
+      index: index,
+      anchorRange: anchorPos ? anchorPos.getRangeTo(pos) : 0,
+      roadOpen: roadOpen,
+      roadBlocked: roadBlocked,
+      reservedOpen: reservedOpen,
+      criticalOpen: criticalOpen,
+      utilityOpen: utilityOpen,
+      score:
+        criticalOpen * 120 +
+        utilityOpen * 35 +
+        roadOpen * 12 +
+        reservedOpen * 6 -
+        roadBlocked * 8 -
+        (anchorPos ? anchorPos.getRangeTo(pos) * 18 : 0) -
+        index,
+    };
+  },
+
+  isBetterStorageCandidate(candidate, currentBest) {
+    if (!currentBest) return true;
+    if (candidate.score !== currentBest.score) return candidate.score > currentBest.score;
+    if (candidate.criticalOpen !== currentBest.criticalOpen) {
+      return candidate.criticalOpen > currentBest.criticalOpen;
+    }
+    if (candidate.roadOpen !== currentBest.roadOpen) {
+      return candidate.roadOpen > currentBest.roadOpen;
+    }
+    if (candidate.anchorRange !== currentBest.anchorRange) {
+      return candidate.anchorRange < currentBest.anchorRange;
+    }
+    return candidate.index < currentBest.index;
+  },
+
+  incrementStorageRejectCount(counts, reason) {
+    if (!counts || !reason) return;
+    counts[reason] = (counts[reason] || 0) + 1;
+  },
+
+  getStorageRejectCountTotal(counts) {
+    if (!counts) return 0;
+
+    var total = 0;
+    for (var key in counts) {
+      if (!Object.prototype.hasOwnProperty.call(counts, key)) continue;
+      total += counts[key] || 0;
+    }
+
+    return total;
+  },
+
+  getStorageCandidateBlockReason(context, pos) {
+    if (!pos) return "invalid";
+    if (pos.x < 2 || pos.x > 47 || pos.y < 2 || pos.y > 47) return "border";
+    if (!this.hasBorderSupportWalls(context, pos, STRUCTURE_STORAGE)) return "border";
+    if (context.terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) return "terrain";
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    var sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+    if (_.some(structures, function (s) {
+      return s.structureType === STRUCTURE_STORAGE;
+    })) {
+      return "existing";
+    }
+    if (_.some(sites, function (s) {
+      return s.structureType === STRUCTURE_STORAGE;
+    })) {
+      return "site";
+    }
+
+    var self = this;
+    if (_.some(structures, function (s) {
+      if (
+        s.structureType === STRUCTURE_ROAD &&
+        self.canReplaceRoadWithStructure(STRUCTURE_STORAGE)
+      ) {
+        return false;
+      }
+
+      return !self.canStructureTypesShareTile(STRUCTURE_STORAGE, s.structureType);
+    })) {
+      return "occupied";
+    }
+
+    if (_.some(sites, function (s) {
+      return !self.canStructureTypesShareTile(STRUCTURE_STORAGE, s.structureType);
+    })) {
+      return "site";
+    }
+
+    return "blocked";
   },
 
   pickPreferredStorageSlot(context, storagePos, used, tag, structureType) {
@@ -1517,19 +1986,23 @@ module.exports = {
   },
 
   getCachedFuturePlan(context) {
+    var plan = context.planningPlan || roadmap.getPlan(
+      context.state.phase,
+      context.room.controller ? context.room.controller.level : 0,
+    );
     var advancedConfig =
       config.CONSTRUCTION && config.CONSTRUCTION.ADVANCED_ACTIONS
         ? config.CONSTRUCTION.ADVANCED_ACTIONS
         : {};
 
     if (advancedConfig.USE_CACHED_FUTURE_PLAN === false) {
-      return this.buildFuturePlan(
+      var livePlan = this.buildFuturePlan(
         context,
-        roadmap.getPlan(
-          context.state.phase,
-          context.room.controller ? context.room.controller.level : 0,
-        ),
+        plan,
       );
+      livePlan.extensionStamps = this.buildExtensionStampPlan(context, plan);
+      livePlan.extensionStampPlanReady = !!livePlan.extensionStamps.ready;
+      return livePlan;
     }
 
     if (context.futurePlan) return context.futurePlan;
@@ -1537,6 +2010,24 @@ module.exports = {
     var memory = this.getRoomConstructionMemory(context.room);
     context.futurePlan = memory.futurePlan || null;
     return context.futurePlan;
+  },
+
+  getPlannedExtensionStampOrigins(context) {
+    var futurePlan = this.getCachedFuturePlan(context);
+    var extensionPlan =
+      futurePlan && futurePlan.extensionStamps ? futurePlan.extensionStamps : null;
+
+    if (extensionPlan && extensionPlan.origins && extensionPlan.origins.length > 0) {
+      var plannedOrigins = [];
+      for (var i = 0; i < extensionPlan.origins.length; i++) {
+        var plannedOrigin = this.deserializePos(extensionPlan.origins[i]);
+        if (plannedOrigin) plannedOrigins.push(plannedOrigin);
+      }
+      return plannedOrigins;
+    }
+
+    var anchor = this.getAnchorOrigin(context);
+    return anchor ? stamps.getExtensionStampOrigins(anchor) : [];
   },
 
   deserializePos(serializedPos) {
@@ -1699,7 +2190,7 @@ module.exports = {
       this.placeStampRoads(
         context,
         this.deserializePos(labPlan.origin),
-        "lab_cluster_v1",
+        labPlan.stampName || "lab_cluster_v1",
       );
     } else {
       var storagePos = futurePlan && futurePlan.storagePos
@@ -2090,14 +2581,15 @@ module.exports = {
       this.placeRoadPath(context, sourceContainer.pos, spawn.pos, 1);
     }
 
-    if (room.controller && !this.isSiteCapReached(context)) {
-      this.placeRoadPath(context, spawn.pos, room.controller.pos, 2);
-    }
-
     var controllerContainer =
       state.controllerContainer || this.findPlannedControllerContainer(context);
-    if (controllerContainer && !this.isSiteCapReached(context)) {
-      this.placeRoadPath(context, spawn.pos, controllerContainer.pos, 0);
+    if (room.controller && !this.isSiteCapReached(context)) {
+      this.placeRoadPath(
+        context,
+        spawn.pos,
+        controllerContainer ? controllerContainer.pos : room.controller.pos,
+        controllerContainer ? 0 : 2,
+      );
     }
 
     var hubContainer = state.hubContainer || this.findPlannedHubContainer(context);
@@ -2117,7 +2609,7 @@ module.exports = {
     var origin = this.getAnchorOrigin(context);
     if (!origin) return;
 
-    var stampOrigins = stamps.getExtensionStampOrigins(origin);
+    var stampOrigins = this.getPlannedExtensionStampOrigins(context);
 
     for (var i = 0; i < stampOrigins.length; i++) {
       if (this.isSiteCapReached(context)) return;
@@ -2128,14 +2620,18 @@ module.exports = {
       var placed = this.placeStampExtensions(
         context,
         stampOrigins[i],
-        "extension_plus_v1",
+        stamps.getDefaultExtensionStampName(),
         remainingExtensions,
       );
 
       remainingExtensions -= placed;
 
       if (!this.isSiteCapReached(context) && placed > 0) {
-        this.placeStampRoads(context, stampOrigins[i], "extension_plus_v1");
+        this.placeStampRoads(
+          context,
+          stampOrigins[i],
+          stamps.getDefaultExtensionStampName(),
+        );
       }
     }
 
@@ -2192,19 +2688,20 @@ module.exports = {
       targets.push(pos);
     }
 
-    var extensionOrigins = stamps.getExtensionStampOrigins(origin);
+    var extensionOrigins = this.getPlannedExtensionStampOrigins(context);
     for (var i = 0; i < extensionOrigins.length; i++) {
       pushTarget(
-        new RoomPosition(
-          extensionOrigins[i].x,
-          extensionOrigins[i].y,
-          extensionOrigins[i].roomName,
-        ),
+        extensionOrigins[i],
       );
     }
 
+    var desiredTowers = context.room.controller
+      ? roadmap.getDesiredTowerCount(context.room.controller.level)
+      : 0;
+    var towerStampCapacity = Math.max(1, stamps.getTowerCapacity("tower_cluster_v1"));
+    var towerStampsNeeded = Math.ceil(desiredTowers / towerStampCapacity);
     var towerOrigins = stamps.getTowerStampOrigins(origin);
-    for (var j = 0; j < towerOrigins.length; j++) {
+    for (var j = 0; j < towerOrigins.length && j < towerStampsNeeded; j++) {
       pushTarget(
         new RoomPosition(
           towerOrigins[j].x,
@@ -2214,27 +2711,42 @@ module.exports = {
       );
     }
 
+    var roadNodes = [spawn.pos];
+
     for (var k = 0; k < targets.length; k++) {
       if (this.isSiteCapReached(context)) return;
-      this.placeRoadPath(context, spawn.pos, targets[k], 1);
+      this.connectRoadTargetToSharedNetwork(context, roadNodes, targets[k], 1);
     }
   },
 
+  connectRoadTargetToSharedNetwork(context, roadNodes, targetPos, range) {
+    if (!targetPos) return;
+    if (!roadNodes || roadNodes.length <= 0) {
+      roadNodes = [];
+    }
+
+    var bestSource = roadNodes.length > 0 ? roadNodes[0] : null;
+    var bestRange = bestSource ? bestSource.getRangeTo(targetPos) : Infinity;
+
+    for (var i = 1; i < roadNodes.length; i++) {
+      var candidateSource = roadNodes[i];
+      var candidateRange = candidateSource.getRangeTo(targetPos);
+
+      if (candidateRange < bestRange) {
+        bestSource = candidateSource;
+        bestRange = candidateRange;
+      }
+    }
+
+    if (bestSource) {
+      this.placeRoadPath(context, bestSource, targetPos, range);
+    }
+
+    roadNodes.push(targetPos);
+  },
+
   placeDefense(context) {
-    var plan = this.getDefenseRing(context);
-    if (!plan) return;
-    this.pruneOffPlanDefenseStructures(context, plan);
-    this.pruneOffPlanDefenseSites(context, plan);
-
-    for (var i = 0; i < plan.gates.length; i++) {
-      if (this.isSiteCapReached(context)) return;
-      this.tryPlaceStructureSite(context, plan.gates[i], STRUCTURE_RAMPART);
-    }
-
-    for (var j = 0; j < plan.walls.length; j++) {
-      if (this.isSiteCapReached(context)) return;
-      this.tryPlaceStructureSite(context, plan.walls[j], STRUCTURE_WALL);
-    }
+    return;
   },
 
   pruneOffPlanDefenseStructures(context, plan) {
@@ -2692,6 +3204,7 @@ module.exports = {
 
   canReplaceRoadWithStructure(structureType) {
     return (
+      structureType === STRUCTURE_STORAGE ||
       structureType === STRUCTURE_TOWER ||
       structureType === STRUCTURE_SPAWN ||
       structureType === STRUCTURE_LINK ||
@@ -2705,6 +3218,6 @@ module.exports = {
   },
 
   getDefenseRing(context) {
-    return defenseLayout.getPlan(context.room, context.state);
+    return null;
   },
 };

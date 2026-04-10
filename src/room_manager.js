@@ -36,7 +36,7 @@ module.exports = {
       detailCpu ? roomLabel : null,
     );
     utils.setRoomRuntimeState(room, state);
-    this.captureLiveSnapshot(room, state);
+    this.captureLiveSnapshot(room, state, runtimeMode);
 
     runStep(
       "construction",
@@ -49,13 +49,20 @@ module.exports = {
     );
     runStep("links", linkManager.run, linkManager, room, state);
     runStep("towers", towerManager.run, towerManager, room, state);
-    state.advancedOps = runStep(
-      "advancedOps",
-      advancedStructureManager.run,
-      advancedStructureManager,
-      room,
-      state,
-    );
+    if (
+      !statsManager.isPastSoftCpuLimit(2) &&
+      this.shouldRunAdvancedOps(runtimeMode)
+    ) {
+      state.advancedOps = runStep(
+        "advancedOps",
+        advancedStructureManager.run,
+        advancedStructureManager,
+        room,
+        state,
+      );
+    } else {
+      state.advancedOps = advancedStructureManager.getStatus(room, state);
+    }
     runStep("spawn", spawnManager.run, spawnManager, room, state);
     runStep(
       "creeps",
@@ -67,39 +74,53 @@ module.exports = {
       detailCpu ? roomLabel : null,
       runtimeMode,
     );
-    runStep("sign", controllerSigner.run, controllerSigner, room);
-    if (!runtimeMode.skipDirectives) {
+    if (
+      !statsManager.isPastSoftCpuLimit(1) &&
+      this.shouldRunControllerSign(runtimeMode)
+    ) {
+      runStep("sign", controllerSigner.run, controllerSigner, room);
+    }
+    if (!runtimeMode.skipDirectives && !statsManager.isPastSoftCpuLimit(1)) {
       runStep("directives", directiveManager.run, directiveManager, room, state);
     }
-    if (!runtimeMode.skipHud) {
+    if (!runtimeMode.skipHud && !statsManager.isPastSoftCpuLimit(1)) {
       runStep("hud", hud.run, hud, room, state);
     }
   },
 
-  captureLiveSnapshot(room, state) {
+  shouldRunAdvancedOps(runtimeMode) {
+    if (!runtimeMode || runtimeMode.pressure === "normal") return true;
+    if (runtimeMode.pressure === "tight") return Game.time % 5 === 0;
+    return Game.time % 10 === 0;
+  },
+
+  shouldRunControllerSign(runtimeMode) {
+    if (!runtimeMode || runtimeMode.pressure === "normal") return true;
+    if (runtimeMode.pressure === "tight") return Game.time % 10 === 0;
+    return Game.time % 25 === 0;
+  },
+
+  captureLiveSnapshot(room, state, runtimeMode) {
     if (!Memory.runtime) Memory.runtime = {};
     if (!Memory.runtime.rooms) Memory.runtime.rooms = {};
 
-    const roomMemory = Memory.runtime.rooms[room.name] || {};
-    const creeps = state && state.homeCreeps ? state.homeCreeps : [];
-    const creepSnapshots = [];
+    const pressure = runtimeMode && runtimeMode.pressure ? runtimeMode.pressure : "normal";
+    const snapshotInterval =
+      pressure === "critical" ? 50 : pressure === "tight" ? 20 : 10;
+    const previous = Memory.runtime.rooms[room.name] || {};
 
-    for (let i = 0; i < creeps.length; i++) {
-      const creep = creeps[i];
-      creepSnapshots.push({
-        name: creep.name,
-        role: creep.memory && creep.memory.role ? creep.memory.role : null,
-        x: creep.pos ? creep.pos.x : null,
-        y: creep.pos ? creep.pos.y : null,
-        energy: creep.store ? creep.store[RESOURCE_ENERGY] || 0 : 0,
-        fatigue: creep.fatigue || 0,
-        working: creep.memory ? !!creep.memory.working : false,
-      });
+    if (
+      previous.tick &&
+      previous.phase === (state && state.phase ? state.phase : null) &&
+      Game.time - previous.tick < snapshotInterval
+    ) {
+      return;
     }
 
-    Memory.runtime.rooms[room.name] = Object.assign(roomMemory, {
+    Memory.runtime.rooms[room.name] = {
       tick: Game.time,
       phase: state && state.phase ? state.phase : null,
+      pressure: pressure,
       energyAvailable: room.energyAvailable,
       energyCapacityAvailable: room.energyCapacityAvailable,
       spawnEnergy:
@@ -108,7 +129,10 @@ module.exports = {
           : null,
       controllerProgress: room.controller ? room.controller.progress || 0 : null,
       controllerLevel: room.controller ? room.controller.level : null,
-      creeps: creepSnapshots,
-    });
+      roleCounts: state && state.roleCounts ? state.roleCounts : {},
+      hostileCount: state && state.defense && state.defense.homeThreat
+        ? state.defense.homeThreat.hostileCount || 0
+        : 0,
+    };
   },
 };

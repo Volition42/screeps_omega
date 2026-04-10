@@ -38,13 +38,40 @@ module.exports = {
       return;
     }
 
-    var hostile = this.getPriorityHostile(creep);
+    var hostile = this.getPriorityHostile(creep, homeThreat);
+    var attackParts = creep.getActiveBodyparts(ATTACK);
+    var rangedParts = creep.getActiveBodyparts(RANGED_ATTACK);
+    var healParts = creep.getActiveBodyparts(HEAL);
 
     if (hostile) {
-      var attackResult = creep.attack(hostile);
+      var range = creep.pos.getRangeTo(hostile);
 
-      if (attackResult === ERR_NOT_IN_RANGE) {
-        creep.moveTo(hostile, COMBAT_MOVE_OPTIONS);
+      if (rangedParts > 0 && range <= 3 && typeof creep.rangedAttack === "function") {
+        creep.rangedAttack(hostile);
+      }
+
+      if (attackParts > 0 && range <= 1 && typeof creep.attack === "function") {
+        creep.attack(hostile);
+      }
+
+      if (
+        ((attackParts > 0 && range > 1) || (attackParts <= 0 && range > 3)) &&
+        typeof creep.moveTo === "function"
+      ) {
+        creep.moveTo(
+          hostile,
+          attackParts > 0
+            ? COMBAT_MOVE_OPTIONS
+            : Object.assign({}, COMBAT_MOVE_OPTIONS, { range: 3 }),
+        );
+      }
+
+      if (
+        healParts > 0 &&
+        creep.hits < creep.hitsMax &&
+        typeof creep.heal === "function"
+      ) {
+        creep.heal(creep);
       }
 
       return;
@@ -67,7 +94,14 @@ module.exports = {
     return defenseManager.getThreatByRoom(cache.state.defense, homeRoomName);
   },
 
-  getPriorityHostile(creep) {
+  getPriorityHostile(creep, homeThreat) {
+    if (homeThreat && homeThreat.towerTargetId) {
+      var assigned = Game.getObjectById(homeThreat.towerTargetId);
+      if (assigned && assigned.pos && assigned.pos.roomName === creep.room.name) {
+        return assigned;
+      }
+    }
+
     var targets = utils.getDefenseIntruders(creep.room);
 
     if (targets.length === 0) return null;

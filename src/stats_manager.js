@@ -265,6 +265,8 @@ module.exports = {
   getDefaultRuntimeMode() {
     return {
       pressure: "normal",
+      effectiveLimit: this.getSoftCpuLimit(),
+      actualLimit: Game.cpu && Game.cpu.limit ? Game.cpu.limit : 20,
       forceOverview: false,
       thinkIntervalMultiplier: 1,
       constructionIntervalMultiplier: 1,
@@ -273,14 +275,38 @@ module.exports = {
     };
   },
 
+  getSoftCpuLimit() {
+    const policy =
+      config.STATS && config.STATS.RUNTIME_POLICY
+        ? config.STATS.RUNTIME_POLICY
+        : {};
+    const actualLimit = Game.cpu && Game.cpu.limit ? Game.cpu.limit : 20;
+    const configured =
+      typeof policy.SOFT_CPU_LIMIT === "number" && policy.SOFT_CPU_LIMIT > 0
+        ? policy.SOFT_CPU_LIMIT
+        : actualLimit;
+
+    return Math.max(1, Math.min(actualLimit, configured));
+  },
+
+  isPastSoftCpuLimit(buffer) {
+    const margin = typeof buffer === "number" ? buffer : 0;
+    return Game.cpu.getUsed() >= this.getSoftCpuLimit() - margin;
+  },
+
   computeRuntimeMode(snapshot, averages) {
     const policy =
       config.STATS && config.STATS.RUNTIME_POLICY
         ? config.STATS.RUNTIME_POLICY
         : {};
-    const limit = snapshot && snapshot.cpu && snapshot.cpu.limit
+    const actualLimit = snapshot && snapshot.cpu && snapshot.cpu.limit
       ? snapshot.cpu.limit
       : 20;
+    const softLimit =
+      typeof policy.SOFT_CPU_LIMIT === "number" && policy.SOFT_CPU_LIMIT > 0
+        ? policy.SOFT_CPU_LIMIT
+        : actualLimit;
+    const limit = Math.max(1, Math.min(actualLimit, softLimit));
     const used = snapshot && snapshot.cpu ? snapshot.cpu.used : 0;
     const avg = averages && typeof averages.cpuUsed === "number"
       ? averages.cpuUsed
@@ -309,6 +335,8 @@ module.exports = {
 
     return {
       pressure: pressure,
+      effectiveLimit: limit,
+      actualLimit: actualLimit,
       forceOverview:
         pressure !== "normal" &&
         policy.DETAIL_DOWNGRADE_AT_TIGHT === true,

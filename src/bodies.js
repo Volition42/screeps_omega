@@ -15,6 +15,8 @@ PART_COSTS[WORK] = 100;
 PART_COSTS[CARRY] = 50;
 PART_COSTS[MOVE] = 50;
 PART_COSTS[ATTACK] = 80;
+PART_COSTS[RANGED_ATTACK] = 150;
+PART_COSTS[HEAL] = 250;
 PART_COSTS[TOUGH] = 10;
 
 module.exports = {
@@ -59,8 +61,14 @@ module.exports = {
       case "defender":
         return this.finalizePlan(
           "defender",
-          "threat_reactive",
-          this.getDefenderBody(energyCapacity, threatLevel),
+          request && request.responseMode === "tower_support"
+            ? "tower_support"
+            : "threat_reactive",
+          this.getDefenderBody(
+            energyCapacity,
+            threatLevel,
+            request && request.responseMode ? request.responseMode : null,
+          ),
         );
 
       default:
@@ -488,7 +496,44 @@ module.exports = {
       : 20000;
   },
 
-  getDefenderBody(energyCapacity, threatLevel) {
+  getDefenderBody(energyCapacity, threatLevel, responseMode) {
+    var prefersTowerSupport =
+      responseMode === "tower_support" || responseMode === "creep_only";
+
+    if (prefersTowerSupport && energyCapacity >= 780) {
+      return [
+        TOUGH,
+        TOUGH,
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        ATTACK,
+        ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ];
+    }
+
+    if (prefersTowerSupport && energyCapacity >= 630) {
+      return [
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ];
+    }
+
+    if (prefersTowerSupport && energyCapacity >= 430) {
+      return [RANGED_ATTACK, ATTACK, MOVE, MOVE, MOVE];
+    }
+
     if (energyCapacity >= 1000 && threatLevel >= 3) {
       return [
         TOUGH,

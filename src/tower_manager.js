@@ -1,4 +1,5 @@
 const reservePolicy = require("economy_reserve_policy");
+const defenseManager = require("defense_manager");
 const utils = require("utils");
 
 module.exports = {
@@ -12,6 +13,17 @@ module.exports = {
     if (!towers.length) return;
 
     const hostiles = utils.getDefenseIntruders(room);
+    const threat =
+      state && state.defense && state.defense.homeThreat
+        ? state.defense.homeThreat
+        : defenseManager.getOwnedRoomThreat(
+            room,
+            state || cache.state,
+            defenseManager.getReactionConfig(),
+          );
+    const towerTarget = threat && threat.towerTargetId
+      ? Game.getObjectById(threat.towerTargetId)
+      : null;
     const roomCreeps = state && state.creeps ? state.creeps : cache.creeps;
     const injured = _.filter(roomCreeps, function (creep) {
       return creep.hits < creep.hitsMax;
@@ -20,14 +32,22 @@ module.exports = {
 
     for (const tower of towers) {
       if (hostiles.length) {
-        const closest = tower.pos.findClosestByRange(hostiles);
-        tower.attack(closest);
+        const target =
+          towerTarget && towerTarget.pos && towerTarget.pos.roomName === room.name
+            ? towerTarget
+            : tower.pos.findClosestByRange(hostiles);
+
+        if (target && typeof tower.attack === "function") {
+          tower.attack(target);
+        }
         continue;
       }
 
       if (injured.length) {
         const closest = tower.pos.findClosestByRange(injured);
-        tower.heal(closest);
+        if (closest && typeof tower.heal === "function") {
+          tower.heal(closest);
+        }
         continue;
       }
 
@@ -41,7 +61,9 @@ module.exports = {
           : null;
 
       if (repairTarget) {
-        tower.repair(repairTarget);
+        if (typeof tower.repair === "function") {
+          tower.repair(repairTarget);
+        }
       }
     }
   },

@@ -16,12 +16,55 @@ Important Notes:
 const config = require("config");
 const roadmap = require("construction_roadmap");
 const stamps = require("stamp_library");
-const defenseLayout = require("defense_layout");
+
+var cachedTick = null;
+var cachedStatusByRoomPhase = {};
+
+function resetCacheIfNeeded() {
+  if (cachedTick === Game.time) return;
+
+  cachedTick = Game.time;
+  cachedStatusByRoomPhase = {};
+}
 
 module.exports = {
   getStatus(room, state) {
+    resetCacheIfNeeded();
+
     if (!room.controller) {
       return this.getEmptyStatus();
+    }
+
+    var roomName = room && room.name ? room.name : "unknown";
+    var phase = state && state.phase ? state.phase : "bootstrap";
+    var controllerLevel = room && room.controller ? room.controller.level || 0 : 0;
+    var structuresCount = state && state.structures ? state.structures.length : 0;
+    var sitesCount = state && state.sites ? state.sites.length : 0;
+    var creepCount = state && state.homeCreeps ? state.homeCreeps.length : 0;
+    var futurePlanTick =
+      Memory.rooms &&
+      Memory.rooms[roomName] &&
+      Memory.rooms[roomName].construction &&
+      Memory.rooms[roomName].construction.futurePlan &&
+      typeof Memory.rooms[roomName].construction.futurePlan.tick === "number"
+        ? Memory.rooms[roomName].construction.futurePlan.tick
+        : 0;
+    var cacheKey =
+      roomName +
+      ":" +
+      phase +
+      ":" +
+      controllerLevel +
+      ":" +
+      structuresCount +
+      ":" +
+      sitesCount +
+      ":" +
+      creepCount +
+      ":" +
+      futurePlanTick;
+    if (cachedStatusByRoomPhase[cacheKey]) {
+      return cachedStatusByRoomPhase[cacheKey];
     }
 
     var plan = roadmap.getPlan(state.phase, room.controller.level);
@@ -231,8 +274,13 @@ module.exports = {
     status.logisticsComplete =
       status.developmentComplete &&
       status.linksBuilt >= status.linksNeeded;
+    status.logisticsOperational =
+      status.linksBuilt >= status.linksNeeded &&
+      status.extensionsBuilt >= status.extensionsNeeded &&
+      status.towersBuilt >= status.towersNeeded &&
+      status.storageBuilt >= status.storageNeeded;
     status.specializationComplete =
-      status.logisticsComplete &&
+      status.logisticsOperational &&
       status.terminalBuilt >= status.terminalNeeded &&
       status.mineralContainersBuilt >= status.mineralContainersNeeded &&
       status.extractorBuilt >= status.extractorNeeded &&
@@ -267,6 +315,7 @@ module.exports = {
       (!status.powerSpawnNeeded || !!futurePlan.powerSpawnPlanReady) &&
       (!status.nukerNeeded || !!futurePlan.nukerPlanReady);
 
+    cachedStatusByRoomPhase[cacheKey] = status;
     return status;
   },
 
@@ -342,6 +391,7 @@ module.exports = {
       foundationComplete: false,
       developmentComplete: false,
       logisticsComplete: false,
+      logisticsOperational: false,
       specializationComplete: false,
       fortificationComplete: false,
       commandComplete: false,
@@ -520,21 +570,40 @@ module.exports = {
     }
 
     if (anchor && this.hasAction(plan, "extensionStamps")) {
-      var extensionStampsNeeded = Math.ceil(
-        roadmap.getDesiredExtensionCount(room.controller.level) /
-          Math.max(1, stamps.getExtensionCapacity("extension_plus_v1")),
-      );
+      var extensionOrigins = null;
 
-      var extensionOrigins = stamps.getExtensionStampOrigins(anchor);
-      for (
-        var i = 0;
-        i < extensionOrigins.length && i < extensionStampsNeeded;
-        i++
+      if (
+        futurePlan &&
+        futurePlan.extensionStamps &&
+        futurePlan.extensionStamps.origins &&
+        futurePlan.extensionStamps.origins.length > 0
       ) {
+        extensionOrigins = [];
+        for (var i = 0; i < futurePlan.extensionStamps.origins.length; i++) {
+          var plannedOrigin = this.deserializePos(
+            futurePlan.extensionStamps.origins[i],
+          );
+          if (plannedOrigin) extensionOrigins.push(plannedOrigin);
+        }
+      }
+
+      if (!extensionOrigins) {
+        var extensionStampName = stamps.getDefaultExtensionStampName();
+        var extensionStampsNeeded = Math.ceil(
+          roadmap.getDesiredExtensionCount(room.controller.level) /
+            Math.max(1, stamps.getExtensionCapacity(extensionStampName)),
+        );
+        extensionOrigins = stamps.getExtensionStampOrigins(anchor).slice(
+          0,
+          extensionStampsNeeded,
+        );
+      }
+
+      for (var j = 0; j < extensionOrigins.length; j++) {
         total += this.countStampRoadCells(
           room,
-          extensionOrigins[i],
-          "extension_plus_v1",
+          extensionOrigins[j],
+          stamps.getDefaultExtensionStampName(),
         );
       }
     }
@@ -573,7 +642,7 @@ module.exports = {
       total += this.countStampRoadCells(
         room,
         this.deserializePos(futurePlan.labs.origin),
-        "lab_cluster_v1",
+        futurePlan.labs.stampName || "lab_cluster_v1",
       );
     }
 
@@ -781,16 +850,7 @@ module.exports = {
   },
 
   getDefenseGoal(room, state) {
-    var plan = defenseLayout.getPlan(room, state);
-
-    if (!plan) {
-      return { walls: 0, ramparts: 0 };
-    }
-
-    return {
-      walls: plan.walls.length,
-      ramparts: plan.gates.length,
-    };
+    return { walls: 0, ramparts: 0 };
   },
 
   hasAction(plan, action) {
@@ -956,7 +1016,9 @@ module.exports = {
     return {
       tick: 0,
       roadmapPhase: "bootstrap",
+      storagePlan: null,
       linkPlanReady: false,
+      extensionStampPlanReady: false,
       terminalPlanReady: false,
       mineralContainerPlanReady: false,
       extractorPlanReady: false,
@@ -966,6 +1028,7 @@ module.exports = {
       powerSpawnPlanReady: false,
       nukerPlanReady: false,
       links: null,
+      extensionStamps: null,
       terminal: null,
       mineralContainer: null,
       extractor: null,

@@ -38,6 +38,7 @@ module.exports = {
         priority: request.priority,
         threatLevel: request.threatLevel || null,
         threatScore: request.threatScore || null,
+        responseMode: request.responseMode || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         homeRoom: request.homeRoom || null,
@@ -134,6 +135,7 @@ module.exports = {
         delivering: false,
         threatLevel: request.threatLevel || null,
         threatScore: request.threatScore || null,
+        responseMode: request.responseMode || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         bodyProfile: bodyPlan.profile || null,
@@ -471,6 +473,8 @@ module.exports = {
           priority: threat.priority,
           threatLevel: threat.threatLevel || 1,
           threatScore: threat.threatScore || 0,
+          responseMode: threat.responseMode || null,
+          targetId: threat.towerTargetId || null,
           homeRoom: room.name,
         });
 

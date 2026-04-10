@@ -73,10 +73,7 @@ module.exports = {
     tracker.lastThreatScore = threat ? threat.threatScore || 0 : 0;
     tracker.lastRcl = room.controller ? room.controller.level : null;
     tracker.announced.foundationComplete = !!buildStatus.foundationComplete;
-    tracker.announced.defenseComplete =
-      buildStatus.wallsNeeded > 0 &&
-      buildStatus.wallsBuilt >= buildStatus.wallsNeeded &&
-      buildStatus.rampartsBuilt >= buildStatus.rampartsNeeded;
+    tracker.announced.defenseComplete = true;
     tracker.announced.towerReady =
       buildStatus.towersNeeded > 0 &&
       buildStatus.towersBuilt >= buildStatus.towersNeeded;
@@ -190,19 +187,6 @@ module.exports = {
       return [
         `[CRIT][${room.name}][MILESTONE]`,
         "Foundation baseline completed.",
-      ];
-    }
-
-    if (
-      !tracker.announced.defenseComplete &&
-      buildStatus.wallsNeeded > 0 &&
-      buildStatus.wallsBuilt >= buildStatus.wallsNeeded &&
-      buildStatus.rampartsBuilt >= buildStatus.rampartsNeeded
-    ) {
-      tracker.announced.defenseComplete = true;
-      return [
-        `[CRIT][${room.name}][MILESTONE]`,
-        "Defense baseline completed.",
       ];
     }
 

@@ -16,6 +16,17 @@ function getDefaultReportsEnabled() {
 }
 
 module.exports = {
+  getCurrentRoomName() {
+    const controls = ensureControls();
+    return controls.currentRoomName || null;
+  },
+
+  setCurrentRoomName(roomName) {
+    const controls = ensureControls();
+    controls.currentRoomName = roomName || null;
+    return controls.currentRoomName;
+  },
+
   getHudEnabled() {
     const controls = ensureControls();
 

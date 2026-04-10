@@ -13,20 +13,21 @@ Phases:
 - foundation:
     source containers + anchor roads + backbone roads
 - development:
-    extensions + first tower + storage + defense + internal roads
+    compact extensions + first tower + storage + shared internal roads + active defense runtime
 - logistics:
     add first link backbone for a stronger core economy
 - specialization:
-    add terminal + extractor + first lab cluster
+    add terminal + extractor + first compact lab cluster
 - fortification:
-    hold the mature room on a hardened, late-game-ready core
+    hold the mature room on compact late-game infrastructure
 - command:
-    final room command phase for future RCL8 completion work
+    final room command phase for RCL8 completion work
 
 Design Notes:
 - This module defines INTENT, not placement logic.
 - Later phases can be stubbed here before new placement logic exists.
 - Stamp placement logic lives in stamp_library.js and construction_manager.js.
+- The "defense" build action is currently a legacy no-op; tower and defender runtime own default defense.
 */
 
 const LEGACY_PHASE_MAP = {
@@ -112,7 +113,7 @@ module.exports = {
     development: {
       phase: "development",
       focus: "core_economy",
-      summary: "Fill out the first full home-room core with storage, tower coverage, and defenses.",
+      summary: "Fill out the compact home-room core with storage, tower coverage, and shared roads.",
       buildList: [
         "sourceContainers",
         "hubContainer",
@@ -214,8 +215,8 @@ module.exports = {
 
     fortification: {
       phase: "fortification",
-      focus: "hardening",
-      summary: "Late-game hardening phase reserved for stronger defenses and mature infrastructure.",
+      focus: "mature_infrastructure",
+      summary: "Late-game infrastructure phase for the factory, expanded compact labs, and mature logistics.",
       buildList: [
         "spawns",
         "factory",

@@ -30,6 +30,14 @@ function resolveOwnedRoom(roomName) {
     return null;
   }
 
+  const currentRoomName = opsState.getCurrentRoomName();
+  if (currentRoomName) {
+    const currentRoom = Game.rooms[currentRoomName];
+    if (currentRoom && currentRoom.controller && currentRoom.controller.my) {
+      return currentRoom;
+    }
+  }
+
   const ownedRooms = getOwnedRooms();
   return ownedRooms.length > 0 ? ownedRooms[0] : null;
 }
@@ -132,7 +140,7 @@ function getConsoleCommandHelp() {
     {
       command: "ops.room([roomName], [section])",
       description:
-        "Show room overview or one section: overview, economy, build, defense, creeps, sources, advanced, cpu, all.",
+        "Show one room report. Defaults to the current room and all sections.",
       example: 'ops.room("W5N5", "build")',
     },
     {
@@ -147,6 +155,13 @@ function parseRoomCommandArgs(arg1, arg2) {
   const firstSection = roomReporting.normalizeSection(arg1);
   const secondSection = roomReporting.normalizeSection(arg2);
 
+  if (typeof arg1 === "undefined" && typeof arg2 === "undefined") {
+    return {
+      roomName: null,
+      section: "all",
+    };
+  }
+
   if (firstSection && typeof arg2 === "undefined") {
     return {
       roomName: null,
@@ -156,7 +171,7 @@ function parseRoomCommandArgs(arg1, arg2) {
 
   return {
     roomName: arg1 || null,
-    section: secondSection || "overview",
+    section: secondSection || "all",
   };
 }
 
@@ -239,6 +254,7 @@ module.exports = {
     const parsed = parseRoomCommandArgs(arg1, arg2);
     const room = getTargetRoomOrPrintError(parsed.roomName, "room");
     if (!room) return null;
+    opsState.setCurrentRoomName(room.name);
 
     const report = roomReporting.build(room, null, { updateProgress: true });
     const lines = roomReporting.getSectionLines(report, parsed.section);

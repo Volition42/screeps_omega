@@ -41,8 +41,6 @@ const PHASE_BUILD_FIELDS = {
     { label: "storage", built: "storageBuilt", needed: "storageNeeded" },
     { label: "roads", built: "roadsBuilt", needed: "roadsNeeded" },
     { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
-    { label: "walls", built: "wallsBuilt", needed: "wallsNeeded" },
-    { label: "ramparts", built: "rampartsBuilt", needed: "rampartsNeeded" },
   ],
   logistics: [
     { label: "ext", built: "extensionsBuilt", needed: "extensionsNeeded" },
@@ -51,8 +49,6 @@ const PHASE_BUILD_FIELDS = {
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
     { label: "roads", built: "roadsBuilt", needed: "roadsNeeded" },
     { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
-    { label: "walls", built: "wallsBuilt", needed: "wallsNeeded" },
-    { label: "ramparts", built: "rampartsBuilt", needed: "rampartsNeeded" },
   ],
   specialization: [
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
@@ -68,8 +64,6 @@ const PHASE_BUILD_FIELDS = {
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
     { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
-    { label: "walls", built: "wallsBuilt", needed: "wallsNeeded" },
-    { label: "ramparts", built: "rampartsBuilt", needed: "rampartsNeeded" },
   ],
   command: [
     { label: "spawn", built: "spawnsBuilt", needed: "spawnsNeeded" },
@@ -95,8 +89,6 @@ const PHASE_TASK_PRIORITY = {
     "extensions",
     "tower",
     "storage",
-    "walls",
-    "ramparts",
     "roads",
     "rcl5",
     "labor",
@@ -106,7 +98,7 @@ const PHASE_TASK_PRIORITY = {
   ],
   logistics: ["links", "rcl6"],
   specialization: ["links", "terminal", "mineralContainer", "extractor", "labs", "rcl7"],
-  fortification: ["spawns", "factory", "links", "labs", "walls", "ramparts", "rcl8"],
+  fortification: ["spawns", "factory", "links", "labs", "rcl8"],
   command: ["spawns", "links", "observer", "powerSpawn", "nuker"],
 };
 
@@ -128,8 +120,6 @@ const MISSING_SUMMARY = {
   extensions: "extensions incomplete",
   tower: "towers incomplete",
   storage: "storage missing",
-  walls: "walls below target",
-  ramparts: "ramparts below target",
   links: "link network incomplete",
   terminal: "terminal missing",
   mineralContainer: "mineral container missing",
@@ -161,8 +151,6 @@ const NEXT_TASK_LABEL = {
   extensions: "finish remaining extensions",
   tower: "place or finish the next tower",
   storage: "place or finish storage",
-  walls: "finish the wall baseline",
-  ramparts: "finish the rampart baseline",
   links: "finish planned links",
   terminal: "place or finish the terminal",
   mineralContainer: "place or finish the mineral container",
@@ -264,8 +252,6 @@ function getPhaseCompletionMissing(phase, buildStatus) {
     pushIfShort(buildStatus.extensionsBuilt, buildStatus.extensionsNeeded, "extensions", missing);
     pushIfShort(buildStatus.towersBuilt, buildStatus.towersNeeded, "tower", missing);
     pushIfShort(buildStatus.storageBuilt, buildStatus.storageNeeded, "storage", missing);
-    pushIfShort(buildStatus.wallsBuilt, buildStatus.wallsNeeded, "walls", missing);
-    pushIfShort(buildStatus.rampartsBuilt, buildStatus.rampartsNeeded, "ramparts", missing);
     return uniqueLabels(missing);
   }
 
@@ -455,6 +441,46 @@ function formatBuildLine(phase, buildStatus, limit) {
   return parts.length > 0 ? parts.join(" | ") : "none";
 }
 
+function formatStorageRejectSummary(rejectCounts) {
+  if (!rejectCounts) return "none";
+
+  const reasonOrder = ["terrain", "occupied", "site", "border", "blocked", "existing"];
+  const parts = [];
+
+  for (let i = 0; i < reasonOrder.length; i++) {
+    const reason = reasonOrder[i];
+    if (!rejectCounts[reason]) continue;
+    parts.push(`${reason} ${rejectCounts[reason]}`);
+  }
+
+  return parts.length > 0 ? parts.join(", ") : "none";
+}
+
+function formatStoragePlanningLine(buildStatus) {
+  if (!buildStatus) return null;
+  if ((buildStatus.storageNeeded || 0) <= (buildStatus.storageBuilt || 0)) return null;
+
+  const futurePlan = buildStatus.futurePlan || null;
+  const storagePlan = futurePlan && futurePlan.storagePlan ? futurePlan.storagePlan : null;
+  if (!storagePlan) return null;
+
+  const posLabel = storagePlan.pos
+    ? `${storagePlan.pos.x},${storagePlan.pos.y}`
+    : "none";
+  const modeLabel = storagePlan.mode || "planned";
+  const rejectLabel = formatStorageRejectSummary(storagePlan.fixedRejectCounts);
+  const fitLabel =
+    storagePlan.criticalOpen || storagePlan.roadOpen || storagePlan.utilityOpen
+      ? `fit crit ${storagePlan.criticalOpen || 0}/3 | roads ${storagePlan.roadOpen || 0}/6 | util ${storagePlan.utilityOpen || 0}/3`
+      : null;
+
+  if (modeLabel === "fallback" || modeLabel === "blocked") {
+    return `Storage plan ${modeLabel} ${posLabel} | fixed blocked ${storagePlan.fixedRejectedCount || 0}/${storagePlan.fixedCandidateCount || 0} | reject ${rejectLabel}${fitLabel ? ` | ${fitLabel}` : ""}`;
+  }
+
+  return `Storage plan ${modeLabel} ${posLabel}${fitLabel ? ` | ${fitLabel}` : ""}`;
+}
+
 function getRoleSourceCount(state, role, sourceId) {
   if (
     !state.sourceRoleMap ||
@@ -544,6 +570,10 @@ function getAlertSummary(room, state) {
   const threat = defense.homeThreat || null;
   const active = !!(defense.hasThreats || (state.hostileCreeps || []).length > 0);
   const roleCounts = state.roleCounts || {};
+  const towers =
+    state.structuresByType && state.structuresByType[STRUCTURE_TOWER]
+      ? state.structuresByType[STRUCTURE_TOWER]
+      : [];
   const hostiles = threat ? threat.hostileCount || 0 : (state.hostileCreeps || []).length;
   const threatScore = threat ? threat.threatScore || 0 : 0;
   const threatLevel = threat ? threat.threatLevel || 0 : 0;
@@ -555,6 +585,15 @@ function getAlertSummary(room, state) {
     threatLevel: threatLevel,
     defenders: roleCounts.defender || 0,
     requiredDefenders: defense.requiredDefenders || 0,
+    responseMode: threat ? threat.responseMode || "idle" : "idle",
+    towerCanHandle: !!(threat && threat.towerCanHandle),
+    towerTarget: threat ? threat.towerTargetSummary || "none" : "none",
+    towerFocusDamage: threat ? threat.towerFocusDamage || 0 : 0,
+    readyTowers: threat
+      ? threat.readyTowerCount || 0
+      : towers.filter(function (tower) {
+          return tower.store ? (tower.store[RESOURCE_ENERGY] || 0) > 0 : tower.energy > 0;
+        }).length,
     safeMode: getSafeModeLabel(room),
   };
 }
@@ -902,6 +941,7 @@ module.exports = {
     const mineralLine = formatMineralMiningLine(mineralMining);
     const mineralHudLine = formatMineralHudLine(mineralMining);
     const upgradeReserveLine = formatUpgradeReserveLine(room, summaryState);
+    const storagePlanningLine = formatStoragePlanningLine(buildStatus);
     const infrastructure = summaryState.infrastructure || {};
     const roleCounts = summaryState.roleCounts || {};
     const sources = summaryState.sources || [];
@@ -931,6 +971,9 @@ module.exports = {
       `Current ${formatBuildLine(summaryState.phase, buildStatus)}`,
       `Future ${buildStatus.futurePlanReady ? "ready" : "planning"} | Advance ${nextPhase || "complete"} ${isAdvanceReady ? "ready" : "blocked"}`,
     ];
+    if (storagePlanningLine) {
+      buildLines.push(storagePlanningLine);
+    }
     if (mineralLine) {
       buildLines.push(mineralLine);
     }
@@ -964,7 +1007,8 @@ module.exports = {
         `[OPS][${room.name}][DEFENSE]`,
         `Alert ${alert.active ? "active" : "clear"} | SafeMode ${alert.safeMode}`,
         `Hostiles ${alert.hostiles} | Threat ${alert.threatScore} | Level ${alert.threatLevel}`,
-        `Defenders ${alert.defenders}/${alert.requiredDefenders} | Towers ${summaryState.structuresByType && summaryState.structuresByType[STRUCTURE_TOWER] ? summaryState.structuresByType[STRUCTURE_TOWER].length : 0}`,
+        `Mode ${alert.responseMode} | Defenders ${alert.defenders}/${alert.requiredDefenders} | Towers ${alert.readyTowers}/${summaryState.structuresByType && summaryState.structuresByType[STRUCTURE_TOWER] ? summaryState.structuresByType[STRUCTURE_TOWER].length : 0}`,
+        `Target ${alert.towerTarget} | Focus ${alert.towerFocusDamage} | Hold ${alert.towerCanHandle ? "yes" : "no"}`,
       ],
       creeps: [
         `[OPS][${room.name}][CREEPS]`,
