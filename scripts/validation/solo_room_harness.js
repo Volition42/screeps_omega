@@ -451,6 +451,31 @@ class FakeRoom {
     this._dropped = [];
     this.energyAvailable = 300;
     this.energyCapacityAvailable = 300;
+    this.visual = {
+      rect(x, y, width, height, style) {
+        currentRuntime.visuals.push({
+          roomName: name,
+          type: "rect",
+          x,
+          y,
+          width,
+          height,
+          style: style || {},
+        });
+        return this;
+      },
+      text(text, x, y, style) {
+        currentRuntime.visuals.push({
+          roomName: name,
+          type: "text",
+          text,
+          x,
+          y,
+          style: style || {},
+        });
+        return this;
+      },
+    };
     currentRuntime.rooms[name] = this;
   }
 
@@ -785,6 +810,8 @@ function createController(x, y, options) {
     progress: spec.progress || 0,
     pos: new RoomPosition(x, y, spec.roomName || "sim"),
     user: "tester",
+    my: !!spec.my,
+    owner: spec.owner || null,
   };
 }
 
@@ -839,6 +866,112 @@ function createCreep(name, role, x, y, options) {
       });
       return this.pos.getRangeTo(target) <= 1 ? OK : ERR_NOT_IN_RANGE;
     },
+    claimController(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "claimController",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || target.type !== "controller") return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 1) return ERR_NOT_IN_RANGE;
+      if (target.owner && !target.my) return ERR_INVALID_TARGET;
+      target.my = true;
+      target.owner = { username: "tester" };
+      target.user = "tester";
+      return OK;
+    },
+    attackController(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "attackController",
+        targetId: target ? target.id || null : null,
+      });
+      return target && this.pos.getRangeTo(target) <= 1 ? OK : ERR_NOT_IN_RANGE;
+    },
+    harvest(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "harvest",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || target.energy <= 0) return ERR_NOT_ENOUGH_ENERGY;
+      if (this.pos.getRangeTo(target) > 1) return ERR_NOT_IN_RANGE;
+      const amount = Math.min(
+        target.energy,
+        this.store.getFreeCapacity(RESOURCE_ENERGY),
+        this.getActiveBodyparts(WORK) * 2 || 2,
+      );
+      target.energy -= amount;
+      this.store[RESOURCE_ENERGY] = (this.store[RESOURCE_ENERGY] || 0) + amount;
+      return OK;
+    },
+    withdraw(target, resourceType) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "withdraw",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || !target.store) return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 1) return ERR_NOT_IN_RANGE;
+      const amount = Math.min(
+        target.store[resourceType] || 0,
+        this.store.getFreeCapacity(resourceType),
+      );
+      if (amount <= 0) return ERR_NOT_ENOUGH_ENERGY;
+      target.store[resourceType] -= amount;
+      this.store[resourceType] = (this.store[resourceType] || 0) + amount;
+      return OK;
+    },
+    transfer(target, resourceType) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "transfer",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || !target.store) return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 1) return ERR_NOT_IN_RANGE;
+      const amount = Math.min(
+        this.store[resourceType] || 0,
+        target.store.getFreeCapacity(resourceType),
+      );
+      if (amount <= 0) return ERR_NOT_ENOUGH_ENERGY;
+      this.store[resourceType] -= amount;
+      target.store[resourceType] = (target.store[resourceType] || 0) + amount;
+      return OK;
+    },
+    build(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "build",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || target.progressTotal === undefined) return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 3) return ERR_NOT_IN_RANGE;
+      const amount = Math.min(
+        this.store[RESOURCE_ENERGY] || 0,
+        this.getActiveBodyparts(WORK) * 5 || 5,
+        target.progressTotal - target.progress,
+      );
+      target.progress += amount;
+      this.store[RESOURCE_ENERGY] = (this.store[RESOURCE_ENERGY] || 0) - amount;
+      return OK;
+    },
+    upgradeController(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "upgradeController",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || target.type !== "controller") return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 3) return ERR_NOT_IN_RANGE;
+      const amount = Math.min(
+        this.store[RESOURCE_ENERGY] || 0,
+        this.getActiveBodyparts(WORK) || 1,
+      );
+      target.progress = (target.progress || 0) + amount;
+      this.store[RESOURCE_ENERGY] = (this.store[RESOURCE_ENERGY] || 0) - amount;
+      return OK;
+    },
     moveTo(target, options) {
       currentRuntime.creepActions.push({
         creep: this.name,
@@ -870,6 +1003,7 @@ function resetRuntime(tick) {
     spawnEvents: [],
     towerActions: [],
     creepActions: [],
+    visuals: [],
   };
 
   global.Memory = { rooms: {}, creeps: {}, runtime: {}, stats: {} };
@@ -1260,13 +1394,18 @@ const constructionManager = require("construction_manager");
 const constructionStatus = require("construction_status");
 const constructionRoadmap = require("construction_roadmap");
 const roomReporting = require("room_reporting");
+const empireManager = require("empire_manager");
+const hud = require("hud");
 const advancedStructureManager = require("advanced_structure_manager");
 const defenseManager = require("defense_manager");
 const defenseLayout = require("defense_layout");
 const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
 const roleWorker = require("role_worker");
+const roleClaimer = require("role_claimer");
+const rolePioneer = require("role_pioneer");
 const towerManager = require("tower_manager");
+const statsManager = require("stats_manager");
 const utils = require("utils");
 const config = require("config");
 const stamps = require("stamp_library");
@@ -4019,6 +4158,403 @@ function runFactoryOpsScenario() {
   );
 }
 
+function runEmpireAwarenessScenario() {
+  const roomA = buildRoomScenario("VAL_EMPIRE_A", {
+    tick: 850,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    creeps: [
+      { name: "empireWorkerA", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  roomA.controller.my = true;
+
+  const roomB = new FakeRoom("VAL_EMPIRE_B", new FakeTerrain());
+  roomB.setController(
+    createController(20, 20, {
+      roomName: roomB.name,
+      level: 2,
+      progress: 100,
+    }),
+  );
+  roomB.controller.my = true;
+  roomB.addStructure(
+    createStructure(STRUCTURE_SPAWN, 25, 25, {
+      roomName: roomB.name,
+      name: "SpawnB",
+      store: { energy: 300 },
+      storeCapacityResource: { energy: 300 },
+      hits: 5000,
+      hitsMax: 5000,
+    }),
+  );
+  roomB.addSource(createSource(15, 25, { roomName: roomB.name }));
+  roomB.addMineral(createMineral(35, 20, { roomName: roomB.name }));
+  roomB.energyAvailable = 300;
+  roomB.energyCapacityAvailable = 300;
+  createCreep("empireWorkerB", "worker", 25, 24, {
+    roomName: roomB.name,
+  });
+
+  Game.gcl = {
+    level: 3,
+    progress: 1500,
+    progressTotal: 3000,
+  };
+
+  const ownedRooms = empireManager.collectOwnedRooms();
+  assert(
+    ownedRooms.length === 2,
+    `expected two owned rooms, got ${ownedRooms.map((room) => room.name).join(",") || "none"}`,
+  );
+  assert(
+    ownedRooms[0].name === "VAL_EMPIRE_A" && ownedRooms[1].name === "VAL_EMPIRE_B",
+    `expected sorted owned rooms, got ${ownedRooms.map((room) => room.name).join(",")}`,
+  );
+
+  const states = {
+    VAL_EMPIRE_A: roomState.collect(roomA),
+    VAL_EMPIRE_B: roomState.collect(roomB),
+  };
+  const memory = empireManager.record(ownedRooms, states);
+
+  assert(memory.ownedRooms.length === 2, "empire memory should list owned rooms");
+  assert(memory.gcl.roomSlotsUsed === 2, `expected two used room slots, got ${memory.gcl.roomSlotsUsed}`);
+  assert(memory.gcl.roomSlotsLimit === 3, `expected GCL room limit 3, got ${memory.gcl.roomSlotsLimit}`);
+  assert(memory.gcl.roomSlotsAvailable === 1, `expected one open room slot, got ${memory.gcl.roomSlotsAvailable}`);
+  assert(memory.rooms.VAL_EMPIRE_A.creepCount === 1, "room A snapshot should count home creeps");
+  assert(memory.rooms.VAL_EMPIRE_B.rcl === 2, `room B snapshot should record RCL2, got ${memory.rooms.VAL_EMPIRE_B.rcl}`);
+
+  const reports = empireManager.buildRoomReports(ownedRooms, states, {
+    updateProgress: false,
+  });
+  const report = empireManager.buildReport(reports);
+
+  assert(report.summary.roomCount === 2, `expected empire report room count 2, got ${report.summary.roomCount}`);
+  assert(report.summary.gcl.roomSlotsAvailable === 1, "empire report should expose open GCL slot");
+  assert(
+    report.lines.some(function (line) {
+      return line.indexOf("Rooms 2/3") !== -1;
+    }),
+    `expected empire lines to include slot summary, got ${report.lines.join(" / ")}`,
+  );
+}
+
+function runExpansionClaimRequestScenario() {
+  const parent = buildRoomScenario("VAL_EXPAND_PARENT", {
+    tick: 875,
+    controllerLevel: 4,
+    spawnEnergy: 800,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "parentWorker", role: "worker", x: 24, y: 25 },
+      { name: "parentMiner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "parentMiner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "parentHauler", role: "hauler", x: 26, y: 25 },
+      { name: "parentUpgrader", role: "upgrader", x: 25, y: 24 },
+    ],
+  });
+  parent.controller.my = true;
+
+  const target = new FakeRoom("VAL_EXPAND_TARGET", new FakeTerrain());
+  target.setController(
+    createController(20, 20, {
+      roomName: target.name,
+      level: 0,
+    }),
+  );
+  target.addSource(createSource(15, 25, { roomName: target.name }));
+  target.addMineral(createMineral(35, 20, { roomName: target.name }));
+
+  Game.gcl = {
+    level: 2,
+    progress: 0,
+    progressTotal: 1000,
+  };
+
+  const result = empireManager.createExpansion(target.name, parent.name);
+  assert(result.ok, `expected expansion plan to be created, got ${result.message}`);
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  const claimRequest = requests.find(function (request) {
+    return request.role === "claimer" && request.targetRoom === target.name;
+  });
+
+  assert(claimRequest, "active expansion should request a claimer from the parent room");
+  assert(claimRequest.homeRoom === parent.name, "claimer request should keep parent as home room");
+  assert(claimRequest.operation === "expansion", "claimer request should be marked as expansion work");
+}
+
+function runExpansionPioneerRequestScenario() {
+  const parent = buildRoomScenario("VAL_BOOT_PARENT", {
+    tick: 900,
+    controllerLevel: 4,
+    spawnEnergy: 800,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "bootParentWorker", role: "worker", x: 24, y: 25 },
+      { name: "bootParentMiner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "bootParentMiner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "bootParentHauler", role: "hauler", x: 26, y: 25 },
+      { name: "bootParentUpgrader", role: "upgrader", x: 25, y: 24 },
+    ],
+  });
+  parent.controller.my = true;
+
+  const target = new FakeRoom("VAL_BOOT_TARGET", new FakeTerrain());
+  target.setController(
+    createController(20, 20, {
+      roomName: target.name,
+      level: 1,
+      my: true,
+      owner: { username: "tester" },
+    }),
+  );
+  target.addSource(createSource(15, 25, { roomName: target.name }));
+  target.addMineral(createMineral(35, 20, { roomName: target.name }));
+
+  Game.gcl = {
+    level: 3,
+    progress: 0,
+    progressTotal: 1000,
+  };
+
+  const result = empireManager.createExpansion(target.name, parent.name);
+  assert(result.ok, `expected expansion plan to be created, got ${result.message}`);
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  const pioneers = requests.filter(function (request) {
+    return request.role === "pioneer" && request.targetRoom === target.name;
+  });
+
+  assert(pioneers.length >= 2, `expected pioneer requests for spawnless owned target, got ${pioneers.length}`);
+}
+
+function runExpansionClaimerRoleScenario() {
+  const room = buildRoomScenario("VAL_CLAIMER_TARGET", {
+    tick: 925,
+    controllerLevel: 1,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+  });
+  room.controller.my = false;
+  room.controller.owner = null;
+
+  const claimer = createCreep("claimer1", "claimer", room.controller.pos.x + 1, room.controller.pos.y, {
+    roomName: room.name,
+    body: [{ type: CLAIM }, { type: MOVE }],
+    memory: {
+      role: "claimer",
+      room: "VAL_CLAIMER_PARENT",
+      homeRoom: "VAL_CLAIMER_PARENT",
+      targetRoom: room.name,
+    },
+  });
+
+  roleClaimer.run(claimer);
+
+  assert(room.controller.my === true, "claimer should claim the target controller when adjacent");
+}
+
+function runExpansionPioneerSpawnSiteScenario() {
+  const room = buildRoomScenario("VAL_PIONEER_TARGET", {
+    tick: 950,
+    controllerLevel: 1,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+  });
+  room.controller.my = true;
+
+  const spawns = room.find(FIND_MY_SPAWNS);
+  for (let i = 0; i < spawns.length; i++) {
+    spawns[i].destroy();
+  }
+
+  const pioneer = createCreep("pioneer1", "pioneer", 25, 25, {
+    roomName: room.name,
+    store: { energy: 50 },
+    storeCapacity: 50,
+    memory: {
+      role: "pioneer",
+      room: "VAL_PIONEER_PARENT",
+      homeRoom: "VAL_PIONEER_PARENT",
+      targetRoom: room.name,
+      working: true,
+    },
+  });
+
+  rolePioneer.run(pioneer);
+
+  const spawnSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter: function (site) {
+      return site.structureType === STRUCTURE_SPAWN;
+    },
+  });
+
+  assert(spawnSites.length === 1, `expected pioneer to place first spawn site, got ${spawnSites.length}`);
+}
+
+function runExpansionHudLabelsScenario() {
+  const room = buildRoomScenario("VAL_EXPANSION_HUD", {
+    tick: 975,
+    controllerLevel: 1,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+  });
+  room.controller.my = true;
+
+  createCreep("hudClaimer", "claimer", 24, 25, {
+    roomName: room.name,
+    memory: {
+      role: "claimer",
+      room: "VAL_HUD_PARENT",
+      homeRoom: "VAL_HUD_PARENT",
+      targetRoom: room.name,
+    },
+  });
+  createCreep("hudPioneer", "pioneer", 26, 25, {
+    roomName: room.name,
+    memory: {
+      role: "pioneer",
+      room: "VAL_HUD_PARENT",
+      homeRoom: "VAL_HUD_PARENT",
+      targetRoom: room.name,
+    },
+  });
+
+  hud.drawCreepLabels(room, {
+    creeps: room.find(FIND_MY_CREEPS),
+    homeCreeps: [],
+  });
+
+  const labels = currentRuntime.visuals
+    .filter(function (item) {
+      return item.type === "text";
+    })
+    .map(function (item) {
+      return item.text;
+    });
+
+  assert(labels.indexOf("Cl") !== -1, `expected claimer HUD label, got ${labels.join(",")}`);
+  assert(labels.indexOf("Pi") !== -1, `expected pioneer HUD label, got ${labels.join(",")}`);
+}
+
+function runHudConfigControlsScenario() {
+  const originalHud = Object.assign({}, config.HUD);
+  const room = buildRoomScenario("VAL_HUD_CONFIG", {
+    tick: 1000,
+    controllerLevel: 2,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    creeps: [
+      { name: "hudWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  const state = roomState.collect(room);
+
+  try {
+    config.HUD.ROOM_SUMMARY = false;
+    config.HUD.CREEP_LABELS = false;
+    hud.run(room, state);
+
+    assert(
+      currentRuntime.visuals.length === 0,
+      `expected HUD config off switches to suppress visuals, got ${JSON.stringify(currentRuntime.visuals)}`,
+    );
+
+    config.HUD.ROOM_SUMMARY = true;
+    config.HUD.ROOM_SUMMARY_INTERVAL = 10;
+    config.HUD.CREEP_LABELS = false;
+    room.energyAvailable = 300;
+    hud.drawSummary(room, state);
+
+    let energyLine = currentRuntime.visuals.find(function (item) {
+      return item.type === "text" && String(item.text).indexOf("Energy ") === 0;
+    });
+    assert(energyLine && energyLine.text.indexOf("Energy 300/550") === 0, `expected initial room HUD energy line, got ${energyLine ? energyLine.text : "none"}`);
+
+    currentRuntime.visuals = [];
+    Game.time = 1005;
+    room.energyAvailable = 500;
+    hud.drawSummary(room, state);
+    energyLine = currentRuntime.visuals.find(function (item) {
+      return item.type === "text" && String(item.text).indexOf("Energy ") === 0;
+    });
+    assert(energyLine && energyLine.text.indexOf("Energy 300/550") === 0, `expected cached room HUD before configured interval, got ${energyLine ? energyLine.text : "none"}`);
+
+    currentRuntime.visuals = [];
+    Game.time = 1010;
+    hud.drawSummary(room, state);
+    energyLine = currentRuntime.visuals.find(function (item) {
+      return item.type === "text" && String(item.text).indexOf("Energy ") === 0;
+    });
+    assert(energyLine && energyLine.text.indexOf("Energy 500/550") === 0, `expected room HUD refresh at configured interval, got ${energyLine ? energyLine.text : "none"}`);
+
+    currentRuntime.visuals = [];
+    config.HUD.ROOM_SUMMARY = false;
+    config.HUD.CREEP_LABELS = true;
+    config.HUD.LABEL_INTERVAL = 2;
+    Game.time = 1011;
+    hud.run(room, state);
+    assert(
+      currentRuntime.visuals.length === 0,
+      `expected creep labels to wait for configured interval, got ${JSON.stringify(currentRuntime.visuals)}`,
+    );
+
+    Game.time = 1012;
+    hud.run(room, state);
+    assert(
+      currentRuntime.visuals.some(function (item) {
+        return item.type === "text" && item.text === "W";
+      }),
+      `expected creep label on configured interval, got ${JSON.stringify(currentRuntime.visuals)}`,
+    );
+  } finally {
+    config.HUD = originalHud;
+  }
+}
+
+function runCpuRoomScaleScenario() {
+  const policy = config.STATS.RUNTIME_POLICY;
+  const twoRooms = statsManager.getRoomScale(policy, 2);
+  const threeRooms = statsManager.getRoomScale(policy, 3);
+  const sixRooms = statsManager.getRoomScale(policy, 6);
+
+  assert(!twoRooms.active, "room scaling should stay inactive below the configured start room count");
+  assert(threeRooms.active, "room scaling should activate at three owned rooms");
+  assert(
+    threeRooms.thinkMultiplier > 1 &&
+      threeRooms.constructionMultiplier > 1 &&
+      threeRooms.advancedOpsInterval > 1,
+    `expected room scaling to stretch non-critical work, got ${JSON.stringify(threeRooms)}`,
+  );
+  assert(
+    sixRooms.thinkMultiplier <= policy.ROOM_SCALE.MAX_THINK_MULTIPLIER &&
+      sixRooms.constructionMultiplier <= policy.ROOM_SCALE.MAX_CONSTRUCTION_MULTIPLIER &&
+      sixRooms.advancedOpsInterval <= policy.ROOM_SCALE.MAX_ADVANCED_OPS_INTERVAL,
+    `expected room scaling to respect configured caps, got ${JSON.stringify(sixRooms)}`,
+  );
+}
+
 function main() {
   const scenarios = [
     ["bootstrap", runBootstrapScenario],
@@ -4067,6 +4603,14 @@ function main() {
     ["command_links", runCommandUtilityLinksScenario],
     ["multi_spawn_balance", runMultiSpawnBalancingScenario],
     ["factory_ops", runFactoryOpsScenario],
+    ["empire_awareness", runEmpireAwarenessScenario],
+    ["expansion_claim_request", runExpansionClaimRequestScenario],
+    ["expansion_pioneer_request", runExpansionPioneerRequestScenario],
+    ["expansion_claimer_role", runExpansionClaimerRoleScenario],
+    ["expansion_pioneer_spawn_site", runExpansionPioneerSpawnSiteScenario],
+    ["expansion_hud_labels", runExpansionHudLabelsScenario],
+    ["hud_config_controls", runHudConfigControlsScenario],
+    ["cpu_room_scale", runCpuRoomScaleScenario],
   ];
 
   const results = [];

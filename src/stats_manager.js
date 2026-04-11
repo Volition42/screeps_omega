@@ -263,13 +263,25 @@ module.exports = {
   },
 
   getDefaultRuntimeMode() {
+    const policy =
+      config.STATS && config.STATS.RUNTIME_POLICY
+        ? config.STATS.RUNTIME_POLICY
+        : {};
+    const scaled = this.getScaledRuntimeValues(
+      policy,
+      "normal",
+      this.getOwnedRoomCount(),
+    );
+
     return {
       pressure: "normal",
       effectiveLimit: this.getSoftCpuLimit(),
       actualLimit: Game.cpu && Game.cpu.limit ? Game.cpu.limit : 20,
       forceOverview: false,
-      thinkIntervalMultiplier: 1,
-      constructionIntervalMultiplier: 1,
+      thinkIntervalMultiplier: scaled.thinkIntervalMultiplier,
+      constructionIntervalMultiplier: scaled.constructionIntervalMultiplier,
+      advancedOpsInterval: scaled.advancedOpsInterval,
+      roomScaleActive: scaled.roomScaleActive,
       skipDirectives: false,
       skipHud: false,
     };
@@ -330,8 +342,11 @@ module.exports = {
     }
 
     const pressureKey = pressure;
-    const thinkMultiplier = policy.THINK_INTERVAL_MULTIPLIER || {};
-    const constructionMultiplier = policy.CONSTRUCTION_INTERVAL_MULTIPLIER || {};
+    const roomCount =
+      averages && typeof averages.roomCount === "number"
+        ? averages.roomCount
+        : this.getOwnedRoomCount();
+    const scaled = this.getScaledRuntimeValues(policy, pressureKey, roomCount);
 
     return {
       pressure: pressure,
@@ -340,14 +355,10 @@ module.exports = {
       forceOverview:
         pressure !== "normal" &&
         policy.DETAIL_DOWNGRADE_AT_TIGHT === true,
-      thinkIntervalMultiplier:
-        Object.prototype.hasOwnProperty.call(thinkMultiplier, pressureKey)
-          ? thinkMultiplier[pressureKey]
-          : 1,
-      constructionIntervalMultiplier:
-        Object.prototype.hasOwnProperty.call(constructionMultiplier, pressureKey)
-          ? constructionMultiplier[pressureKey]
-          : 1,
+      thinkIntervalMultiplier: scaled.thinkIntervalMultiplier,
+      constructionIntervalMultiplier: scaled.constructionIntervalMultiplier,
+      advancedOpsInterval: scaled.advancedOpsInterval,
+      roomScaleActive: scaled.roomScaleActive,
       skipDirectives: this.shouldSkipAtPressure(
         pressure,
         policy.SKIP_DIRECTIVES_AT,
@@ -355,6 +366,82 @@ module.exports = {
       skipHud: this.shouldSkipAtPressure(
         pressure,
         policy.SKIP_HUD_AT,
+      ),
+    };
+  },
+
+  getScaledRuntimeValues(policy, pressureKey, roomCount) {
+    const thinkMultiplier = policy.THINK_INTERVAL_MULTIPLIER || {};
+    const constructionMultiplier = policy.CONSTRUCTION_INTERVAL_MULTIPLIER || {};
+    const baseThink = Object.prototype.hasOwnProperty.call(
+      thinkMultiplier,
+      pressureKey,
+    )
+      ? thinkMultiplier[pressureKey]
+      : 1;
+    const baseConstruction = Object.prototype.hasOwnProperty.call(
+      constructionMultiplier,
+      pressureKey,
+    )
+      ? constructionMultiplier[pressureKey]
+      : 1;
+    const roomScale = this.getRoomScale(policy, roomCount);
+
+    return {
+      thinkIntervalMultiplier: Math.max(baseThink, roomScale.thinkMultiplier),
+      constructionIntervalMultiplier: Math.max(
+        baseConstruction,
+        roomScale.constructionMultiplier,
+      ),
+      advancedOpsInterval: Math.max(1, roomScale.advancedOpsInterval),
+      roomScaleActive: roomScale.active,
+    };
+  },
+
+  getRoomScale(policy, roomCount) {
+    const scale = policy.ROOM_SCALE || {};
+    const rooms = Math.max(0, Math.floor(roomCount || 0));
+    const startRooms =
+      typeof scale.START_ROOMS === "number" ? scale.START_ROOMS : 3;
+
+    if (scale.ENABLED === false || rooms < startRooms) {
+      return {
+        active: false,
+        thinkMultiplier: 1,
+        constructionMultiplier: 1,
+        advancedOpsInterval: 1,
+      };
+    }
+
+    const extraRooms = rooms - startRooms + 1;
+    const thinkStep =
+      typeof scale.THINK_STEP === "number" ? scale.THINK_STEP : 0.5;
+    const constructionStep =
+      typeof scale.CONSTRUCTION_STEP === "number" ? scale.CONSTRUCTION_STEP : 1;
+    const advancedOpsStep =
+      typeof scale.ADVANCED_OPS_STEP === "number" ? scale.ADVANCED_OPS_STEP : 1;
+    const maxThink =
+      typeof scale.MAX_THINK_MULTIPLIER === "number"
+        ? scale.MAX_THINK_MULTIPLIER
+        : 3;
+    const maxConstruction =
+      typeof scale.MAX_CONSTRUCTION_MULTIPLIER === "number"
+        ? scale.MAX_CONSTRUCTION_MULTIPLIER
+        : 4;
+    const maxAdvancedOps =
+      typeof scale.MAX_ADVANCED_OPS_INTERVAL === "number"
+        ? scale.MAX_ADVANCED_OPS_INTERVAL
+        : 6;
+
+    return {
+      active: true,
+      thinkMultiplier: Math.min(maxThink, 1 + extraRooms * thinkStep),
+      constructionMultiplier: Math.min(
+        maxConstruction,
+        1 + extraRooms * constructionStep,
+      ),
+      advancedOpsInterval: Math.ceil(
+        Math.min(maxAdvancedOps, 1 + extraRooms * advancedOpsStep),
       ),
     };
   },

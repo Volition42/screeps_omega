@@ -1,23 +1,9 @@
 const opsState = require("ops_state");
 const roomReporting = require("room_reporting");
+const empireManager = require("empire_manager");
 
 function getOwnedRooms() {
-  const ownedRooms = [];
-
-  for (const roomName in Game.rooms) {
-    if (!Object.prototype.hasOwnProperty.call(Game.rooms, roomName)) continue;
-
-    const room = Game.rooms[roomName];
-    if (!room.controller || !room.controller.my) continue;
-
-    ownedRooms.push(room);
-  }
-
-  ownedRooms.sort(function (a, b) {
-    return a.name.localeCompare(b.name);
-  });
-
-  return ownedRooms;
+  return empireManager.collectOwnedRooms();
 }
 
 function resolveOwnedRoom(roomName) {
@@ -148,6 +134,26 @@ function getConsoleCommandHelp() {
       description: "Show overview lines for all owned rooms.",
       example: "ops.rooms()",
     },
+    {
+      command: "ops.empire()",
+      description: "Show empire summary and owned-room overview.",
+      example: "ops.empire()",
+    },
+    {
+      command: "ops.expand(targetRoom, [parentRoom])",
+      description: "Start a manual expansion plan from an owned parent room.",
+      example: 'ops.expand("W5N6", "W5N5")',
+    },
+    {
+      command: "ops.expansions()",
+      description: "Show active expansion plans.",
+      example: "ops.expansions()",
+    },
+    {
+      command: "ops.cancelExpansion(targetRoom)",
+      description: "Cancel an active expansion plan.",
+      example: 'ops.cancelExpansion("W5N6")',
+    },
   ];
 }
 
@@ -195,6 +201,18 @@ module.exports = {
       },
       rooms: function () {
         return module.exports.rooms();
+      },
+      empire: function () {
+        return module.exports.empire();
+      },
+      expand: function (targetRoom, parentRoom) {
+        return module.exports.expand(targetRoom, parentRoom);
+      },
+      expansions: function () {
+        return module.exports.expansions();
+      },
+      cancelExpansion: function (targetRoom) {
+        return module.exports.cancelExpansion(targetRoom);
       },
       cpuStatus: function (roomName) {
         return module.exports.cpuStatus(roomName);
@@ -281,18 +299,53 @@ module.exports = {
       return printLine("[OPS] rooms: no owned rooms available.");
     }
 
-    const reports = [];
-
-    for (let i = 0; i < ownedRooms.length; i++) {
-      reports.push(
-        roomReporting.build(ownedRooms[i], null, { updateProgress: true }),
-      );
-    }
+    const reports = empireManager.buildRoomReports(ownedRooms, null, {
+      updateProgress: true,
+    });
 
     const lines = roomReporting.buildRoomsOverview(reports);
     printBlock(lines);
 
     return reports;
+  },
+
+  empire() {
+    const ownedRooms = getOwnedRooms();
+    if (ownedRooms.length === 0) {
+      return printLine("[OPS] empire: no owned rooms available.");
+    }
+
+    const reports = empireManager.buildRoomReports(ownedRooms, null, {
+      updateProgress: true,
+    });
+    const report = empireManager.buildReport(reports);
+
+    printBlock(report.lines);
+
+    return report;
+  },
+
+  expand(targetRoom, parentRoom) {
+    const result = empireManager.createExpansion(targetRoom, parentRoom);
+    printLine(`[OPS] ${result.message}`);
+
+    if (result.ok) {
+      printBlock(empireManager.getExpansionLines());
+    }
+
+    return result;
+  },
+
+  expansions() {
+    const lines = empireManager.getExpansionLines();
+    printBlock(lines);
+    return lines;
+  },
+
+  cancelExpansion(targetRoom) {
+    const result = empireManager.cancelExpansion(targetRoom);
+    printLine(`[OPS] ${result.message}`);
+    return result;
   },
 
   cpuStatus(roomName) {

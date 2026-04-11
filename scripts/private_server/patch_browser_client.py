@@ -22,15 +22,47 @@ def patch_text(path: Path, before: str, after: str) -> None:
     path.write_text(text.replace(before, after), encoding="utf8")
 
 
+def patch_text_any(path: Path, replacements: list[tuple[str, str]]) -> None:
+    text = path.read_text(encoding="utf8")
+    if any(after in text for _, after in replacements):
+        return
+    for before, after in replacements:
+        if before in text:
+            path.write_text(text.replace(before, after), encoding="utf8")
+            return
+    raise SystemExit(f"expected text not found in {path}")
+
+
 def main() -> int:
     client_app = CLIENT_ROOT / "node_modules" / "screepers-steamless-client" / "dist" / "clientApp.js"
     if not client_app.exists():
         raise SystemExit(f"browser client install not found at {client_app}")
 
+    patch_text_any(
+        client_app,
+        [
+            (
+                "import { fileURLToPath, URL as URL$1 } from 'url';\n",
+                "import { fileURLToPath, pathToFileURL, URL as URL$1 } from 'url';\n",
+            ),
+            (
+                "import { URL as URL$1, fileURLToPath } from 'url';\n",
+                "import { URL as URL$1, fileURLToPath, pathToFileURL } from 'url';\n",
+            ),
+        ],
+    )
     patch_text(
         client_app,
-        "import { fileURLToPath, URL as URL$1 } from 'url';\n",
-        "import { fileURLToPath, pathToFileURL, URL as URL$1 } from 'url';\n",
+        "        const { protocol, hostname, port } = hostUrl;\n"
+        "        const dot = hostname.indexOf('.');\n"
+        "        const subdomain = hostname.slice(0, dot);\n"
+        "        const host = hostname.slice(dot + 1);\n",
+        "        const { protocol, hostname, port } = hostUrl;\n"
+        "        const isIpHost = /^(?:\\d{1,3}\\.){3}\\d{1,3}$/.test(hostname) || hostname.includes(':');\n"
+        "        const dot = hostname.indexOf('.');\n"
+        "        const hasSubdomain = !isIpHost && dot > 0;\n"
+        "        const subdomain = hasSubdomain ? hostname.slice(0, dot) : '';\n"
+        "        const host = hasSubdomain ? hostname.slice(dot + 1) : hostname;\n",
     )
     patch_text(
         client_app,

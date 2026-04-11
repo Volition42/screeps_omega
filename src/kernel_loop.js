@@ -1,4 +1,5 @@
 const memory = require("kernel_memory");
+const empireManager = require("empire_manager");
 const roomManager = require("room_manager");
 const kernelProfiler = require("kernel_profiler");
 const statsManager = require("stats_manager");
@@ -7,6 +8,7 @@ const statsManager = require("stats_manager");
 Developer Note:
 Kernel loop owns:
 - memory cleanup
+- empire owned-room discovery
 - owned room iteration
 - top-level CPU profiling
 - top-level stats recording
@@ -22,29 +24,37 @@ module.exports = {
     profiler.wrap("memory.cleanup", memory.cleanup, memory);
 
     const ownedRooms = profiler.wrap(
-      "rooms.collectOwned",
-      function () {
-        return _.filter(Game.rooms, function (room) {
-          return room.controller && room.controller.my;
-        });
-      },
-      this,
+      "empire.collectOwned",
+      empireManager.collectOwnedRooms,
+      empireManager,
     );
+    const roomStates = {};
 
     profiler.wrap(
       "rooms.runAll",
       function () {
         for (const room of ownedRooms) {
-          profiler.wrap(
+          const state = profiler.wrap(
             `room.${room.name}`,
             roomManager.run,
             roomManager,
             room,
             profiler,
           );
+          if (state) {
+            roomStates[room.name] = state;
+          }
         }
       },
       this,
+    );
+
+    profiler.wrap(
+      "empire.record",
+      empireManager.record,
+      empireManager,
+      ownedRooms,
+      roomStates,
     );
 
     const snapshot = profiler.finalize();

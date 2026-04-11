@@ -17,6 +17,7 @@ PART_COSTS[MOVE] = 50;
 PART_COSTS[ATTACK] = 80;
 PART_COSTS[RANGED_ATTACK] = 150;
 PART_COSTS[HEAL] = 250;
+PART_COSTS[CLAIM] = 600;
 PART_COSTS[TOUGH] = 10;
 
 module.exports = {
@@ -57,6 +58,12 @@ module.exports = {
 
       case "repair":
         return this.planRepairBody(energyCapacity, infrastructure);
+
+      case "claimer":
+        return this.planClaimerBody(energyCapacity);
+
+      case "pioneer":
+        return this.planPioneerBody(energyCapacity, infrastructure);
 
       case "defender":
         return this.finalizePlan(
@@ -302,6 +309,27 @@ module.exports = {
       infrastructure.hasStorage ? "maintenance_backbone" : "bootstrap_maintenance",
       this.buildEconomicBody(counts),
     );
+  },
+
+  planClaimerBody(energyCapacity) {
+    if (energyCapacity >= 1300) {
+      return this.finalizePlan("claimer", "fast_claim", [
+        CLAIM,
+        CLAIM,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    return this.finalizePlan("claimer", "claim", [CLAIM, MOVE]);
+  },
+
+  planPioneerBody(energyCapacity, infrastructure) {
+    const plan = this.planWorkerBody(energyCapacity, infrastructure);
+
+    return this.finalizePlan("pioneer", "expansion_bootstrap", plan.body, {
+      carryDemand: plan.carryParts || 1,
+    });
   },
 
   getInfrastructure(room, state) {

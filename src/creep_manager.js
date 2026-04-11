@@ -20,6 +20,8 @@ const roleHauler = require("role_hauler");
 const roleUpgrader = require("role_upgrader");
 const roleRepair = require("role_repair");
 const roleDefender = require("role_defender");
+const roleClaimer = require("role_claimer");
+const rolePioneer = require("role_pioneer");
 const statsManager = require("stats_manager");
 const utils = require("utils");
 
@@ -129,6 +131,14 @@ module.exports = {
             state,
           );
           break;
+
+        case "claimer":
+          runRole("claimer", roleClaimer.run.bind(roleClaimer), creep);
+          break;
+
+        case "pioneer":
+          runRole("pioneer", rolePioneer.run.bind(rolePioneer), creep);
+          break;
       }
     }
   },
@@ -141,7 +151,7 @@ module.exports = {
         ? config.CREEPS.THINK_INTERVALS[role]
         : 1;
 
-    return Math.max(1, configured * Math.max(1, multiplier || 1));
+    return Math.max(1, Math.ceil(configured * Math.max(1, multiplier || 1)));
   },
 
   getRoleCpuPriority(role) {
@@ -162,8 +172,12 @@ module.exports = {
         return 6;
       case "mineral_miner":
         return 7;
-      default:
+      case "claimer":
         return 8;
+      case "pioneer":
+        return 9;
+      default:
+        return 10;
     }
   },
 
@@ -172,7 +186,9 @@ module.exports = {
     if (!statsManager.isPastSoftCpuLimit(0)) return false;
 
     const role = creep.memory.role;
-    if (role === "defender") return false;
+    if (role === "defender" || role === "claimer" || role === "pioneer") {
+      return false;
+    }
 
     if (!runtimeMode || runtimeMode.pressure === "normal") {
       return role !== "hauler" && role !== "miner";
