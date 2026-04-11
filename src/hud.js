@@ -16,19 +16,89 @@ module.exports = {
   run(room, state) {
     if (!opsState.getHudEnabled()) return;
 
-    this.drawSummary(room, state);
+    if (this.isRoomSummaryEnabled()) {
+      this.drawSummary(room, state);
+    }
 
-    if (
-      config.HUD.CREEP_LABELS &&
-      Game.time % config.HUD.LABEL_INTERVAL === 0
-    ) {
+    if (this.isCreepLabelsEnabled() && this.shouldDrawCreepLabels()) {
       this.drawCreepLabels(room, state);
     }
   },
 
   drawSummary(room, state) {
-    const report = roomReporting.build(room, state, { updateProgress: true });
+    const report = this.getSummaryReport(room, state);
     this.drawPanel(room, report.hudLines, report);
+  },
+
+  getSummaryReport(room, state) {
+    const cache = this.getHudCache(room);
+    const interval = this.getRoomSummaryInterval();
+    const phase = state && state.phase ? state.phase : null;
+    const rcl = room.controller ? room.controller.level : 0;
+    const alertActive = this.hasAlert(state);
+    const needsRefresh =
+      !cache.tick ||
+      !cache.hudLines ||
+      Game.time - cache.tick >= interval ||
+      cache.phase !== phase ||
+      cache.rcl !== rcl ||
+      alertActive ||
+      cache.alertActive;
+
+    if (needsRefresh) {
+      const report = roomReporting.build(room, state, { updateProgress: true });
+      cache.tick = Game.time;
+      cache.hudLines = report.hudLines;
+      cache.phase = report.state && report.state.phase ? report.state.phase : phase;
+      cache.rcl = rcl;
+      cache.alertActive = report.alert ? report.alert.active : false;
+
+      return report;
+    }
+
+    return {
+      hudLines: cache.hudLines,
+      alert: {
+        active: !!cache.alertActive,
+      },
+      state: {
+        phase: cache.phase || phase || "bootstrap",
+      },
+    };
+  },
+
+  getHudCache(room) {
+    if (!Memory.rooms) Memory.rooms = {};
+    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+    if (!Memory.rooms[room.name].hud) {
+      Memory.rooms[room.name].hud = {};
+    }
+
+    return Memory.rooms[room.name].hud;
+  },
+
+  isRoomSummaryEnabled() {
+    return !(config.HUD && config.HUD.ROOM_SUMMARY === false);
+  },
+
+  isCreepLabelsEnabled() {
+    return !!(config.HUD && config.HUD.CREEP_LABELS);
+  },
+
+  getRoomSummaryInterval() {
+    return config.HUD && config.HUD.ROOM_SUMMARY_INTERVAL
+      ? Math.max(1, config.HUD.ROOM_SUMMARY_INTERVAL)
+      : 1;
+  },
+
+  hasAlert(state) {
+    if (!state) return false;
+    if (state.defense && state.defense.hasThreats) return true;
+    return !!(
+      state.defense &&
+      state.defense.homeThreat &&
+      state.defense.homeThreat.hostileCount > 0
+    );
   },
 
   drawPanel(room, lines, report) {
@@ -93,7 +163,7 @@ module.exports = {
   },
 
   drawCreepLabels(room, state) {
-    const creeps = state.homeCreeps || [];
+    const creeps = state.creeps || state.homeCreeps || [];
 
     for (let i = 0; i < creeps.length; i++) {
       const creep = creeps[i];
@@ -111,6 +181,14 @@ module.exports = {
         },
       );
     }
+  },
+
+  shouldDrawCreepLabels() {
+    const interval =
+      config.HUD && config.HUD.LABEL_INTERVAL ? config.HUD.LABEL_INTERVAL : 1;
+    if (interval <= 1) return true;
+
+    return Game.time % interval === 0;
   },
 
   getCreepLabel(role, creep) {
@@ -133,6 +211,10 @@ module.exports = {
         return creep && creep.memory && creep.memory.defenseType === "home_invasion"
           ? "D!"
           : "D";
+      case "claimer":
+        return "Cl";
+      case "pioneer":
+        return "Pi";
       default:
         return "?";
     }
@@ -158,6 +240,10 @@ module.exports = {
         return creep && creep.memory && creep.memory.defenseType === "home_invasion"
           ? "#ff4d4d"
           : "#ff8fa3";
+      case "claimer":
+        return "#80ed99";
+      case "pioneer":
+        return "#4cc9f0";
       default:
         return "#e0fbff";
     }

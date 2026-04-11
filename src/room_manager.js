@@ -86,9 +86,17 @@ module.exports = {
     if (!runtimeMode.skipHud && !statsManager.isPastSoftCpuLimit(1)) {
       runStep("hud", hud.run, hud, room, state);
     }
+
+    return state;
   },
 
   shouldRunAdvancedOps(runtimeMode) {
+    const scaledInterval =
+      runtimeMode && runtimeMode.advancedOpsInterval
+        ? runtimeMode.advancedOpsInterval
+        : 1;
+
+    if (scaledInterval > 1 && Game.time % scaledInterval !== 0) return false;
     if (!runtimeMode || runtimeMode.pressure === "normal") return true;
     if (runtimeMode.pressure === "tight") return Game.time % 5 === 0;
     return Game.time % 10 === 0;

@@ -619,6 +619,8 @@ function getCpuSummary(room) {
     pressure: runtime.pressure || "normal",
     thinkIntervalMultiplier: runtime.thinkIntervalMultiplier || 1,
     constructionIntervalMultiplier: runtime.constructionIntervalMultiplier || 1,
+    advancedOpsInterval: runtime.advancedOpsInterval || 1,
+    roomScaleActive: !!runtime.roomScaleActive,
     skipDirectives: !!runtime.skipDirectives,
     skipHud: !!runtime.skipHud,
     room: room.name,
@@ -1028,6 +1030,9 @@ module.exports = {
         cpu.available
           ? `Pressure ${cpu.pressure} | Shedding think x${cpu.thinkIntervalMultiplier} | build x${cpu.constructionIntervalMultiplier}`
           : "Pressure unknown",
+        cpu.available
+          ? `Room scale ${cpu.roomScaleActive ? "on" : "off"} | advanced every ${cpu.advancedOpsInterval}t`
+          : "Room scale off | advanced every 1t",
         cpu.available
           ? `Skip directives ${cpu.skipDirectives ? "yes" : "no"} | skip HUD ${cpu.skipHud ? "yes" : "no"}`
           : "Skip directives no | skip HUD no",

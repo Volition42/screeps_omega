@@ -17,6 +17,7 @@ const bodies = require("bodies");
 const config = require("config");
 const constructionStatus = require("construction_status");
 const defenseManager = require("defense_manager");
+const empireManager = require("empire_manager");
 const reservePolicy = require("economy_reserve_policy");
 const utils = require("utils");
 
@@ -41,6 +42,8 @@ module.exports = {
         responseMode: request.responseMode || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
+        targetRoom: request.targetRoom || null,
+        operation: request.operation || null,
         homeRoom: request.homeRoom || null,
         bodyProfile: plan.profile || null,
         bodyCost: plan.cost || null,
@@ -138,6 +141,8 @@ module.exports = {
         responseMode: request.responseMode || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
+        targetRoom: request.targetRoom || null,
+        operation: request.operation || null,
         bodyProfile: bodyPlan.profile || null,
         bodyCost: bodyPlan.cost || null,
       },
@@ -275,6 +280,7 @@ module.exports = {
     }
 
     this.addDefenseRequests(room, state, requests, reaction);
+    this.addExpansionRequests(room, state, requests);
     this.addCoreEconomyRequests(room, state, requests, {
       includeRepairs: true,
     });
@@ -284,6 +290,14 @@ module.exports = {
     });
 
     return requests;
+  },
+
+  addExpansionRequests(room, state, requests) {
+    const expansionRequests = empireManager.getExpansionSpawnRequests(room, state);
+
+    for (let i = 0; i < expansionRequests.length; i++) {
+      requests.push(expansionRequests[i]);
+    }
   },
 
   isBootstrapPhase(phase) {

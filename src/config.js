@@ -27,7 +27,9 @@ Important Notes:
 module.exports = {
   HUD: {
     ENABLED: true,
-    CREEP_LABELS: true,
+    ROOM_SUMMARY: true,
+    ROOM_SUMMARY_INTERVAL: 1,
+    CREEP_LABELS: false,
     LABEL_INTERVAL: 1,
   },
 
@@ -64,6 +66,24 @@ module.exports = {
       repair: 2,
       upgrader: 2,
     },
+  },
+
+  /*
+  Developer Notes:
+  Expansion Controls
+
+  Expansion is console-driven in this phase. The empire layer may observe all
+  rooms, but it only spawns claimers/pioneers for rooms explicitly registered
+  with ops.expand().
+  */
+  EXPANSION: {
+    ENABLED: true,
+    MIN_PARENT_RCL: 4,
+    PIONEERS_PER_EXPANSION: 2,
+    CLAIM_PRIORITY: 95,
+    PIONEER_PRIORITY: 75,
+    CLAIMER_REPLACE_TTL: 200,
+    PIONEER_REPLACE_TTL: 200,
   },
 
   /*
@@ -341,6 +361,16 @@ module.exports = {
         normal: 1,
         tight: 4,
         critical: 8,
+      },
+      ROOM_SCALE: {
+        ENABLED: true,
+        START_ROOMS: 3,
+        THINK_STEP: 0.5,
+        CONSTRUCTION_STEP: 1,
+        ADVANCED_OPS_STEP: 1,
+        MAX_THINK_MULTIPLIER: 3,
+        MAX_CONSTRUCTION_MULTIPLIER: 4,
+        MAX_ADVANCED_OPS_INTERVAL: 6,
       },
       SKIP_DIRECTIVES_AT: "tight",
       SKIP_HUD_AT: "tight",

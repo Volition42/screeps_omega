@@ -565,21 +565,80 @@ def build_reseed_command(room: str, controller: bool, sources: int, terrain_type
         f".then(() => map.generateRoom({room_json}, {opts_json}))"
         f".then(() => map.openRoom({room_json}))"
         ".then(() => map.updateTerrainData())"
-        f".then(() => print('reseeded {room}'))"
+        + build_runtime_env_refresh_chain()
+        + f".then(() => print('reseeded {room}'))"
         ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))"
+    )
+
+
+def build_runtime_env_refresh_chain() -> str:
+    return (
+        ".then(() => storage.db['rooms'].find({status: 'normal'}))"
+        ".then(rooms => {"
+        " const now = Date.now();"
+        " const list = rooms.filter(room => !room.openTime || room.openTime < now).map(room => room._id);"
+        " return storage.env.set(storage.env.keys.ACCESSIBLE_ROOMS, JSON.stringify(list));"
+        "})"
+        ".then(() => {"
+        " const now = Date.now();"
+        " return storage.db['rooms'].find({$or: ["
+        "   {novice: {$gt: now}},"
+        "   {respawnArea: {$gt: now}},"
+        "   {openTime: {$gt: now}},"
+        "   {status: 'out of borders'}"
+        " ]}).then(rooms => ({rooms, now}));"
+        "})"
+        ".then(({rooms, now}) => {"
+        " const statusData = {novice: {}, respawn: {}, closed: {}};"
+        " for (const room of rooms) {"
+        "   if (room.novice > now) {"
+        "     statusData.novice[room._id] = room.novice;"
+        "   } else if (room.respawnArea > now) {"
+        "     statusData.respawn[room._id] = room.respawnArea;"
+        "   } else if (room.openTime > now) {"
+        "     statusData.closed[room._id] = room.openTime;"
+        "   } else {"
+        "     statusData.closed[room._id] = Infinity;"
+        "   }"
+        " }"
+        " return storage.env.set(storage.env.keys.ROOM_STATUS_DATA, JSON.stringify(statusData));"
+        "})"
+    )
+
+
+def build_runtime_env_repair_command() -> str:
+    return (
+        "Promise.resolve()"
+        + build_runtime_env_refresh_chain()
+        + ".then(() => print('runtime env repaired'))"
+        + ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))"
     )
 
 
 def command_reset_world(args: argparse.Namespace) -> int:
     output = run_cli(
-        "system.resetAllData()",
+        "Promise.resolve(system.resetAllData())"
+        + build_runtime_env_refresh_chain()
+        + ".then(() => print('world reset complete'))"
+        + ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))",
         server_root=args.server_root,
         host=args.cli_host,
         port=args.cli_port,
     )
     if output:
         print(output)
-    print("world reset complete")
+    return 0
+
+
+def command_repair_runtime_env(args: argparse.Namespace) -> int:
+    output = run_cli(
+        build_runtime_env_repair_command(),
+        server_root=args.server_root,
+        host=args.cli_host,
+        port=args.cli_port,
+    )
+    if output:
+        print(output)
     return 0
 
 
@@ -1035,6 +1094,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     reset_world = subparsers.add_parser("reset-world", help="wipe the private server world")
     reset_world.set_defaults(func=command_reset_world)
+
+    repair_runtime = subparsers.add_parser(
+        "repair-runtime-env",
+        help="refresh private-server map runtime env keys",
+    )
+    repair_runtime.set_defaults(func=command_repair_runtime_env)
 
     pause = subparsers.add_parser("pause", help="pause simulation")
     pause.set_defaults(func=command_pause)
