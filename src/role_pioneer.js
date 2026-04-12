@@ -71,6 +71,13 @@ module.exports = {
     const cached = this.getCachedWithdrawalTarget(creep);
     const target = cached || this.findWithdrawalTarget(creep);
 
+    if (target && target.resourceType === RESOURCE_ENERGY) {
+      if (creep.pickup(target) === ERR_NOT_IN_RANGE) {
+        utils.moveTo(creep, target, MOVE_OPTIONS);
+      }
+      return;
+    }
+
     if (target && target.store) {
       if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         utils.moveTo(creep, target, MOVE_OPTIONS);
@@ -133,8 +140,11 @@ module.exports = {
       !target ||
       !target.pos ||
       target.pos.roomName !== creep.room.name ||
-      !target.store ||
-      (target.store[RESOURCE_ENERGY] || 0) <= 0
+      (
+        target.resourceType === RESOURCE_ENERGY
+          ? (target.amount || 0) <= 0
+          : (!target.store || (target.store[RESOURCE_ENERGY] || 0) <= 0)
+      )
     ) {
       delete creep.memory.withdrawTargetId;
       return null;
@@ -144,18 +154,30 @@ module.exports = {
   },
 
   findWithdrawalTarget(creep) {
-    const target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-      filter: function (structure) {
-        return (
-          (
-            structure.structureType === STRUCTURE_CONTAINER ||
-            structure.structureType === STRUCTURE_STORAGE
-          ) &&
-          structure.store &&
-          (structure.store[RESOURCE_ENERGY] || 0) > 0
-        );
-      },
-    });
+    let target = null;
+    const cache = utils.getRoomRuntimeCache(creep.room);
+    const state = cache && cache.state ? cache.state : null;
+
+    target = creep.pos.findClosestByPath(
+      state && state.droppedEnergy
+        ? state.droppedEnergy
+        : utils.getDroppedEnergyResources(creep.room),
+    );
+
+    if (!target) {
+      target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: function (structure) {
+          return (
+            (
+              structure.structureType === STRUCTURE_CONTAINER ||
+              structure.structureType === STRUCTURE_STORAGE
+            ) &&
+            structure.store &&
+            (structure.store[RESOURCE_ENERGY] || 0) > 0
+          );
+        },
+      });
+    }
 
     if (target && target.id) {
       creep.memory.withdrawTargetId = target.id;

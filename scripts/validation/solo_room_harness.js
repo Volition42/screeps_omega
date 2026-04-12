@@ -19,6 +19,7 @@ const ERR_NAME_EXISTS = -3;
 const ERR_BUSY = -4;
 const ERR_NOT_FOUND = -5;
 const ERR_NOT_ENOUGH_ENERGY = -6;
+const ERR_NOT_ENOUGH_RESOURCES = -6;
 const ERR_INVALID_TARGET = -7;
 const ERR_FULL = -8;
 const ERR_NOT_IN_RANGE = -9;
@@ -181,6 +182,7 @@ Object.assign(global, {
   ERR_BUSY,
   ERR_NOT_FOUND,
   ERR_NOT_ENOUGH_ENERGY,
+  ERR_NOT_ENOUGH_RESOURCES,
   ERR_INVALID_TARGET,
   ERR_FULL,
   ERR_NOT_IN_RANGE,
@@ -518,6 +520,14 @@ class FakeRoom {
     return mineral;
   }
 
+  addDroppedResource(resource) {
+    resource.room = this;
+    resource.pos.roomName = this.name;
+    this._dropped.push(resource);
+    currentRuntime.objectsById[resource.id] = resource;
+    return resource;
+  }
+
   setController(controller) {
     controller.room = this;
     controller.pos.roomName = this.name;
@@ -802,6 +812,17 @@ function createMineral(x, y, options) {
   };
 }
 
+function createDroppedResource(x, y, options) {
+  const spec = options || {};
+  return {
+    id: spec.id || nextId("resource"),
+    type: "resource",
+    resourceType: spec.resourceType || RESOURCE_ENERGY,
+    amount: spec.amount !== undefined ? spec.amount : 50,
+    pos: new RoomPosition(x, y, spec.roomName || "sim"),
+  };
+}
+
 function createController(x, y, options) {
   const spec = options || {};
   return {
@@ -921,6 +942,27 @@ function createCreep(name, role, x, y, options) {
       if (amount <= 0) return ERR_NOT_ENOUGH_ENERGY;
       target.store[resourceType] -= amount;
       this.store[resourceType] = (this.store[resourceType] || 0) + amount;
+      return OK;
+    },
+    pickup(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "pickup",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || target.resourceType === undefined) return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 1) return ERR_NOT_IN_RANGE;
+      const amount = Math.min(
+        target.amount || 0,
+        this.store.getFreeCapacity(target.resourceType),
+      );
+      if (amount <= 0) return ERR_NOT_ENOUGH_ENERGY;
+      target.amount -= amount;
+      this.store[target.resourceType] = (this.store[target.resourceType] || 0) + amount;
+      if (target.amount <= 0 && target.room) {
+        target.room._dropped = target.room._dropped.filter((item) => item.id !== target.id);
+        delete currentRuntime.objectsById[target.id];
+      }
       return OK;
     },
     transfer(target, resourceType) {
@@ -1246,6 +1288,15 @@ function buildRoomScenario(name, options) {
     }
   }
 
+  if (options.droppedResources) {
+    for (let i = 0; i < options.droppedResources.length; i++) {
+      const spec = options.droppedResources[i];
+      room.addDroppedResource(
+        createDroppedResource(spec.x, spec.y, Object.assign({ roomName: name }, spec)),
+      );
+    }
+  }
+
   room.energyAvailable = options.energyAvailable !== undefined ? options.energyAvailable : spawn.store.energy;
   room.energyCapacityAvailable = options.energyCapacityAvailable !== undefined ? options.energyCapacityAvailable : 300;
 
@@ -1403,6 +1454,7 @@ const defenseLayout = require("defense_layout");
 const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
 const roleWorker = require("role_worker");
+const roleJrWorker = require("role_jrworker");
 const roleClaimer = require("role_claimer");
 const rolePioneer = require("role_pioneer");
 const roleDefender = require("role_defender");
@@ -1776,6 +1828,71 @@ function runFoundationWorkerHarvestSpreadScenario() {
   assert(
     refreshed && refreshed.id === sources[1].id,
     `expected worker to abandon empty source ${sources[0].id} for ${sources[1].id}, got ${refreshed ? refreshed.id : "none"}`,
+  );
+}
+
+function runWorkerDroppedEnergyPickupScenario() {
+  const room = buildRoomScenario("VAL_WORKER_DROPPED_ENERGY", {
+    tick: 285,
+    controllerLevel: 2,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+    supportContainers: true,
+    droppedResources: [
+      { x: 24, y: 25, amount: 25 },
+    ],
+    creeps: [
+      { name: "workerLoose", role: "worker", x: 25, y: 25 },
+    ],
+  });
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+
+  const worker = Game.creeps.workerLoose;
+  roleWorker.run(worker, { thinkInterval: 1 });
+
+  const pickup = currentRuntime.creepActions.find(function (action) {
+    return action.creep === "workerLoose" && action.action === "pickup";
+  });
+
+  assert(pickup, "expected worker to pick up loose dropped energy before harvesting or withdrawing");
+  assert(
+    (worker.store[RESOURCE_ENERGY] || 0) > 0,
+    `expected worker to carry picked up energy, got ${worker.store[RESOURCE_ENERGY] || 0}`,
+  );
+}
+
+function runJrWorkerDroppedEnergyPickupScenario() {
+  const room = buildRoomScenario("VAL_JRWORKER_DROPPED_ENERGY", {
+    tick: 286,
+    controllerLevel: 1,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+    droppedResources: [
+      { x: 24, y: 25, amount: 25 },
+    ],
+    creeps: [
+      { name: "jrLoose", role: "jrworker", x: 25, y: 25 },
+    ],
+  });
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+
+  const jrWorker = Game.creeps.jrLoose;
+  roleJrWorker.run(jrWorker);
+
+  const pickup = currentRuntime.creepActions.find(function (action) {
+    return action.creep === "jrLoose" && action.action === "pickup";
+  });
+
+  assert(pickup, "expected jrworker to pick up loose dropped energy before harvesting or withdrawing");
+  assert(
+    (jrWorker.store[RESOURCE_ENERGY] || 0) > 0,
+    `expected jrworker to carry picked up energy, got ${jrWorker.store[RESOURCE_ENERGY] || 0}`,
   );
 }
 
@@ -4748,6 +4865,8 @@ function main() {
     ["bootstrap_harvest_spread", runBootstrapHarvestSpreadScenario],
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
     ["foundation_worker_harvest_spread", runFoundationWorkerHarvestSpreadScenario],
+    ["worker_dropped_energy_pickup", runWorkerDroppedEnergyPickupScenario],
+    ["jrworker_dropped_energy_pickup", runJrWorkerDroppedEnergyPickupScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
     ["extension_core", runCompactExtensionCoreScenario],

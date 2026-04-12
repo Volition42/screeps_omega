@@ -9,6 +9,7 @@ Purpose:
 - Upgrade as final fallback
 
 Withdrawal priority:
+- dropped energy
 - storage
 - source containers
 - harvest source as fallback
@@ -55,6 +56,14 @@ module.exports = {
 
         if (
           !target ||
+          (
+            target.resourceType === RESOURCE_ENERGY &&
+            (
+              !target.pos ||
+              target.pos.roomName !== creep.room.name ||
+              (target.amount || 0) <= 0
+            )
+          ) ||
           ((target.structureType === STRUCTURE_STORAGE ||
             target.structureType === STRUCTURE_CONTAINER) &&
             (target.store[RESOURCE_ENERGY] || 0) <= 0)
@@ -81,6 +90,13 @@ module.exports = {
         target.structureType === STRUCTURE_CONTAINER
       ) {
         if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+          utils.moveTo(creep, target, MOVE_OPTIONS);
+        }
+        return;
+      }
+
+      if (target.resourceType === RESOURCE_ENERGY) {
+        if (creep.pickup(target) === ERR_NOT_IN_RANGE) {
           utils.moveTo(creep, target, MOVE_OPTIONS);
         }
         return;

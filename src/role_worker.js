@@ -9,6 +9,7 @@ Purpose:
 - Upgrade controller last
 
 Withdrawal priority:
+- dropped energy
 - storage
 - source containers
 - harvest source as fallback
@@ -65,6 +66,14 @@ module.exports = {
       ) {
         utils.clearAssignedHarvestPosition(creep);
         if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+          utils.moveTo(creep, target, MOVE_OPTIONS);
+        }
+        return;
+      }
+
+      if (target.resourceType === RESOURCE_ENERGY) {
+        utils.clearAssignedHarvestPosition(creep);
+        if (creep.pickup(target) === ERR_NOT_IN_RANGE) {
           utils.moveTo(creep, target, MOVE_OPTIONS);
         }
         return;
@@ -183,6 +192,18 @@ module.exports = {
     }
 
     if (
+      target.resourceType === RESOURCE_ENERGY &&
+      (
+        !target.pos ||
+        target.pos.roomName !== creep.room.name ||
+        (target.amount || 0) <= 0
+      )
+    ) {
+      delete creep.memory.withdrawTargetId;
+      return null;
+    }
+
+    if (
       target.energy !== undefined &&
       (
         !target.pos ||
@@ -252,6 +273,15 @@ module.exports = {
   },
 
   getReserveWithdrawalTarget(creep, state) {
+    const droppedEnergy = logisticsManager.getDroppedEnergyTarget(
+      creep.room,
+      creep,
+      state,
+    );
+    if (droppedEnergy) {
+      return droppedEnergy;
+    }
+
     const hubContainer = logisticsManager.getHubContainerEnergyTarget(state);
     if (hubContainer) {
       return hubContainer;

@@ -51,6 +51,15 @@ module.exports = {
       typeof FIND_HOSTILE_STRUCTURES !== "undefined"
         ? room.find(FIND_HOSTILE_STRUCTURES)
         : [];
+    var droppedEnergy =
+      typeof FIND_DROPPED_RESOURCES !== "undefined"
+        ? _.filter(room.find(FIND_DROPPED_RESOURCES), function (resource) {
+            return (
+              resource.resourceType === RESOURCE_ENERGY &&
+              (resource.amount || 0) > 0
+            );
+          })
+        : [];
     var minerals = room.find(FIND_MINERALS);
     var structuresByType = this.groupStructuresByType(structures);
     var sitesByType = this.groupStructuresByType(sites);
@@ -89,6 +98,7 @@ module.exports = {
       hostileCreeps: hostileCreeps,
       hostilePowerCreeps: hostilePowerCreeps,
       hostileStructures: hostileStructures,
+      droppedEnergy: droppedEnergy,
       containers: containers,
       sourceContainers: containerLayout.sourceContainers,
       sourceContainersBySourceId: containerLayout.sourceContainersBySourceId,

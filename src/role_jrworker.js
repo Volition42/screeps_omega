@@ -9,7 +9,7 @@ Purpose:
 
 Important Notes:
 - Withdrawal priority:
-  storage -> containers -> harvest
+  dropped energy -> storage -> containers -> harvest
 - Delivery priority:
   spawn -> extensions -> towers -> controller
 */
@@ -50,10 +50,13 @@ module.exports = {
       var withdrawalTarget = this.getWithdrawalTarget(creep);
 
       if (withdrawalTarget) {
-        var withdrawalResult = creep.withdraw(
-          withdrawalTarget,
-          RESOURCE_ENERGY,
-        );
+        var withdrawalResult =
+          withdrawalTarget.resourceType === RESOURCE_ENERGY
+            ? creep.pickup(withdrawalTarget)
+            : creep.withdraw(
+                withdrawalTarget,
+                RESOURCE_ENERGY,
+              );
 
         if (withdrawalResult === ERR_NOT_IN_RANGE) {
           utils.moveTo(creep, withdrawalTarget, MOVE_OPTIONS);
@@ -148,11 +151,25 @@ module.exports = {
     return source;
   },
 
+  getRuntimeState(room) {
+    const cache = room ? utils.getRoomRuntimeCache(room) : null;
+    return cache && cache.state ? cache.state : null;
+  },
+
   getWithdrawalTarget(creep) {
     var cached = this.getCachedWithdrawalTarget(creep);
     if (cached) return cached;
 
-    var target = logisticsManager.getStorageEnergyTarget(creep.room);
+    var state = this.getRuntimeState(creep.room);
+    var target = logisticsManager.getDroppedEnergyTarget(
+      creep.room,
+      creep,
+      state,
+    );
+
+    if (!target) {
+      target = logisticsManager.getStorageEnergyTarget(creep.room);
+    }
 
     if (!target) {
       target = creep.pos.findClosestByPath(FIND_STRUCTURES, {
@@ -210,8 +227,11 @@ module.exports = {
       !target ||
       !target.pos ||
       target.pos.roomName !== creep.room.name ||
-      !target.store ||
-      (target.store[RESOURCE_ENERGY] || 0) <= 0
+      (
+        target.resourceType === RESOURCE_ENERGY
+          ? (target.amount || 0) <= 0
+          : (!target.store || (target.store[RESOURCE_ENERGY] || 0) <= 0)
+      )
     ) {
       this.clearWithdrawalTarget(creep);
       return null;

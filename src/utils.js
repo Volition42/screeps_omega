@@ -8,8 +8,8 @@ Purpose:
 - Support consistent targeting across multiple roles
 
 Important Notes:
-- General withdrawal logic now prefers storage first, then source containers,
-  then hub/source containers, then direct harvesting as a fallback.
+ - General withdrawal logic now prefers loose dropped energy, then storage,
+   then hub/source containers, then direct harvesting as a fallback.
 - Hauler delivery logic now supports conditional tower priority:
   - Threat mode or low tower energy: spawn -> towers -> extensions -> controller/hub -> storage
   - Normal mode: spawn -> extensions -> controller/hub -> storage -> towers below reserve
@@ -172,6 +172,19 @@ function buildRuntimeCache(room) {
       : typeof FIND_HOSTILE_STRUCTURES !== "undefined"
         ? room.find(FIND_HOSTILE_STRUCTURES)
         : [];
+  var droppedEnergy =
+    state && state.droppedEnergy
+      ? state.droppedEnergy
+      : typeof FIND_DROPPED_RESOURCES !== "undefined"
+        ? room.find(FIND_DROPPED_RESOURCES, {
+            filter: function (resource) {
+              return (
+                resource.resourceType === RESOURCE_ENERGY &&
+                (resource.amount || 0) > 0
+              );
+            },
+          })
+        : [];
   var structuresByType =
     state && state.structuresByType
       ? state.structuresByType
@@ -291,6 +304,7 @@ function buildRuntimeCache(room) {
     hostileCreeps: hostileCreeps,
     hostilePowerCreeps: hostilePowerCreeps,
     hostileStructures: hostileStructures,
+    droppedEnergy: droppedEnergy,
     containers: containers,
     sourceContainers: sourceContainers,
     sourceContainersBySourceId: sourceContainersBySourceId,
@@ -943,7 +957,10 @@ module.exports = {
     if (!cache.droppedEnergy) {
       cache.droppedEnergy = room.find(FIND_DROPPED_RESOURCES, {
         filter: function (resource) {
-          return resource.resourceType === RESOURCE_ENERGY;
+          return (
+            resource.resourceType === RESOURCE_ENERGY &&
+            (resource.amount || 0) > 0
+          );
         },
       });
     }

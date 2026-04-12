@@ -9,7 +9,8 @@ Purpose:
 - Avoid duplicating withdrawal / delivery rules across roles
 
 Important Notes:
-- Workers and repairers use storage first whenever it has energy
+ - Workers and repairers collect loose dropped energy before stored buffers
+ - Storage remains the first stored buffer whenever it has energy
 - Typed containers are used deliberately:
   - hub container smooths early spawn/worker flow before storage
   - controller container accelerates upgrading until a controller link exists
@@ -40,6 +41,7 @@ module.exports = {
       storageEnergy: storageEnergy,
       hasStorage: !!storage,
       withdrawPriority: [
+        "dropped_energy",
         "storage",
         "hub_container",
         "source_container",
@@ -56,6 +58,11 @@ module.exports = {
   },
 
   getGeneralEnergyWithdrawalTarget(room, creep, state) {
+    const droppedEnergy = this.getDroppedEnergyTarget(room, creep, state);
+    if (droppedEnergy) {
+      return droppedEnergy;
+    }
+
     const storage = this.getStorageEnergyTarget(room);
     if (storage) {
       return storage;
@@ -91,6 +98,35 @@ module.exports = {
     }
 
     return this.getGeneralEnergyWithdrawalTarget(room, creep, state);
+  },
+
+  getDroppedEnergyTarget(room, creep, state) {
+    if (!room || !creep || typeof FIND_DROPPED_RESOURCES === "undefined") {
+      return null;
+    }
+
+    const droppedEnergy =
+      state && state.droppedEnergy
+        ? state.droppedEnergy
+        : room.find(FIND_DROPPED_RESOURCES, {
+            filter: function (resource) {
+              return resource.resourceType === RESOURCE_ENERGY;
+            },
+          });
+    const candidates = _.filter(droppedEnergy || [], function (resource) {
+      return (
+        resource &&
+        resource.resourceType === RESOURCE_ENERGY &&
+        (resource.amount || 0) > 0 &&
+        resource.pos &&
+        resource.pos.roomName === room.name
+      );
+    });
+
+    if (candidates.length <= 0) return null;
+
+    return creep.pos.findClosestByPath(candidates) ||
+      creep.pos.findClosestByRange(candidates);
   },
 
   getStorageEnergyTarget(room) {

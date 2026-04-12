@@ -49,6 +49,13 @@ module.exports = {
         return;
       }
 
+      if (target.resourceType === RESOURCE_ENERGY) {
+        if (creep.pickup(target) === ERR_NOT_IN_RANGE) {
+          utils.moveTo(creep, target, MOVE_OPTIONS);
+        }
+        return;
+      }
+
       if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
         utils.moveTo(creep, target.pos, INTERACT_MOVE_OPTIONS);
       }
@@ -129,6 +136,18 @@ module.exports = {
     }
 
     if (target.energy !== undefined && target.energy <= 0) {
+      delete creep.memory.withdrawTargetId;
+      return null;
+    }
+
+    if (
+      target.resourceType === RESOURCE_ENERGY &&
+      (
+        !target.pos ||
+        target.pos.roomName !== creep.room.name ||
+        (target.amount || 0) <= 0
+      )
+    ) {
       delete creep.memory.withdrawTargetId;
       return null;
     }
