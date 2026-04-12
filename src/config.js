@@ -309,8 +309,9 @@ module.exports = {
     },
 
     // Developer note:
-    // Reactive defender spawning stays narrow in Phase 1:
+    // Reactive defender spawning stays narrow:
     // - owned rooms defend reactively when hostiles appear
+    // - nearby owned rooms can lend one defender when local defense is thin
     REACTION: {
       ENABLED: true,
       MAX_HOME_DEFENDERS: 3,
@@ -327,6 +328,14 @@ module.exports = {
       INVADER_CORE_LEVEL_SCORE: 2,
       INVADER_CORE_HITS_STEP: 100000,
       THREAT_MEMORY_TTL: 25,
+      CROSS_ROOM_ENABLED: true,
+      MAX_SUPPORT_DISTANCE: 2,
+      MAX_SUPPORT_DEFENDERS: 1,
+      SUPPORT_PRIORITY: 1050,
+      SUPPORT_SPAWN_COOLDOWN: 25,
+      SUPPORT_REQUEST_TTL: 75,
+      SUPPORT_MIN_RCL: 3,
+      SUPPORT_MIN_ENERGY_CAPACITY: 650,
     },
   },
 

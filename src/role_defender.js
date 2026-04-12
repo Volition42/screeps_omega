@@ -1,14 +1,14 @@
 /*
 Developer Summary:
-Home defender role.
+Defender role.
 
 Purpose:
-- Hold the home room during active invasions
+- Hold the assigned room during active invasions
+- Support nearby owned rooms when spawned for cross-room defense
 - Use melee pressure against hostile creeps and hostile structures
-- Stay anchored to the home room
 
 Important Notes:
-- This role is intentionally defensive and does not leave the home room
+- This role is intentionally defensive and returns home when support work clears
 */
 
 const defenseManager = require("defense_manager");
@@ -29,16 +29,29 @@ module.exports = {
     var homeRoomName = creep.memory.homeRoom || creep.memory.room;
     if (!homeRoomName) return;
 
-    var homeThreat = this.getHomeThreat(homeRoomName, state);
+    var targetRoomName = creep.memory.targetRoom || homeRoomName;
+    var threat = this.getDefenseThreat(targetRoomName, state);
 
-    creep.memory.defenseType = homeThreat ? homeThreat.classification : "clear";
+    if (
+      targetRoomName !== homeRoomName &&
+      this.shouldReleaseSupportAssignment(targetRoomName, threat)
+    ) {
+      delete creep.memory.targetRoom;
+      creep.memory.operation = null;
+      targetRoomName = homeRoomName;
+      threat = this.getDefenseThreat(homeRoomName, state);
+    }
 
-    if (creep.room.name !== homeRoomName) {
-      this.moveToRoom(creep, homeRoomName);
+    creep.memory.defenseType = threat
+      ? threat.classification || threat.type || "active"
+      : "clear";
+
+    if (creep.room.name !== targetRoomName) {
+      this.moveToRoom(creep, targetRoomName);
       return;
     }
 
-    var hostile = this.getPriorityHostile(creep, homeThreat);
+    var hostile = this.getPriorityHostile(creep, threat);
     var attackParts = creep.getActiveBodyparts(ATTACK);
     var rangedParts = creep.getActiveBodyparts(RANGED_ATTACK);
     var healParts = creep.getActiveBodyparts(HEAL);
@@ -77,21 +90,47 @@ module.exports = {
       return;
     }
 
-    this.rally(creep, homeRoomName);
-  },
-
-  getHomeThreat(homeRoomName, state) {
-    if (state && state.defense) {
-      return defenseManager.getThreatByRoom(state.defense, homeRoomName);
+    if (targetRoomName !== homeRoomName) {
+      this.moveToRoom(creep, homeRoomName);
+      return;
     }
 
-    var homeRoom = Game.rooms[homeRoomName];
-    if (!homeRoom) return null;
+    this.rally(creep, targetRoomName);
+  },
 
-    var cache = utils.getRoomRuntimeCache(homeRoom);
-    if (!cache || !cache.state || !cache.state.defense) return null;
+  shouldReleaseSupportAssignment(targetRoomName, threat) {
+    var targetRoom = Game.rooms[targetRoomName];
+    if (!targetRoom) return false;
+    if (threat && threat.active) return false;
 
-    return defenseManager.getThreatByRoom(cache.state.defense, homeRoomName);
+    return utils.getDefenseIntruders(targetRoom).length === 0;
+  },
+
+  getDefenseThreat(roomName, state) {
+    if (state && state.defense) {
+      var stateThreat = defenseManager.getThreatByRoom(state.defense, roomName);
+      if (stateThreat) return stateThreat;
+    }
+
+    var room = Game.rooms[roomName];
+    if (!room) return null;
+
+    var cache = utils.getRoomRuntimeCache(room);
+    var cacheState = cache && cache.state ? cache.state : null;
+
+    if (cacheState && cacheState.defense) {
+      var cachedThreat = defenseManager.getThreatByRoom(cacheState.defense, roomName);
+      if (cachedThreat) return cachedThreat;
+    }
+
+    var hostiles = utils.getDefenseIntruders(room);
+    if (hostiles.length <= 0) return null;
+
+    return defenseManager.getOwnedRoomThreat(
+      room,
+      cacheState,
+      defenseManager.getReactionConfig(),
+    );
   },
 
   getPriorityHostile(creep, homeThreat) {

@@ -9,6 +9,8 @@ function omegaAdminUrl() {
 }
 
 export async function register({ koa }) {
+  const assetBust = Date.now().toString();
+
   koa.use(async (context, next) => {
     if (context.path === "/web" || context.path === "/web/") {
       context.status = 302;
@@ -42,7 +44,10 @@ export async function register({ koa }) {
 
     await next();
 
+    const contentType = context.response.type || "";
     if (
+      context.status === 200 &&
+      contentType.includes("html") &&
       typeof context.body === "string" &&
       context.body.includes("</body>") &&
       !context.body.includes("omega-admin-shortcut")
@@ -66,7 +71,10 @@ export async function register({ koa }) {
 </style>
 <a class="omega-admin-shortcut" href="${omegaAdminUrl()}">Omega Admin</a>
 </body>`;
-      context.body = context.body.replace("</body>", shortcut);
+      context.set("Cache-Control", "no-store");
+      context.body = context.body
+        .replace(/\?bust=\d+/g, `?bust=${assetBust}`)
+        .replace("</body>", shortcut);
     }
   });
 }

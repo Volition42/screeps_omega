@@ -577,6 +577,8 @@ function getAlertSummary(room, state) {
   const hostiles = threat ? threat.hostileCount || 0 : (state.hostileCreeps || []).length;
   const threatScore = threat ? threat.threatScore || 0 : 0;
   const threatLevel = threat ? threat.threatLevel || 0 : 0;
+  const support = defense.support || null;
+  const outgoingSupport = defense.outgoingSupport || [];
 
   return {
     active: active,
@@ -589,6 +591,15 @@ function getAlertSummary(room, state) {
     towerCanHandle: !!(threat && threat.towerCanHandle),
     towerTarget: threat ? threat.towerTargetSummary || "none" : "none",
     towerFocusDamage: threat ? threat.towerFocusDamage || 0 : 0,
+    supportRequested: support ? support.requested || 0 : 0,
+    supportAssigned: support ? support.assigned || 0 : 0,
+    supportHelper: support ? support.helperRoom || "none" : "none",
+    outgoingSupport:
+      outgoingSupport && outgoingSupport.length > 0
+        ? outgoingSupport.map(function (entry) {
+            return entry.targetRoom;
+          }).join(",")
+        : "none",
     readyTowers: threat
       ? threat.readyTowerCount || 0
       : towers.filter(function (tower) {
@@ -1010,6 +1021,7 @@ module.exports = {
         `Alert ${alert.active ? "active" : "clear"} | SafeMode ${alert.safeMode}`,
         `Hostiles ${alert.hostiles} | Threat ${alert.threatScore} | Level ${alert.threatLevel}`,
         `Mode ${alert.responseMode} | Defenders ${alert.defenders}/${alert.requiredDefenders} | Towers ${alert.readyTowers}/${summaryState.structuresByType && summaryState.structuresByType[STRUCTURE_TOWER] ? summaryState.structuresByType[STRUCTURE_TOWER].length : 0}`,
+        `Support in ${alert.supportAssigned}/${alert.supportRequested} from ${alert.supportHelper} | out ${alert.outgoingSupport}`,
         `Target ${alert.towerTarget} | Focus ${alert.towerFocusDamage} | Hold ${alert.towerCanHandle ? "yes" : "no"}`,
       ],
       creeps: [
@@ -1064,6 +1076,7 @@ module.exports = {
       ? [
           `${room.name} | ALERT | RCL ${room.controller ? room.controller.level : 0}`,
           `Hostiles ${alert.hostiles} | Threat ${alert.threatScore} | Def ${alert.defenders}/${alert.requiredDefenders}`,
+          `Support ${alert.supportAssigned}/${alert.supportRequested} from ${alert.supportHelper}`,
           `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Q ${spawn.nextQueued}`,
           `Safe ${alert.safeMode} | Next ${nextTask}`,
         ]

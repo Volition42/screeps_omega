@@ -720,6 +720,7 @@ function createStructure(structureType, x, y, options) {
         spawnName: this.name,
         role: memory.role || null,
         name: name,
+        memory: Object.assign({}, memory),
       });
 
       return OK;
@@ -1404,6 +1405,7 @@ const logisticsManager = require("logistics_manager");
 const roleWorker = require("role_worker");
 const roleClaimer = require("role_claimer");
 const rolePioneer = require("role_pioneer");
+const roleDefender = require("role_defender");
 const towerManager = require("tower_manager");
 const statsManager = require("stats_manager");
 const utils = require("utils");
@@ -3495,6 +3497,189 @@ function runDefenseConflictCleanupScenario() {
   );
 }
 
+function createOwnedSupportTargetRoom(name, options) {
+  const settings = options || {};
+  const room = new FakeRoom(name, new FakeTerrain());
+  room.setController(
+    createController(settings.controllerX || 20, settings.controllerY || 20, {
+      roomName: name,
+      level: settings.controllerLevel || 3,
+      progress: settings.controllerProgress || 0,
+    }),
+  );
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+
+  if (settings.spawn !== false) {
+    room.addStructure(
+      createStructure(STRUCTURE_SPAWN, settings.spawnX || 25, settings.spawnY || 25, {
+        roomName: name,
+        name: settings.spawnName || `${name}_Spawn`,
+        store: { energy: settings.spawnEnergy !== undefined ? settings.spawnEnergy : 300 },
+        storeCapacityResource: { energy: 300 },
+        hits: 5000,
+        hitsMax: 5000,
+        spawning: settings.spawnBusy ? { name: "busy", remainingTime: 10 } : null,
+      }),
+    );
+  }
+
+  room.addSource(createSource(settings.sourceX || 15, settings.sourceY || 25, { roomName: name }));
+  room.addMineral(createMineral(settings.mineralX || 35, settings.mineralY || 20, { roomName: name }));
+
+  if (settings.hostiles) {
+    for (let i = 0; i < settings.hostiles.length; i++) {
+      const spec = settings.hostiles[i];
+      const hostile = createCreep(
+        spec.name || `supportHostile${i + 1}`,
+        "hostile",
+        spec.x,
+        spec.y,
+        {
+          roomName: name,
+          my: false,
+          body: spec.body,
+        },
+      );
+      hostile.owner = { username: spec.username || "Invader" };
+      room._hostileCreeps.push(hostile);
+    }
+  }
+
+  room.energyAvailable =
+    settings.energyAvailable !== undefined ? settings.energyAvailable : 300;
+  room.energyCapacityAvailable =
+    settings.energyCapacityAvailable !== undefined ? settings.energyCapacityAvailable : 300;
+
+  return room;
+}
+
+function runCrossRoomDefenseSupportRequestScenario() {
+  const helper = buildRoomScenario("W9N6", {
+    tick: 596,
+    controllerLevel: 5,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+    ],
+  });
+  helper.controller.my = true;
+
+  const target = createOwnedSupportTargetRoom("W8N6", {
+    controllerLevel: 4,
+    spawn: false,
+    hostiles: [
+      {
+        name: "support_invader",
+        x: 8,
+        y: 8,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: ATTACK },
+          { type: ATTACK },
+        ],
+      },
+    ],
+  });
+
+  const state = roomState.collect(helper);
+  spawnManager.run(helper, state);
+
+  const defenderEvent = currentRuntime.spawnEvents.find(function (event) {
+    return event.role === "defender";
+  });
+
+  assert(defenderEvent, "expected helper room to spawn a support defender");
+  assert(
+    defenderEvent.memory.targetRoom === target.name,
+    `expected support defender target ${target.name}, got ${defenderEvent.memory.targetRoom}`,
+  );
+  assert(
+    defenderEvent.memory.homeRoom === helper.name,
+    `expected support defender home ${helper.name}, got ${defenderEvent.memory.homeRoom}`,
+  );
+  assert(
+    defenderEvent.memory.operation === "defense_support",
+    `expected defense_support operation, got ${defenderEvent.memory.operation}`,
+  );
+  assert(
+    Memory.empire.defense.support[target.name].helperRoom === helper.name,
+    "expected empire defense support memory to record the helper room",
+  );
+}
+
+function runCrossRoomDefenderRoleScenario() {
+  const helper = buildRoomScenario("W9N6", {
+    tick: 597,
+    controllerLevel: 5,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+  helper.controller.my = true;
+
+  const target = createOwnedSupportTargetRoom("W8N6", {
+    controllerLevel: 4,
+    spawn: false,
+    hostiles: [
+      {
+        name: "support_target_invader",
+        x: 8,
+        y: 8,
+        body: [
+          { type: MOVE },
+          { type: ATTACK },
+        ],
+      },
+    ],
+  });
+  const hostile = target.find(FIND_HOSTILE_CREEPS)[0];
+  const defender = createCreep("supportDefender", "defender", 25, 25, {
+    roomName: helper.name,
+    memory: {
+      homeRoom: helper.name,
+      targetRoom: target.name,
+      operation: "defense_support",
+    },
+    body: [
+      { type: ATTACK },
+      { type: MOVE },
+      { type: MOVE },
+    ],
+  });
+  const helperState = roomState.collect(helper);
+
+  currentRuntime.creepActions.length = 0;
+  roleDefender.run(defender, helperState);
+
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === defender.name && action.action === "moveTo" && action.range === 20;
+    }),
+    "expected support defender to travel toward the target room",
+  );
+
+  defender.pos = new RoomPosition(hostile.pos.x + 1, hostile.pos.y, target.name);
+  currentRuntime.creepActions.length = 0;
+  roleDefender.run(defender, null);
+
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === defender.name && action.action === "attack" && action.targetId === hostile.id;
+    }),
+    "expected support defender to attack a hostile in the supported room",
+  );
+}
+
 function runFortificationScenario() {
   const room = buildRoomScenario("VAL_FORTIFICATION", {
     tick: 600,
@@ -4595,6 +4780,8 @@ function main() {
     ["defense_asset_perimeter", runDefenseAssetPerimeterScenario],
     ["defense_tower_only", runDefensePlanLockScenario],
     ["defense_spawn_escalation", runDefenseConflictCleanupScenario],
+    ["cross_room_defense_support_request", runCrossRoomDefenseSupportRequestScenario],
+    ["cross_room_defender_role", runCrossRoomDefenderRoleScenario],
     ["fortification", runFortificationScenario],
     ["rcl7_transition", runRcl7UpgradeTransitionScenario],
     ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],

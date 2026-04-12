@@ -1,14 +1,14 @@
 /*
 Developer Summary:
-Reactive home-room defense escalation planner.
+Reactive empire defense escalation planner.
 
 Purpose:
 - Evaluate immediate hostile pressure in owned rooms
 - Translate visible home threats into simple defender demand for spawning
-- Keep the first defense pass narrow, reactive, and CPU-cheap
+- Allow nearby owned rooms to provide one-room support when a target room needs help
+- Keep the defense pass narrow, reactive, and CPU-cheap
 
 Important Notes:
-- This planner is home-room only
 - No proactive combat escalation is included
 - Defender demand stays capped to avoid broad combat overreach
 */
@@ -46,6 +46,10 @@ function getStoredEnergy(structure) {
   return 0;
 }
 
+function getControllerLevel(room) {
+  return room && room.controller ? room.controller.level || 0 : 0;
+}
+
 module.exports = {
   collect(room, state) {
     var reaction = this.getReactionConfig();
@@ -58,11 +62,21 @@ module.exports = {
         hasThreats: false,
         requiredDefenders: 0,
         threatenedRooms: [],
+        support: null,
+        outgoingSupport: null,
       };
     }
 
     var homeThreat = this.getOwnedRoomThreat(room, state, reaction);
     var activeThreats = homeThreat.active ? [homeThreat] : [];
+    var support = this.getSupportSummary(room.name, reaction);
+    if (
+      support &&
+      (!homeThreat.active || homeThreat.towerCanHandle || (homeThreat.desiredDefenders || 0) <= 0)
+    ) {
+      this.clearSupportRequest(room.name);
+      support = null;
+    }
 
     return {
       enabled: reaction.ENABLED,
@@ -71,6 +85,8 @@ module.exports = {
       hasThreats: activeThreats.length > 0,
       requiredDefenders: homeThreat.desiredDefenders || 0,
       threatenedRooms: activeThreats.length > 0 ? [room.name] : [],
+      support: support,
+      outgoingSupport: this.getOutgoingSupportSummary(room.name, reaction),
     };
   },
 
@@ -94,9 +110,299 @@ module.exports = {
       TOWER_BREAKTHROUGH_DAMAGE: 50,
       TOWER_SCORE_PER_ACTIVE_TOWER: 6,
       EDGE_BUFFER: 2,
+      CROSS_ROOM_ENABLED: true,
+      MAX_SUPPORT_DISTANCE: 2,
+      MAX_SUPPORT_DEFENDERS: 1,
+      SUPPORT_PRIORITY: 1050,
+      SUPPORT_SPAWN_COOLDOWN: 25,
+      SUPPORT_REQUEST_TTL: 75,
+      SUPPORT_MIN_RCL: 3,
+      SUPPORT_MIN_ENERGY_CAPACITY: 650,
     };
 
     return Object.assign(defaults, config.DEFENSE && config.DEFENSE.REACTION);
+  },
+
+  getCrossRoomSupportThreats(helperRoom, helperState, reaction) {
+    if (!reaction.ENABLED || !reaction.CROSS_ROOM_ENABLED) return [];
+    if (!this.isSupportHelperEligible(helperRoom, helperState, reaction)) return [];
+
+    var threats = [];
+
+    for (var roomName in Game.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Game.rooms, roomName)) continue;
+      if (roomName === helperRoom.name) continue;
+
+      var targetRoom = Game.rooms[roomName];
+      if (!this.isOwnedRoom(targetRoom)) continue;
+      if (!this.isSupportRouteAllowed(helperRoom.name, targetRoom.name, reaction)) continue;
+      if (this.getBestSupportHelper(targetRoom, reaction, helperRoom, helperState) !== helperRoom.name) {
+        continue;
+      }
+
+      var targetState = this.getCachedRoomState(targetRoom);
+      var targetThreat = this.getOwnedRoomThreat(targetRoom, targetState, reaction);
+      if (!this.needsCrossRoomSupport(targetRoom, targetState, targetThreat, reaction)) {
+        continue;
+      }
+
+      var role = targetThreat.responseRole || "defender";
+      var coverage = this.countDefenseCoverage(targetRoom.name, role, reaction);
+      var desiredSupport = Math.min(
+        reaction.MAX_SUPPORT_DEFENDERS || 1,
+        Math.max(0, (targetThreat.desiredDefenders || 0) - coverage),
+      );
+
+      if (desiredSupport <= 0) continue;
+
+      var supportThreat = Object.assign({}, targetThreat, {
+        scope: "support",
+        classification: "cross_room_support",
+        type: "cross_room_support",
+        priority: Math.max(
+          reaction.SUPPORT_PRIORITY || 1050,
+          (targetThreat.priority || 0) - 25,
+        ),
+        desiredDefenders: desiredSupport,
+        spawnCooldown: reaction.SUPPORT_SPAWN_COOLDOWN || 25,
+        targetRoom: targetRoom.name,
+        helperRoom: helperRoom.name,
+        operation: "defense_support",
+        responseMode: targetThreat.responseMode || "creep_only",
+      });
+
+      this.recordSupportRequest(targetRoom.name, helperRoom.name, supportThreat, coverage);
+      threats.push(supportThreat);
+    }
+
+    return threats;
+  },
+
+  needsCrossRoomSupport(targetRoom, targetState, targetThreat, reaction) {
+    if (!targetThreat || !targetThreat.active) return false;
+    if (targetThreat.towerCanHandle) return false;
+    if ((targetThreat.desiredDefenders || 0) <= 0) return false;
+
+    var spawns =
+      targetState && targetState.spawns
+        ? targetState.spawns
+        : targetRoom.find(FIND_MY_SPAWNS);
+    var idleSpawns = _.filter(spawns, function (spawn) {
+      return !spawn.spawning;
+    });
+    var localCanSpawn = !!(
+      spawns.length > 0 &&
+      idleSpawns.length > 0 &&
+      targetRoom.energyCapacityAvailable >= 300
+    );
+
+    if (!localCanSpawn) return true;
+
+    return (
+      (targetThreat.threatLevel || 1) >= 2 ||
+      targetThreat.responseMode === "creep_only"
+    );
+  },
+
+  isSupportHelperEligible(room, state, reaction) {
+    if (!this.isOwnedRoom(room)) return false;
+    if (getControllerLevel(room) < (reaction.SUPPORT_MIN_RCL || 3)) return false;
+    if (room.energyCapacityAvailable < (reaction.SUPPORT_MIN_ENERGY_CAPACITY || 650)) {
+      return false;
+    }
+
+    var spawns = state && state.spawns ? state.spawns : room.find(FIND_MY_SPAWNS);
+    if (spawns.length <= 0) return false;
+    if (!_.some(spawns, function (spawn) { return !spawn.spawning; })) return false;
+
+    if (state && state.defense && state.defense.hasThreats) return false;
+
+    var hostiles = utils.getDefenseIntruders(
+      room,
+      state && state.hostileCreeps ? state.hostileCreeps : null,
+      state && state.hostilePowerCreeps ? state.hostilePowerCreeps : null,
+      state && state.hostileStructures ? state.hostileStructures : null,
+    );
+
+    return hostiles.length === 0;
+  },
+
+  getBestSupportHelper(targetRoom, reaction, preferredRoom, preferredState) {
+    var bestRoomName = null;
+    var bestDistance = Infinity;
+
+    for (var roomName in Game.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Game.rooms, roomName)) continue;
+      if (roomName === targetRoom.name) continue;
+
+      var room = Game.rooms[roomName];
+      if (!this.isOwnedRoom(room)) continue;
+
+      var state = preferredRoom && preferredRoom.name === room.name
+        ? preferredState
+        : this.getCachedRoomState(room);
+
+      if (!this.isSupportHelperEligible(room, state, reaction)) continue;
+      if (!this.isSupportRouteAllowed(room.name, targetRoom.name, reaction)) continue;
+
+      var distance = this.getRoomDistance(room.name, targetRoom.name);
+      if (
+        distance < bestDistance ||
+        (distance === bestDistance && (!bestRoomName || room.name < bestRoomName))
+      ) {
+        bestRoomName = room.name;
+        bestDistance = distance;
+      }
+    }
+
+    return bestRoomName;
+  },
+
+  isSupportRouteAllowed(fromRoom, toRoom, reaction) {
+    var distance = this.getRoomDistance(fromRoom, toRoom);
+    if (distance > (reaction.MAX_SUPPORT_DISTANCE || 2)) return false;
+
+    if (Game.map && typeof Game.map.findRoute === "function") {
+      var route = Game.map.findRoute(fromRoom, toRoom);
+      if (route === ERR_NO_PATH) return false;
+      if (
+        route &&
+        route.length &&
+        route.length > (reaction.MAX_SUPPORT_DISTANCE || 2) + 1
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  },
+
+  countDefenseCoverage(targetRoomName, role, reaction) {
+    var count = 0;
+
+    for (var creepName in Game.creeps) {
+      if (!Object.prototype.hasOwnProperty.call(Game.creeps, creepName)) continue;
+
+      var creep = Game.creeps[creepName];
+      if (!creep || !creep.memory || creep.memory.role !== role) continue;
+      if (
+        creep.ticksToLive !== undefined &&
+        creep.ticksToLive <= (reaction.REPLACE_TTL || 90)
+      ) {
+        continue;
+      }
+
+      var creepTarget = creep.memory.targetRoom || creep.memory.homeRoom || creep.memory.room;
+      if (creepTarget === targetRoomName) count++;
+    }
+
+    if (Memory.rooms) {
+      for (var roomName in Memory.rooms) {
+        if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+        var queue = Memory.rooms[roomName] ? Memory.rooms[roomName].spawnQueue : null;
+        if (!queue) continue;
+
+        for (var i = 0; i < queue.length; i++) {
+          var item = queue[i];
+          if (!item || item.role !== role) continue;
+          var queueTarget = item.targetRoom || item.homeRoom || roomName;
+          if (queueTarget === targetRoomName) count++;
+        }
+      }
+    }
+
+    return count;
+  },
+
+  isOwnedRoom(room) {
+    return !!(room && room.controller && room.controller.my);
+  },
+
+  getCachedRoomState(room) {
+    var cache = room ? utils.getRoomRuntimeCache(room) : null;
+    return cache && cache.state ? cache.state : null;
+  },
+
+  getRoomDistance(roomA, roomB) {
+    if (Game.map && typeof Game.map.getRoomLinearDistance === "function") {
+      return Game.map.getRoomLinearDistance(roomA, roomB);
+    }
+
+    var parsedA = this.parseRoomName(roomA);
+    var parsedB = this.parseRoomName(roomB);
+    if (!parsedA || !parsedB) return roomA === roomB ? 0 : 50;
+
+    return Math.max(
+      Math.abs(parsedA.x - parsedB.x),
+      Math.abs(parsedA.y - parsedB.y),
+    );
+  },
+
+  parseRoomName(roomName) {
+    var match = /^([WE])(\d+)([NS])(\d+)$/.exec(roomName || "");
+    if (!match) return null;
+
+    var x = parseInt(match[2], 10);
+    var y = parseInt(match[4], 10);
+
+    return {
+      x: match[1] === "W" ? -x - 1 : x,
+      y: match[3] === "N" ? -y - 1 : y,
+    };
+  },
+
+  getEmpireDefenseMemory() {
+    if (!Memory.empire) Memory.empire = {};
+    if (!Memory.empire.defense) Memory.empire.defense = {};
+    if (!Memory.empire.defense.support) Memory.empire.defense.support = {};
+
+    return Memory.empire.defense;
+  },
+
+  getSupportSummary(roomName, reaction) {
+    var memory = this.getEmpireDefenseMemory();
+    var entry = memory.support[roomName] || null;
+    if (!entry) return null;
+
+    if (Game.time - (entry.lastSeen || 0) > (reaction.SUPPORT_REQUEST_TTL || 75)) {
+      delete memory.support[roomName];
+      return null;
+    }
+
+    return entry;
+  },
+
+  getOutgoingSupportSummary(helperRoomName, reaction) {
+    var memory = this.getEmpireDefenseMemory();
+    var result = [];
+
+    for (var roomName in memory.support) {
+      if (!Object.prototype.hasOwnProperty.call(memory.support, roomName)) continue;
+      var entry = this.getSupportSummary(roomName, reaction);
+      if (!entry || entry.helperRoom !== helperRoomName) continue;
+      result.push(entry);
+    }
+
+    return result;
+  },
+
+  recordSupportRequest(targetRoomName, helperRoomName, threat, coverage) {
+    var memory = this.getEmpireDefenseMemory();
+    memory.support[targetRoomName] = {
+      targetRoom: targetRoomName,
+      helperRoom: helperRoomName,
+      requested: threat.desiredDefenders || 0,
+      assigned: coverage || 0,
+      threatLevel: threat.threatLevel || 1,
+      threatScore: threat.threatScore || 0,
+      lastSeen: Game.time,
+      expiresAt: Game.time + ((this.getReactionConfig().SUPPORT_REQUEST_TTL) || 75),
+    };
+  },
+
+  clearSupportRequest(targetRoomName) {
+    var memory = this.getEmpireDefenseMemory();
+    delete memory.support[targetRoomName];
   },
 
   getOwnedRoomThreat(room, state, reaction) {

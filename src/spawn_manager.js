@@ -44,6 +44,7 @@ module.exports = {
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
         operation: request.operation || null,
+        defenseType: request.defenseType || null,
         homeRoom: request.homeRoom || null,
         bodyProfile: plan.profile || null,
         bodyCost: plan.cost || null,
@@ -143,6 +144,7 @@ module.exports = {
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
         operation: request.operation || null,
+        defenseType: request.defenseType || null,
         bodyProfile: bodyPlan.profile || null,
         bodyCost: bodyPlan.cost || null,
       },
@@ -438,8 +440,17 @@ module.exports = {
 
     var defenseState =
       state && state.defense ? state.defense : defenseManager.collect(room, state);
-    var threats = defenseState.activeThreats || [];
+    var threats = (defenseState.activeThreats || []).slice();
+    var supportThreats = defenseManager.getCrossRoomSupportThreats(
+      room,
+      state,
+      reaction,
+    );
     var defenseMemory = this.getDefenseSpawnMemory(room);
+
+    for (var supportIndex = 0; supportIndex < supportThreats.length; supportIndex++) {
+      threats.push(supportThreats[supportIndex]);
+    }
 
     this.pruneStaleDefenseLocks(defenseMemory, reaction);
 
@@ -447,20 +458,18 @@ module.exports = {
       var threat = threats[i];
       var role = threat.responseRole || "defender";
       var cooldown = threat.spawnCooldown || 0;
-      var requestKey = this.getDefenseRequestKey(role, threat.roomName);
+      var targetRoom = threat.targetRoom || threat.roomName || room.name;
+      var requestKey = this.getDefenseRequestKey(role, targetRoom);
       var activeLock = defenseMemory.spawnLocks[requestKey] || null;
 
-      var existingDefenders = _.filter(
-        state.roleMap && state.roleMap[role] ? state.roleMap[role] : [],
-        function (creep) {
-          return (
-            creep.memory.role === role &&
-            (creep.ticksToLive === undefined ||
-              creep.ticksToLive > reaction.REPLACE_TTL)
-          );
-        },
-      ).length;
-      var queuedDefenders = this.countQueued(room, role);
+      var existingDefenders = this.countAssignedDefenders(
+        state,
+        role,
+        room.name,
+        targetRoom,
+        reaction,
+      );
+      var queuedDefenders = this.countQueuedDefense(room, role, targetRoom);
       var plannedDefenders = 0;
 
       if (
@@ -489,6 +498,9 @@ module.exports = {
           threatScore: threat.threatScore || 0,
           responseMode: threat.responseMode || null,
           targetId: threat.towerTargetId || null,
+          targetRoom: targetRoom,
+          operation: threat.operation || null,
+          defenseType: threat.classification || threat.type || null,
           homeRoom: room.name,
         });
 
@@ -499,6 +511,29 @@ module.exports = {
         };
       }
     }
+  },
+
+  countAssignedDefenders(state, role, homeRoomName, targetRoomName, reaction) {
+    var count = 0;
+
+    for (var creepName in Game.creeps) {
+      if (!Object.prototype.hasOwnProperty.call(Game.creeps, creepName)) continue;
+
+      var creep = Game.creeps[creepName];
+      if (!creep || !creep.memory || creep.memory.role !== role) continue;
+      if (
+        creep.ticksToLive !== undefined &&
+        creep.ticksToLive <= (reaction.REPLACE_TTL || 90)
+      ) {
+        continue;
+      }
+
+      var assignedTarget =
+        creep.memory.targetRoom || creep.memory.homeRoom || creep.memory.room || homeRoomName;
+      if (assignedTarget === targetRoomName) count++;
+    }
+
+    return count;
   },
 
   getRoleSourceCount(state, role, sourceId) {
@@ -817,6 +852,28 @@ module.exports = {
     return _.filter(queue, function (item) {
       return item.role === role;
     }).length;
+  },
+
+  countQueuedDefense(room, role, targetRoomName) {
+    var count = 0;
+
+    if (!Memory.rooms) return count;
+
+    for (var roomName in Memory.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+      var queue = Memory.rooms[roomName] ? Memory.rooms[roomName].spawnQueue : null;
+      if (!queue) continue;
+
+      for (var i = 0; i < queue.length; i++) {
+        var item = queue[i];
+        if (!item || item.role !== role) continue;
+
+        var itemTarget = item.targetRoom || item.homeRoom || roomName;
+        if (itemTarget === targetRoomName) count++;
+      }
+    }
+
+    return count;
   },
 
   countQueuedForSource(room, role, sourceId) {
