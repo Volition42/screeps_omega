@@ -17,6 +17,7 @@ const roomReporting = require("room_reporting");
 const config = require("config");
 const defenseManager = require("defense_manager");
 const reservationManager = require("reservation_manager");
+const roomProgress = require("room_progress");
 const utils = require("utils");
 
 function ensureEmpireMemory() {
@@ -167,6 +168,11 @@ function formatEmpireRow(roomLabel, phaseLabel, statusLabel, goalLabel) {
   ].join("  ");
 }
 
+function getEmpireChildKey(row) {
+  if (!row) return "";
+  return `${row.kind || "child"}:${row.targetRoom || ""}`;
+}
+
 function formatCompactNumber(value) {
   const amount = typeof value === "number" ? value : parseInt(value || 0, 10) || 0;
 
@@ -291,6 +297,65 @@ function getPlanStatusLabel(plan, ownedRoomCount) {
     default:
       return status;
   }
+}
+
+function getExpansionRowStatus(plan, ownedRoomCount) {
+  const status = getPlanStatus(plan, ownedRoomCount);
+
+  if (status === "threatened") return "alert";
+  if (status.indexOf("blocked") === 0) return "blocked";
+  if (status === "claiming") return "claim";
+  if (status === "bootstrapping") return "boot";
+  if (status === "complete") return "done";
+
+  return status;
+}
+
+function getExpansionRowNextGoal(plan, ownedRoomCount) {
+  const status = getPlanStatus(plan, ownedRoomCount);
+
+  if (status === "threatened") return "Defend expansion";
+  if (status === "blocked_gcl") return "Wait for GCL";
+  if (status === "blocked_owner") return "Blocked by owner";
+  if (status === "claiming") return "Claim controller";
+  if (status === "bootstrapping") return "Build first spawn";
+  if (status === "complete") return "Spawn online";
+
+  return getPlanStatusLabel(plan, ownedRoomCount);
+}
+
+function getExpansionProgressSummary(plan, targetRoom) {
+  if (targetRoom && targetRoom.controller && targetRoom.controller.my) {
+    return roomProgress.getProgressSummary(targetRoom, { update: false });
+  }
+
+  const intel = plan && plan.intel ? plan.intel : null;
+  if (!intel || typeof intel.controllerLevel !== "number") return null;
+
+  const level = intel.controllerLevel || 0;
+  const progressTotal = intel.controllerProgressTotal || 0;
+  const progress = intel.controllerProgress || 0;
+  const pct = progressTotal > 0
+    ? Math.round((Math.min(progress, progressTotal) / progressTotal) * 100)
+    : null;
+
+  return {
+    level: level,
+    targetLevel: progressTotal > 0 && level < 8 ? level + 1 : null,
+    pct: pct,
+    eta: null,
+  };
+}
+
+function formatExpansionProgressLabel(progress) {
+  if (!progress) return "RCL --";
+  if (progress.targetLevel) return `RCL ${progress.level} ${progress.pct}%`;
+  return `RCL ${progress.level}`;
+}
+
+function appendExpansionEta(goal, progress) {
+  const eta = progress && progress.eta ? progress.eta : "--";
+  return `${goal} | ETA ${eta}`;
 }
 
 function isParentReady(room, state) {
@@ -567,6 +632,42 @@ function buildExpansionLines() {
   return lines;
 }
 
+function getEmpireExpansionRows(ownedRoomCount) {
+  const plans = getActivePlanList();
+  const rows = [];
+
+  for (let i = 0; i < plans.length; i++) {
+    const plan = plans[i];
+    const targetRoom = Game.rooms[plan.targetRoom] || null;
+    if (targetRoom) {
+      module.exports.updatePlanIntel(plan);
+    }
+    const progress = getExpansionProgressSummary(plan, targetRoom);
+
+    rows.push({
+      kind: "expansion",
+      parentRoom: plan.parentRoom,
+      targetRoom: plan.targetRoom,
+      phaseLabel: formatExpansionProgressLabel(progress),
+      status: getExpansionRowStatus(plan, ownedRoomCount),
+      nextGoal: appendExpansionEta(
+        getExpansionRowNextGoal(plan, ownedRoomCount),
+        progress,
+      ),
+    });
+  }
+
+  rows.sort(function (a, b) {
+    if ((a.parentRoom || "") !== (b.parentRoom || "")) {
+      return (a.parentRoom || "").localeCompare(b.parentRoom || "");
+    }
+
+    return (a.targetRoom || "").localeCompare(b.targetRoom || "");
+  });
+
+  return rows;
+}
+
 function pruneExpansionQueue(targetRoomName) {
   const targetRoom = normalizeRoomName(targetRoomName);
   if (!targetRoom || !Memory.rooms) return 0;
@@ -808,6 +909,11 @@ module.exports = {
     plan.intel.hostileHealingPower = threat ? threat.hostileHealingPower || 0 : 0;
     plan.intel.threatLabel = threat ? threat.towerTargetSummary || threat.classification || "visible expansion threat" : null;
     plan.intel.targetOwned = !!(room.controller && room.controller.my);
+    plan.intel.controllerLevel = room.controller ? room.controller.level || 0 : 0;
+    plan.intel.controllerProgress = room.controller ? room.controller.progress || 0 : 0;
+    plan.intel.controllerProgressTotal = room.controller
+      ? room.controller.progressTotal || 0
+      : 0;
     plan.intel.hasSpawn = room.find(FIND_MY_SPAWNS).length > 0;
     plan.updatedAt = Game.time;
   },
@@ -1140,15 +1246,18 @@ module.exports = {
           : 0;
     }
 
+    const expansionRows = getEmpireExpansionRows(roomReports.length);
     const reservationRows = reservationManager.getEmpireChildRows();
-    const reservationsByParent = {};
+    const childRows = expansionRows.concat(reservationRows);
+    const childRowsByParent = {};
+    const renderedChildRows = {};
 
-    for (let i = 0; i < reservationRows.length; i++) {
-      const row = reservationRows[i];
-      if (!reservationsByParent[row.parentRoom]) {
-        reservationsByParent[row.parentRoom] = [];
+    for (let i = 0; i < childRows.length; i++) {
+      const row = childRows[i];
+      if (!childRowsByParent[row.parentRoom]) {
+        childRowsByParent[row.parentRoom] = [];
       }
-      reservationsByParent[row.parentRoom].push(row);
+      childRowsByParent[row.parentRoom].push(row);
     }
 
     const lines = [
@@ -1163,6 +1272,9 @@ module.exports = {
       }   Storage: ${formatCompactNumber(summary.storageEnergy)}   Energy: ${
         summary.energyAvailable
       }/${summary.energyCapacityAvailable}`,
+      `${getGclLabel(gcl)}   Slots: ${
+        gcl.roomSlotsUsed
+      }/${gcl.roomSlotsLimit === null ? "?" : gcl.roomSlotsLimit}   Phases: ${formatPhaseCounts(phaseCounts)}`,
     ];
     const expansionSummary = this.getExpansionSummary(roomReports.length);
     if (expansionSummary.active > 0) {
@@ -1187,18 +1299,41 @@ module.exports = {
           ),
         );
 
-        const childRows = reservationsByParent[report.room] || [];
-        for (let j = 0; j < childRows.length; j++) {
-          const child = childRows[j];
+        const attachedChildRows = childRowsByParent[report.room] || [];
+        for (let j = 0; j < attachedChildRows.length; j++) {
+          const child = attachedChildRows[j];
+          renderedChildRows[getEmpireChildKey(child)] = true;
           lines.push(
             formatEmpireRow(
-              `reserved ${child.targetRoom}`,
-              "",
+              `${child.kind} ${child.targetRoom}`,
+              child.phaseLabel || "",
               child.status,
               child.nextGoal,
             ),
           );
         }
+      }
+    }
+
+    const unattachedRows = [];
+    for (let i = 0; i < childRows.length; i++) {
+      if (!renderedChildRows[getEmpireChildKey(childRows[i])]) {
+        unattachedRows.push(childRows[i]);
+      }
+    }
+
+    if (unattachedRows.length > 0) {
+      lines.push("Unattached");
+      for (let i = 0; i < unattachedRows.length; i++) {
+        const child = unattachedRows[i];
+        lines.push(
+          formatEmpireRow(
+            `${child.kind} ${child.targetRoom}`,
+            child.phaseLabel || "",
+            child.status,
+            child.nextGoal,
+          ),
+        );
       }
     }
 

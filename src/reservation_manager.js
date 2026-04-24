@@ -86,6 +86,94 @@ function getOwnedRoom(roomName) {
   return room;
 }
 
+function getOwnedReservationParents() {
+  const rooms = [];
+
+  for (const roomName in Game.rooms) {
+    if (!Object.prototype.hasOwnProperty.call(Game.rooms, roomName)) continue;
+
+    const room = getOwnedRoom(roomName);
+    if (!room) continue;
+    if (room.find(FIND_MY_SPAWNS).length <= 0) continue;
+    if (room.controller.level < (getSettings().MIN_PARENT_RCL || 4)) continue;
+
+    rooms.push(room);
+  }
+
+  rooms.sort(function (a, b) {
+    return a.name.localeCompare(b.name);
+  });
+
+  return rooms;
+}
+
+function findReplacementParent(plan) {
+  if (!plan || !plan.targetRoom) return null;
+
+  const maxDistance = getSettings().MAX_DISTANCE || 3;
+  const candidates = getOwnedReservationParents();
+  let best = null;
+  let bestDistance = Infinity;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const room = candidates[i];
+    const distance = getRoomDistance(room.name, plan.targetRoom);
+    if (distance > maxDistance) continue;
+
+    if (
+      !best ||
+      distance < bestDistance ||
+      (distance === bestDistance && room.name < best.name)
+    ) {
+      best = room;
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+}
+
+function adoptReservationPlan(plan, parentRoomName) {
+  if (!plan || !parentRoomName || plan.parentRoom === parentRoomName) return;
+
+  pruneReservationQueue(plan.targetRoom);
+  if (!plan.previousParents) plan.previousParents = [];
+  if (plan.parentRoom) {
+    plan.previousParents.push({
+      room: plan.parentRoom,
+      replacedAt: Game.time,
+    });
+  }
+  plan.parentRoom = parentRoomName;
+  plan.adoptedAt = Game.time;
+  plan.updatedAt = Game.time;
+  delete plan.cancelReason;
+}
+
+function cancelReservationPlan(plan, reason) {
+  if (!plan || plan.cancelled) return;
+
+  pruneReservationQueue(plan.targetRoom);
+  plan.cancelled = true;
+  plan.cancelledAt = Game.time;
+  plan.cancelReason = reason || "cancelled";
+  plan.updatedAt = Game.time;
+}
+
+function reconcileReservationParent(plan) {
+  if (!plan || plan.cancelled || plan.convertedToExpansion) return false;
+  if (getOwnedRoom(plan.parentRoom)) return true;
+
+  const replacement = findReplacementParent(plan);
+  if (replacement) {
+    adoptReservationPlan(plan, replacement.name);
+    return true;
+  }
+
+  cancelReservationPlan(plan, "no_parent_in_range");
+  return false;
+}
+
 function getPlanKey(targetRoom) {
   return normalizeRoomName(targetRoom);
 }
@@ -147,6 +235,7 @@ function getActivePlanList() {
 
     const plan = plans[targetRoom];
     if (!plan || plan.cancelled || plan.convertedToExpansion) continue;
+    if (!reconcileReservationParent(plan)) continue;
     result.push(plan);
   }
 
@@ -785,6 +874,7 @@ module.exports = {
 
     const plan = getPlans()[targetRoom] || null;
     if (!plan || plan.cancelled || plan.convertedToExpansion) return null;
+    if (!reconcileReservationParent(plan)) return null;
 
     return plan;
   },
@@ -1337,6 +1427,7 @@ module.exports = {
       }
 
       rows.push({
+        kind: "reserved",
         parentRoom: plan.parentRoom,
         targetRoom: plan.targetRoom,
         phaseLabel: "reserved",

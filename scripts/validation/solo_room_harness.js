@@ -4776,6 +4776,14 @@ function runExpansionClaimRequestScenario() {
   const result = empireManager.createExpansion(target.name, parent.name);
   assert(result.ok, `expected expansion plan to be created, got ${result.message}`);
 
+  const empireReport = empireManager.buildReport();
+  assert(
+    empireReport.lines.some(function (line) {
+      return line.indexOf("expansion VA") !== -1 && line.indexOf("Claim controller") !== -1;
+    }),
+    `expected empire report to group expansion under parent, got ${empireReport.lines.join(" / ")}`,
+  );
+
   const state = roomState.collect(parent);
   const requests = spawnManager.getSpawnRequests(parent, state);
   const claimRequest = requests.find(function (request) {
@@ -4814,10 +4822,12 @@ function runExpansionPioneerRequestScenario() {
     createController(20, 20, {
       roomName: target.name,
       level: 1,
+      progress: 250,
       my: true,
       owner: { username: "tester" },
     }),
   );
+  target.controller.progressTotal = 1000;
   target.addSource(createSource(15, 25, { roomName: target.name }));
   target.addMineral(createMineral(35, 20, { roomName: target.name }));
 
@@ -4829,6 +4839,24 @@ function runExpansionPioneerRequestScenario() {
 
   const result = empireManager.createExpansion(target.name, parent.name);
   assert(result.ok, `expected expansion plan to be created, got ${result.message}`);
+
+  if (!Memory.rooms) Memory.rooms = {};
+  if (!Memory.rooms[target.name]) Memory.rooms[target.name] = {};
+  Memory.rooms[target.name].progressTracker = {
+    lastTick: Game.time,
+    lastProgress: target.controller.progress,
+    rate: 10,
+    etaTicks: 75,
+  };
+  const empireReport = empireManager.buildReport();
+  assert(
+    empireReport.lines.some(function (line) {
+      return line.indexOf("expansion VA") !== -1 &&
+        line.indexOf("RCL 1 25%") !== -1 &&
+        line.indexOf("ETA 0d 0h 3m") !== -1;
+    }),
+    `expected expansion row to include RCL progress and ETA, got ${empireReport.lines.join(" / ")}`,
+  );
 
   const state = roomState.collect(parent);
   const requests = spawnManager.getSpawnRequests(parent, state);
@@ -5036,12 +5064,89 @@ function runReservationOpsScenario() {
     `expected empire report summary line, got ${empireReport.lines.join(" / ")}`,
   );
   assert(
+    empireReport.lines.some(function (line) { return line.indexOf("GCL") !== -1 && line.indexOf("Phases:") !== -1; }),
+    `expected empire report to include GCL and phase detail, got ${empireReport.lines.join(" / ")}`,
+  );
+  assert(
     empireReport.lines.some(function (line) { return line.indexOf("reserved W5N6") !== -1; }),
     `expected empire report to group reserved room under parent, got ${empireReport.lines.join(" / ")}`,
   );
   assert(
     !empireReport.lines.some(function (line) { return line === "[OPS][EMPIRE][RESERVED]"; }),
     `expected empire report to remove the separate reserved block, got ${empireReport.lines.join(" / ")}`,
+  );
+
+  const fallbackParent = new FakeRoom("W5N4", new FakeTerrain());
+  fallbackParent.setController(
+    createController(20, 20, {
+      roomName: fallbackParent.name,
+      level: 4,
+    }),
+  );
+  fallbackParent.controller.my = true;
+  fallbackParent.controller.owner = { username: "tester" };
+  fallbackParent.addStructure(
+    createStructure(STRUCTURE_SPAWN, 25, 25, {
+      roomName: fallbackParent.name,
+      name: "FallbackSpawn",
+      store: { energy: 300 },
+      storeCapacityResource: { energy: 300 },
+      hits: 5000,
+      hitsMax: 5000,
+    }),
+  );
+  fallbackParent.addSource(createSource(15, 25, { roomName: fallbackParent.name }));
+  fallbackParent.addMineral(createMineral(35, 20, { roomName: fallbackParent.name }));
+  fallbackParent.energyAvailable = 300;
+  fallbackParent.energyCapacityAvailable = 300;
+  delete Game.rooms[parent.name];
+  const adoptedEmpireReport = global.ops.empire();
+  assert(
+    adoptedEmpireReport.lines.some(function (line) { return line.indexOf("W5N4") !== -1; }) &&
+      adoptedEmpireReport.lines.some(function (line) { return line.indexOf("reserved W5N6") !== -1; }) &&
+      !adoptedEmpireReport.lines.some(function (line) { return line === "Unattached"; }),
+    `expected reserved room to be adopted by nearby parent, got ${adoptedEmpireReport.lines.join(" / ")}`,
+  );
+  assert(
+    reservationManager.getActiveReservation("W5N6").parentRoom === "W5N4",
+    "reserved room should update its parent after adoption",
+  );
+
+  const strandedParent = new FakeRoom("W9N5", new FakeTerrain());
+  strandedParent.setController(
+    createController(20, 20, {
+      roomName: strandedParent.name,
+      level: 4,
+    }),
+  );
+  strandedParent.controller.my = true;
+  strandedParent.controller.owner = { username: "tester" };
+  strandedParent.addStructure(
+    createStructure(STRUCTURE_SPAWN, 25, 25, {
+      roomName: strandedParent.name,
+      name: "StrandedSpawn",
+      store: { energy: 300 },
+      storeCapacityResource: { energy: 300 },
+      hits: 5000,
+      hitsMax: 5000,
+    }),
+  );
+  strandedParent.addSource(createSource(15, 25, { roomName: strandedParent.name }));
+  strandedParent.addMineral(createMineral(35, 20, { roomName: strandedParent.name }));
+  strandedParent.energyAvailable = 300;
+  strandedParent.energyCapacityAvailable = 300;
+  buildNeutralReserveRoom("W9N6");
+  const strandedResult = reservationManager.createReservation("W9N6", strandedParent.name);
+  assert(strandedResult.ok, `expected stranded reservation setup, got ${strandedResult.message}`);
+  delete Game.rooms[strandedParent.name];
+  reservationManager.getReservedLines();
+  assert(
+    !reservationManager.getActiveReservation("W9N6"),
+    "reserved room should auto-cancel when no nearby parent can support it",
+  );
+  assert(
+    Memory.empire.reservation.plans.W9N6.cancelReason === "no_parent_in_range",
+    `expected no_parent_in_range cancel reason, got ${Memory.empire.reservation.plans.W9N6.cancelReason}`,
   );
 }
 
