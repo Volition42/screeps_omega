@@ -1,5 +1,6 @@
 const config = require("config");
 const constructionStatus = require("construction_status");
+const expansionFocus = require("expansion_focus");
 const reservePolicy = require("economy_reserve_policy");
 const roadmap = require("construction_roadmap");
 const roomProgress = require("room_progress");
@@ -535,6 +536,29 @@ function getSafeModeLabel(room) {
 
 function getStorageEnergy(room) {
   return room.storage ? room.storage.store[RESOURCE_ENERGY] || 0 : 0;
+}
+
+function getExpansionPlanForRoom(roomName) {
+  const plans =
+    Memory.empire &&
+    Memory.empire.expansion &&
+    Memory.empire.expansion.plans
+      ? Memory.empire.expansion.plans
+      : null;
+  const plan = plans && roomName ? plans[roomName] : null;
+
+  if (!plan || plan.cancelled) return null;
+  return plan;
+}
+
+function formatHudFocusLine(room, plan) {
+  const expansionPlan = getExpansionPlanForRoom(room.name);
+  if (expansionPlan) {
+    const focus = expansionFocus.normalize(expansionPlan.focus) || expansionFocus.DEFAULT;
+    return `Expansion ${focus} | Plan ${plan.focus}`;
+  }
+
+  return `Focus ${plan.focus}`;
 }
 
 function getContainerEnergy(container) {
@@ -1074,16 +1098,18 @@ module.exports = {
 
     const hudLines = alert.active
       ? [
-          `${room.name} | ALERT | RCL ${room.controller ? room.controller.level : 0}`,
+          `${room.name} | ALERT`,
+          `${progressLabel} | ETA ${etaLabel}`,
           `Hostiles ${alert.hostiles} | Threat ${alert.threatScore} | Def ${alert.defenders}/${alert.requiredDefenders}`,
           `Support ${alert.supportAssigned}/${alert.supportRequested} from ${alert.supportHelper}`,
           `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Q ${spawn.nextQueued}`,
           `Safe ${alert.safeMode} | Next ${nextTask}`,
         ]
       : [
-          `${room.name} | ${String(summaryState.phase).toUpperCase()} | ${progressLabel} | ETA ${etaLabel}`,
+          `${room.name} | ${String(summaryState.phase).toUpperCase()}`,
+          `${progressLabel} | ETA ${etaLabel}`,
           `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Q ${spawn.nextQueued}`,
-          `Focus ${plan.focus} | Next ${nextTask}`,
+          `${formatHudFocusLine(room, plan)} | Next ${nextTask}`,
           mineralHudLine || upgradeReserveLine || `Build ${shortBuild} | Sites ${buildStatus.sites || 0}`,
         ];
 

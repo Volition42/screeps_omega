@@ -3403,8 +3403,14 @@ function runMineralAccessRoadScenario() {
     `expected overview to mention mineral road progress, got ${JSON.stringify(report.sections.overview)}`,
   );
   assert(
-    report.hudLines[3].indexOf("Road ") !== -1,
+    report.hudLines.some(function (line) { return line.indexOf("Road ") !== -1; }),
     `expected HUD line to mention mineral road progress, got ${JSON.stringify(report.hudLines)}`,
+  );
+  assert(
+    report.hudLines[0].indexOf("RCL") === -1 &&
+      report.hudLines[1].indexOf("RCL") === 0 &&
+      report.hudLines[1].indexOf("ETA") !== -1,
+    `expected HUD to put RCL/ETA on second line, got ${JSON.stringify(report.hudLines)}`,
   );
 
   delete Game.creeps.mineral1;
@@ -4886,6 +4892,20 @@ function runExpansionFocusConstructionScenario() {
   assert(status.terminalNeeded === 1, `energy focus should keep terminal, got ${status.terminalNeeded}`);
   assert(status.extractorNeeded === 0, `energy focus should skip extractor, got ${status.extractorNeeded}`);
   assert(status.mineralContainersNeeded === 0, `energy focus should skip mineral container, got ${status.mineralContainersNeeded}`);
+
+  const report = roomReporting.build(room, state, { updateProgress: false });
+  assert(
+    report.hudLines.some(function (line) {
+      return line.indexOf("Expansion energy") !== -1;
+    }),
+    `expected room HUD to show expansion energy focus, got ${JSON.stringify(report.hudLines)}`,
+  );
+  assert(
+    report.hudLines[0].indexOf("RCL") === -1 &&
+      report.hudLines[1].indexOf("RCL") === 0 &&
+      report.hudLines[1].indexOf("ETA") !== -1,
+    `expected expansion room HUD to put RCL/ETA on second line, got ${JSON.stringify(report.hudLines)}`,
+  );
 }
 
 function runExpansionPioneerRequestScenario() {
@@ -5617,6 +5637,47 @@ function runReservationExpansionTakeoverScenario() {
   );
 }
 
+function runExpansionReservationTakeoverScenario() {
+  const parent = buildStableReservationParent("W12N7", 1182);
+  buildNeutralReserveRoom("W12N8", {
+    sourceContainers: true,
+  });
+  const expandResult = empireManager.createExpansion("W12N8", parent.name);
+  assert(expandResult.ok, `expected expansion plan, got ${expandResult.message}`);
+
+  if (!Memory.rooms[parent.name]) Memory.rooms[parent.name] = {};
+  Memory.rooms[parent.name].spawnQueue = [
+    { role: "claimer", targetRoom: "W12N8", operation: "expansion" },
+    { role: "pioneer", targetRoom: "W12N8", operation: "expansion" },
+  ];
+
+  ops.registerGlobals();
+  const reserveResult = global.ops.reserve("W12N8", "hold");
+  assert(reserveResult.ok, `expected reservation takeover, got ${reserveResult.message}`);
+  assert(
+    reserveResult.plan.parentRoom === parent.name,
+    "reservation should inherit expansion parent when parent omitted",
+  );
+  assert(
+    !empireManager.getActiveExpansion("W12N8"),
+    "expansion should be converted after reservation takeover",
+  );
+  assert(
+    reservationManager.getActiveReservation("W12N8").focus === "hold",
+    "reservation takeover should keep requested focus",
+  );
+
+  const queue = Memory.rooms[parent.name] && Memory.rooms[parent.name].spawnQueue
+    ? Memory.rooms[parent.name].spawnQueue
+    : [];
+  assert(
+    !queue.some(function (item) {
+      return item.targetRoom === "W12N8" && item.operation === "expansion";
+    }),
+    `reservation takeover should prune queued expansion requests, got ${JSON.stringify(queue)}`,
+  );
+}
+
 function runExpansionCancellationScenario() {
   const parent = buildStableReservationParent("W13N5", 1190);
   const target = buildNeutralReserveRoom("W13N6", { sourceCount: 1 });
@@ -6099,6 +6160,7 @@ function main() {
     ["reservation_defense", runReservationDefenseScenario],
     ["reservation_stale_threat_defense", runReservationStaleThreatDefenseScenario],
     ["reservation_expansion_takeover", runReservationExpansionTakeoverScenario],
+    ["expansion_reservation_takeover", runExpansionReservationTakeoverScenario],
     ["expansion_cancel", runExpansionCancellationScenario],
     ["reservation_cancel", runReservationCancellationScenario],
     ["expansion_stale_threat_defense", runExpansionStaleThreatDefenseScenario],

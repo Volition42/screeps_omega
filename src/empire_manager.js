@@ -979,6 +979,23 @@ module.exports = {
     };
   },
 
+  convertExpansionToReservation(targetRoomName, nextParentRoom) {
+    const targetRoom = normalizeRoomName(targetRoomName);
+    if (!targetRoom) return null;
+
+    const plan = getExpansionPlans()[targetRoom] || null;
+    if (!plan || plan.cancelled || plan.convertedToReservation) return null;
+
+    plan.convertedToReservation = true;
+    plan.cancelled = true;
+    plan.convertedAt = Game.time;
+    plan.updatedAt = Game.time;
+    if (nextParentRoom) plan.convertedParentRoom = nextParentRoom;
+    pruneExpansionQueue(targetRoom);
+
+    return plan;
+  },
+
   getExpansionSummary(ownedRoomCount) {
     const plans = getActivePlanList();
     const counts = {

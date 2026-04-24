@@ -573,6 +573,11 @@ module.exports = {
       }
     }
 
+    const expansion = empireManager.getActiveExpansion(targetRoom);
+    if (!resolvedParent && expansion && expansion.parentRoom) {
+      resolvedParent = expansion.parentRoom;
+    }
+
     if (!resolvedParent) {
       const currentRoomName = opsState.getCurrentRoomName();
       const currentRoom = currentRoomName ? Game.rooms[currentRoomName] : null;
@@ -598,6 +603,13 @@ module.exports = {
     printLine(`[OPS] ${result.message}`);
 
     if (result.ok) {
+      if (expansion) {
+        empireManager.convertExpansionToReservation(
+          targetRoom,
+          result.plan ? result.plan.parentRoom : resolvedParent,
+        );
+        printLine(`[OPS] Expansion room ${targetRoom} converted to reservation.`);
+      }
       printBlock(reservationManager.getReservedLines(resolvedParent));
     }
 
