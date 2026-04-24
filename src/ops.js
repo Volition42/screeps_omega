@@ -1,6 +1,7 @@
 const opsState = require("ops_state");
 const roomReporting = require("room_reporting");
 const empireManager = require("empire_manager");
+const reservationManager = require("reservation_manager");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -83,6 +84,17 @@ function printBlock(lines) {
   }
 }
 
+function getRuntimeMemory() {
+  if (!Memory.runtime) Memory.runtime = {};
+  return Memory.runtime;
+}
+
+function getOpsConsoleMemory() {
+  const runtime = getRuntimeMemory();
+  if (!runtime.opsConsole) runtime.opsConsole = {};
+  return runtime.opsConsole;
+}
+
 function buildToggleResult(label, enabled) {
   return {
     enabled: enabled,
@@ -104,6 +116,99 @@ function getTargetRoomOrPrintError(roomName, commandLabel) {
 
   printLine(`[OPS] ${commandLabel}: no owned room available.`);
   return null;
+}
+
+function normalizeTickRateSampleTicks(sampleTicks) {
+  if (typeof sampleTicks === "undefined") return 5;
+
+  if (typeof sampleTicks === "string") {
+    const trimmed = sampleTicks.trim();
+    if (!trimmed) return null;
+    sampleTicks = Number(trimmed);
+  }
+
+  if (
+    typeof sampleTicks !== "number" ||
+    !isFinite(sampleTicks) ||
+    sampleTicks <= 0
+  ) {
+    return null;
+  }
+
+  return Math.floor(sampleTicks);
+}
+
+function formatTickRateSummary(sample) {
+  if (!sample) return "[OPS] Tick rate: no completed sample recorded.";
+
+  return (
+    `[OPS] Tick rate: ${sample.avgMs.toFixed(2)} ms/tick over ${sample.ticks} ticks ` +
+    `(ticks ${sample.startTick}-${sample.endTick}, reported at tick ${sample.reportedAtTick}).`
+  );
+}
+
+function buildTickRateStatusLine() {
+  const opsConsole = getOpsConsoleMemory();
+  const probe = opsConsole.tickRateProbe;
+
+  if (!probe) {
+    if (opsConsole.lastTickRateSample) {
+      return `${formatTickRateSummary(opsConsole.lastTickRateSample)} No active probe.`;
+    }
+
+    return "[OPS] Tick rate: no active probe.";
+  }
+
+  if (typeof probe.startTick === "number") {
+    const remainingTicks = Math.max(
+      0,
+      probe.startTick + probe.sampleTicks - Game.time,
+    );
+
+    return (
+      `[OPS] Tick rate running: ${probe.sampleTicks} ticks from tick ${probe.startTick}. ` +
+      `${remainingTicks} ticks remaining.`
+    );
+  }
+
+  return (
+    `[OPS] Tick rate armed: sampling ${probe.sampleTicks} ticks starting at tick ${probe.armTick}.`
+  );
+}
+
+function processTickRateProbe() {
+  const opsConsole = getOpsConsoleMemory();
+  const probe = opsConsole.tickRateProbe;
+
+  if (!probe) return null;
+
+  if (typeof probe.startTick !== "number") {
+    if (Game.time < probe.armTick) return null;
+
+    probe.startTick = Game.time;
+    probe.startMs = Date.now();
+    return null;
+  }
+
+  if (Game.time < probe.startTick + probe.sampleTicks) return null;
+
+  const ticks = Math.max(1, Game.time - probe.startTick);
+  const elapsedMs = Math.max(0, Date.now() - probe.startMs);
+  const avgMs = elapsedMs / ticks;
+  const sample = {
+    avgMs: avgMs,
+    elapsedMs: elapsedMs,
+    endTick: Game.time,
+    reportedAtTick: Game.time,
+    sampleTicks: probe.sampleTicks,
+    startTick: probe.startTick,
+    ticks: ticks,
+  };
+
+  opsConsole.lastTickRateSample = sample;
+  delete opsConsole.tickRateProbe;
+
+  return printLine(formatTickRateSummary(sample));
 }
 
 function getConsoleCommandHelp() {
@@ -140,9 +245,25 @@ function getConsoleCommandHelp() {
       example: "ops.empire()",
     },
     {
+      command: "ops.tickRate([sampleTicks|status|cancel])",
+      description:
+        "Sample wall-clock ms per tick over a short window and auto-print the result.",
+      example: "ops.tickRate(5)",
+    },
+    {
       command: "ops.expand(targetRoom, [parentRoom])",
       description: "Start a manual expansion plan from an owned parent room.",
       example: 'ops.expand("W5N6", "W5N5")',
+    },
+    {
+      command: "ops.reserve(targetRoom, [parentRoom])",
+      description: "Start a reserved-room plan from the current or named parent room.",
+      example: 'ops.reserve("W5N6", "W5N5")',
+    },
+    {
+      command: "ops.reserved([parentRoom])",
+      description: "Show active reserved rooms grouped by parent.",
+      example: 'ops.reserved("W5N5")',
     },
     {
       command: "ops.expansions()",
@@ -153,6 +274,11 @@ function getConsoleCommandHelp() {
       command: "ops.cancelExpansion(targetRoom)",
       description: "Cancel an active expansion plan.",
       example: 'ops.cancelExpansion("W5N6")',
+    },
+    {
+      command: "ops.cancelReserve(targetRoom)",
+      description: "Cancel an active reserved-room plan.",
+      example: 'ops.cancelReserve("W5N6")',
     },
   ];
 }
@@ -183,6 +309,8 @@ function parseRoomCommandArgs(arg1, arg2) {
 
 module.exports = {
   registerGlobals() {
+    processTickRateProbe();
+
     global.on = true;
     global.off = false;
 
@@ -205,14 +333,29 @@ module.exports = {
       empire: function () {
         return module.exports.empire();
       },
+      tickRate: function (sampleTicks) {
+        return module.exports.tickRate(sampleTicks);
+      },
+      tickSpeed: function (sampleTicks) {
+        return module.exports.tickRate(sampleTicks);
+      },
       expand: function (targetRoom, parentRoom) {
         return module.exports.expand(targetRoom, parentRoom);
+      },
+      reserve: function (targetRoom, parentRoom) {
+        return module.exports.reserve(targetRoom, parentRoom);
+      },
+      reserved: function (parentRoom) {
+        return module.exports.reserved(parentRoom);
       },
       expansions: function () {
         return module.exports.expansions();
       },
       cancelExpansion: function (targetRoom) {
         return module.exports.cancelExpansion(targetRoom);
+      },
+      cancelReserve: function (targetRoom) {
+        return module.exports.cancelReserve(targetRoom);
       },
       cpuStatus: function (roomName) {
         return module.exports.cpuStatus(roomName);
@@ -325,15 +468,100 @@ module.exports = {
     return report;
   },
 
+  tickRate(sampleTicks) {
+    if (typeof sampleTicks === "string") {
+      const action = sampleTicks.trim().toLowerCase();
+      const opsConsole = getOpsConsoleMemory();
+
+      if (action === "status") {
+        return printLine(buildTickRateStatusLine());
+      }
+
+      if (action === "cancel") {
+        if (!opsConsole.tickRateProbe) {
+          return printLine("[OPS] Tick rate: no active probe to cancel.");
+        }
+
+        delete opsConsole.tickRateProbe;
+        return printLine("[OPS] Tick rate probe cancelled.");
+      }
+    }
+
+    const resolvedSampleTicks = normalizeTickRateSampleTicks(sampleTicks);
+    if (resolvedSampleTicks === null) {
+      return printLine(
+        '[OPS] tickRate: invalid sample. Use a positive integer, "status", or "cancel".',
+      );
+    }
+
+    const opsConsole = getOpsConsoleMemory();
+    opsConsole.tickRateProbe = {
+      armTick: Game.time + 1,
+      requestedAtTick: Game.time,
+      sampleTicks: resolvedSampleTicks,
+      startMs: null,
+      startTick: null,
+    };
+
+    return printLine(
+      `[OPS] Tick rate armed: sampling ${resolvedSampleTicks} ticks starting next tick.`,
+    );
+  },
+
   expand(targetRoom, parentRoom) {
-    const result = empireManager.createExpansion(targetRoom, parentRoom);
+    const reservation = reservationManager.getActiveReservation(targetRoom);
+    const takeoverParent = parentRoom || (reservation ? reservation.parentRoom : null);
+    const result = empireManager.createExpansion(targetRoom, takeoverParent);
     printLine(`[OPS] ${result.message}`);
 
     if (result.ok) {
+      if (reservation) {
+        reservationManager.convertReservationToExpansion(
+          targetRoom,
+          result.plan ? result.plan.parentRoom : takeoverParent,
+        );
+        printLine(`[OPS] Reserved room ${targetRoom} converted to expansion.`);
+      }
       printBlock(empireManager.getExpansionLines());
     }
 
     return result;
+  },
+
+  reserve(targetRoom, parentRoom) {
+    let resolvedParent = parentRoom || null;
+
+    if (!resolvedParent) {
+      const currentRoomName = opsState.getCurrentRoomName();
+      const currentRoom = currentRoomName ? Game.rooms[currentRoomName] : null;
+
+      if (!currentRoom || !currentRoom.controller || !currentRoom.controller.my) {
+        const message =
+          "reserve: parent room is required because no current owned room is selected.";
+        printLine(`[OPS] ${message}`);
+        return {
+          ok: false,
+          message: message,
+        };
+      }
+
+      resolvedParent = currentRoom.name;
+    }
+
+    const result = reservationManager.createReservation(targetRoom, resolvedParent);
+    printLine(`[OPS] ${result.message}`);
+
+    if (result.ok) {
+      printBlock(reservationManager.getReservedLines(resolvedParent));
+    }
+
+    return result;
+  },
+
+  reserved(parentRoom) {
+    const lines = reservationManager.getReservedLines(parentRoom);
+    printBlock(lines);
+    return lines;
   },
 
   expansions() {
@@ -344,6 +572,12 @@ module.exports = {
 
   cancelExpansion(targetRoom) {
     const result = empireManager.cancelExpansion(targetRoom);
+    printLine(`[OPS] ${result.message}`);
+    return result;
+  },
+
+  cancelReserve(targetRoom) {
+    const result = reservationManager.cancelReservation(targetRoom);
     printLine(`[OPS] ${result.message}`);
     return result;
   },

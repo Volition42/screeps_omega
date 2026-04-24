@@ -15,6 +15,9 @@ Important Notes:
 
 const roomReporting = require("room_reporting");
 const config = require("config");
+const defenseManager = require("defense_manager");
+const reservationManager = require("reservation_manager");
+const utils = require("utils");
 
 function ensureEmpireMemory() {
   if (!Memory.empire) Memory.empire = {};
@@ -24,6 +27,12 @@ function ensureEmpireMemory() {
   }
   if (!Memory.empire.expansion.plans) {
     Memory.empire.expansion.plans = {};
+  }
+  if (!Memory.empire.reservation) {
+    Memory.empire.reservation = {};
+  }
+  if (!Memory.empire.reservation.plans) {
+    Memory.empire.reservation.plans = {};
   }
 
   return Memory.empire;
@@ -158,6 +167,20 @@ function isExpansionEnabled() {
   return settings.ENABLED !== false;
 }
 
+function getThreatMemoryTtl() {
+  const settings = getExpansionSettings();
+  return typeof settings.DEFENSE_MEMORY_TTL === "number"
+    ? settings.DEFENSE_MEMORY_TTL
+    : 300;
+}
+
+function getVisionRefreshTtl() {
+  const settings = getExpansionSettings();
+  return typeof settings.VISIBILITY_REFRESH_TTL === "number"
+    ? settings.VISIBILITY_REFRESH_TTL
+    : 150;
+}
+
 function getPlanStatus(plan, ownedRoomCount) {
   if (!plan || !plan.targetRoom) return "invalid";
   if (plan.cancelled) return "cancelled";
@@ -190,6 +213,7 @@ function getPlanStatus(plan, ownedRoomCount) {
   ) {
     return "blocked_owner";
   }
+  if (module.exports.getExpansionThreat(plan)) return "threatened";
   if (targetOwned) return "bootstrapping";
 
   return "claiming";
@@ -222,8 +246,107 @@ function isParentReady(room, state) {
   if (state.defense && state.defense.hasThreats) {
     return false;
   }
+  if (
+    !state.buildStatus ||
+    (!state.buildStatus.stableReady && !state.buildStatus.developmentComplete)
+  ) {
+    return false;
+  }
 
   return true;
+}
+
+function isParentOperational(room, state) {
+  const settings = getExpansionSettings();
+  const minRcl =
+    typeof settings.MIN_PARENT_RCL === "number" ? settings.MIN_PARENT_RCL : 4;
+
+  if (!room || !room.controller || !room.controller.my) return false;
+  if (room.controller.level < minRcl) return false;
+  if (!state || !state.spawns || state.spawns.length <= 0) return false;
+  if (state.defense && state.defense.hasThreats) return false;
+
+  return true;
+}
+
+function hasRecentThreatIntel(plan) {
+  if (!plan || !plan.intel) return false;
+  if ((plan.intel.hostileCount || 0) <= 0) return false;
+  if (typeof plan.intel.threatSeenAt !== "number") return false;
+
+  return Game.time - plan.intel.threatSeenAt <= getThreatMemoryTtl();
+}
+
+function shouldRefreshVisibility(plan, targetRoom) {
+  if (targetRoom) return false;
+  if (!plan || !plan.intel) return true;
+  if (typeof plan.intel.visibleAt !== "number") return true;
+
+  return Game.time - plan.intel.visibleAt >= getVisionRefreshTtl();
+}
+
+function hasStartedExpansionOperation(plan, targetRoom) {
+  if (!plan) return false;
+  if (typeof plan.startedAt === "number") return true;
+
+  const room = targetRoom || (plan.targetRoom ? Game.rooms[plan.targetRoom] : null);
+  return !!(room && room.controller && room.controller.my);
+}
+
+function getVisibleExpansionThreat(room) {
+  if (!room) return null;
+
+  const hostiles = utils.getDefenseIntruders(room);
+  if (hostiles.length <= 0) return null;
+
+  return defenseManager.createThreatDescriptor({
+    roomName: room.name,
+    scope: "expansion",
+    classification: "expansion_threat",
+    priority: 1050,
+    hostiles: hostiles,
+    hostileReservation: false,
+    desiredDefenders: Math.max(1, Math.ceil(hostiles.length / 2)),
+    reaction: defenseManager.getReactionConfig(),
+    responseRole: "defender",
+    spawnCooldown: 25,
+    visible: true,
+    towerCanHandle: false,
+    responseMode: "creep_only",
+    hostileCombatPower: defenseManager.getHostileCombatPower(hostiles),
+    hostileHealingPower: defenseManager.getHostileHealingPower(hostiles),
+  });
+}
+
+function getStoredExpansionThreat(plan) {
+  if (!hasRecentThreatIntel(plan)) return null;
+
+  return {
+    roomName: plan.targetRoom,
+    scope: "expansion",
+    classification: "expansion_threat",
+    type: "expansion_threat",
+    priority: 1050,
+    hostiles: [],
+    hostileCount: plan.intel.hostileCount || 1,
+    hostileReservation: false,
+    active: true,
+    desiredDefenders: Math.max(1, plan.intel.desiredDefenders || 1),
+    threatScore: plan.intel.threatScore || 1,
+    threatLevel: plan.intel.threatLevel || 1,
+    responseRole: "defender",
+    spawnCooldown: 25,
+    visible: false,
+    towerTargetId: null,
+    towerTargetSummary: plan.intel.threatLabel || "stale expansion threat",
+    towerFocusDamage: 0,
+    towerCanHandle: false,
+    activeTowerCount: 0,
+    readyTowerCount: 0,
+    responseMode: "creep_only",
+    hostileCombatPower: plan.intel.hostileCombatPower || 120,
+    hostileHealingPower: plan.intel.hostileHealingPower || 0,
+  };
 }
 
 function countExpansionCreeps(role, targetRoom, parentRoom) {
@@ -262,6 +385,37 @@ function countQueuedExpansion(role, targetRoom, parentRoom) {
       item.homeRoom === parentRoom
     ) {
       count++;
+    }
+  }
+
+  return count;
+}
+
+function countExpansionDefenseCoverage(targetRoom) {
+  let count = 0;
+
+  for (const creepName in Game.creeps) {
+    if (!Object.prototype.hasOwnProperty.call(Game.creeps, creepName)) continue;
+
+    const creep = Game.creeps[creepName];
+    if (!creep || !creep.memory || creep.memory.role !== "defender") continue;
+    if (creep.memory.targetRoom !== targetRoom) continue;
+    if (creep.ticksToLive !== undefined && creep.ticksToLive <= 90) continue;
+    count++;
+  }
+
+  if (!Memory.rooms) return count;
+
+  for (const roomName in Memory.rooms) {
+    if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+    const queue = Memory.rooms[roomName] ? Memory.rooms[roomName].spawnQueue : null;
+    if (!queue) continue;
+
+    for (let i = 0; i < queue.length; i++) {
+      const item = queue[i];
+      if (item && item.role === "defender" && item.targetRoom === targetRoom) {
+        count++;
+      }
     }
   }
 
@@ -350,6 +504,35 @@ function buildExpansionLines() {
   }
 
   return lines;
+}
+
+function pruneExpansionQueue(targetRoomName) {
+  const targetRoom = normalizeRoomName(targetRoomName);
+  if (!targetRoom || !Memory.rooms) return 0;
+
+  let removed = 0;
+
+  for (const roomName in Memory.rooms) {
+    if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+    const roomMemory = Memory.rooms[roomName];
+    if (!roomMemory || !roomMemory.spawnQueue) continue;
+
+    const before = roomMemory.spawnQueue.length;
+    roomMemory.spawnQueue = roomMemory.spawnQueue.filter(function (item) {
+      return !(
+        item &&
+        item.targetRoom === targetRoom &&
+        (
+          item.operation === "expansion" ||
+          item.operation === "expansion_defense" ||
+          item.operation === "expansion_defense_support"
+        )
+      );
+    });
+    removed += before - roomMemory.spawnQueue.length;
+  }
+
+  return removed;
 }
 
 module.exports = {
@@ -446,6 +629,7 @@ module.exports = {
     };
     memory.rooms = roomSnapshots;
     memory.expansion.summary = this.getExpansionSummary(rooms.length);
+    memory.reservation.summary = reservationManager.getReservationSummary();
 
     return memory;
   },
@@ -467,7 +651,9 @@ module.exports = {
     }
 
     const ownedRooms = this.collectOwnedRooms();
-    let parentRoom = normalizeRoomName(parentRoomName);
+    const reservedPlan = reservationManager.getActiveReservation(targetRoom);
+    let parentRoom = normalizeRoomName(parentRoomName) ||
+      (reservedPlan ? reservedPlan.parentRoom : null);
 
     if (parentRoom) {
       const parent = Game.rooms[parentRoom];
@@ -505,12 +691,64 @@ module.exports = {
     });
 
     plans[targetRoom] = plan;
+    this.updatePlanIntel(plan);
+    if (reservedPlan) {
+      reservationManager.convertReservationToExpansion(targetRoom, parentRoom);
+    }
 
     return {
       ok: true,
       plan: plan,
       message: `Expansion plan active: ${targetRoom} from ${parentRoom}.`,
     };
+  },
+
+  getActiveExpansion(targetRoomName) {
+    const targetRoom = normalizeRoomName(targetRoomName);
+    if (!targetRoom) return null;
+
+    const plan = getExpansionPlans()[targetRoom] || null;
+    if (!plan || plan.cancelled) return null;
+
+    return plan;
+  },
+
+  getExpansionThreat(planOrTargetRoom) {
+    const plan =
+      typeof planOrTargetRoom === "string"
+        ? this.getActiveExpansion(planOrTargetRoom)
+        : planOrTargetRoom;
+
+    if (!plan || plan.cancelled) return null;
+
+    const targetRoom = Game.rooms[plan.targetRoom] || null;
+    if (targetRoom) {
+      return getVisibleExpansionThreat(targetRoom);
+    }
+
+    return getStoredExpansionThreat(plan);
+  },
+
+  updatePlanIntel(plan) {
+    if (!plan || !plan.targetRoom) return;
+
+    const room = Game.rooms[plan.targetRoom] || null;
+    if (!plan.intel) plan.intel = {};
+    if (!room) return;
+
+    const threat = getVisibleExpansionThreat(room);
+    plan.intel.visibleAt = Game.time;
+    plan.intel.hostileCount = threat ? threat.hostileCount || 0 : 0;
+    plan.intel.threatSeenAt = threat ? Game.time : null;
+    plan.intel.threatScore = threat ? threat.threatScore || 0 : 0;
+    plan.intel.threatLevel = threat ? threat.threatLevel || 0 : 0;
+    plan.intel.desiredDefenders = threat ? threat.desiredDefenders || 1 : 0;
+    plan.intel.hostileCombatPower = threat ? threat.hostileCombatPower || 0 : 0;
+    plan.intel.hostileHealingPower = threat ? threat.hostileHealingPower || 0 : 0;
+    plan.intel.threatLabel = threat ? threat.towerTargetSummary || threat.classification || "visible expansion threat" : null;
+    plan.intel.targetOwned = !!(room.controller && room.controller.my);
+    plan.intel.hasSpawn = room.find(FIND_MY_SPAWNS).length > 0;
+    plan.updatedAt = Game.time;
   },
 
   cancelExpansion(targetRoomName) {
@@ -526,11 +764,15 @@ module.exports = {
 
     plans[targetRoom].cancelled = true;
     plans[targetRoom].updatedAt = Game.time;
+    const removed = pruneExpansionQueue(targetRoom);
 
     return {
       ok: true,
       plan: plans[targetRoom],
-      message: `Expansion plan cancelled: ${targetRoom}.`,
+      message:
+        removed > 0
+          ? `Expansion plan cancelled: ${targetRoom}. Removed ${removed} queued spawn requests.`
+          : `Expansion plan cancelled: ${targetRoom}.`,
     };
   },
 
@@ -557,7 +799,7 @@ module.exports = {
   },
 
   getExpansionSpawnRequests(room, state) {
-    if (!isExpansionEnabled() || !isParentReady(room, state)) return [];
+    if (!isExpansionEnabled()) return [];
 
     const requests = [];
     const plans = getActivePlanList();
@@ -570,7 +812,34 @@ module.exports = {
 
     for (let i = 0; i < plans.length; i++) {
       const plan = plans[i];
+      const targetRoom = Game.rooms[plan.targetRoom] || null;
+      if (targetRoom) {
+        this.updatePlanIntel(plan);
+      }
+      if (
+        plan.parentRoom === room.name &&
+        isParentReady(room, state) &&
+        typeof plan.startedAt !== "number"
+      ) {
+        plan.startedAt = Game.time;
+      }
+
+      const threat = this.getExpansionThreat(plan);
+      const started = hasStartedExpansionOperation(plan, targetRoom);
+
+      if (plan.parentRoom === room.name && started) {
+        this.addExpansionMaintenanceRequests(room, state, requests, plan, targetRoom, threat);
+      }
+
+      if (threat) {
+        if (started) {
+          this.addExpansionDefenseRequest(room, state, requests, plan, threat);
+        }
+        continue;
+      }
+
       if (plan.parentRoom !== room.name) continue;
+      if (!isParentReady(room, state)) continue;
 
       const status = getPlanStatus(plan, ownedRoomCount);
       plan.status = status;
@@ -617,6 +886,130 @@ module.exports = {
     }
 
     return requests;
+  },
+
+  addExpansionMaintenanceRequests(room, state, requests, plan, targetRoom, threat) {
+    if (plan.parentRoom !== room.name) return;
+    if (!isParentOperational(room, state)) return;
+
+    const status = getPlanStatus(plan, this.collectOwnedRooms().length);
+    if (status !== "claiming") return;
+
+    const claimers =
+      countExpansionCreeps("claimer", plan.targetRoom, room.name) +
+      countQueuedExpansion("claimer", plan.targetRoom, room.name);
+
+    if (claimers <= 0 && (shouldRefreshVisibility(plan, targetRoom) || !!threat)) {
+      requests.push({
+        role: "claimer",
+        priority:
+          typeof getExpansionSettings().CLAIM_PRIORITY === "number"
+            ? getExpansionSettings().CLAIM_PRIORITY
+            : 95,
+        homeRoom: room.name,
+        targetRoom: plan.targetRoom,
+        operation: "expansion",
+      });
+    }
+  },
+
+  addExpansionDefenseRequest(room, state, requests, plan, threat) {
+    if (!this.shouldRoomDefendExpansion(room, state, plan, threat)) return;
+
+    const assigned = countExpansionDefenseCoverage(plan.targetRoom);
+    const desired = Math.max(1, threat.desiredDefenders || 1);
+    if (assigned >= desired) return;
+
+    requests.push({
+      role: "defender",
+      priority: 1050,
+      threatLevel: threat.threatLevel || 1,
+      threatScore: threat.threatScore || 0,
+      responseMode: "creep_only",
+      targetRoom: plan.targetRoom,
+      operation:
+        room.name === plan.parentRoom
+          ? "expansion_defense"
+          : "expansion_defense_support",
+      defenseType: "expansion_threat",
+      homeRoom: room.name,
+    });
+  },
+
+  shouldRoomDefendExpansion(room, state, plan) {
+    if (!room || !room.controller || !room.controller.my) return false;
+    if (!state || !state.spawns || state.spawns.length <= 0) return false;
+    if (state.defense && state.defense.hasThreats) return false;
+    if (room.energyCapacityAvailable < 650) return false;
+
+    if (room.name === plan.parentRoom) return true;
+    if (getExpansionSettings().DEFENSE_SUPPORT_ENABLED === false) return false;
+    if (this.isExpansionParentDefenseAvailable(plan.parentRoom)) return false;
+    if (
+      !Game.map ||
+      typeof Game.map.getRoomLinearDistance !== "function" ||
+      Game.map.getRoomLinearDistance(room.name, plan.targetRoom) >
+        (
+          typeof getExpansionSettings().DEFENSE_SUPPORT_DISTANCE === "number"
+            ? getExpansionSettings().DEFENSE_SUPPORT_DISTANCE
+            : 2
+        )
+    ) {
+      return false;
+    }
+
+    return this.getBestExpansionDefenseHelper(plan) === room.name;
+  },
+
+  isExpansionParentDefenseAvailable(parentRoomName) {
+    const parent = Game.rooms[parentRoomName] || null;
+    if (!parent || !parent.controller || !parent.controller.my) return false;
+    if (parent.find(FIND_MY_SPAWNS).length <= 0) return false;
+    if (parent.energyCapacityAvailable < 650) return false;
+
+    const cache = utils.getRoomRuntimeCache(parent);
+    const state = cache && cache.state ? cache.state : null;
+    if (state && state.defense && state.defense.hasThreats) return false;
+
+    return true;
+  },
+
+  getBestExpansionDefenseHelper(plan) {
+    let bestRoomName = null;
+    let bestScore = Infinity;
+
+    for (const roomName in Game.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Game.rooms, roomName)) continue;
+      if (roomName === plan.parentRoom) continue;
+
+      const room = Game.rooms[roomName];
+      if (!room || !room.controller || !room.controller.my) continue;
+      if (room.find(FIND_MY_SPAWNS).length <= 0) continue;
+      if (room.energyCapacityAvailable < 650) continue;
+      if (
+        !Game.map ||
+        typeof Game.map.getRoomLinearDistance !== "function"
+      ) {
+        continue;
+      }
+
+      const distance = Game.map.getRoomLinearDistance(room.name, plan.targetRoom);
+      const maxDistance =
+        typeof getExpansionSettings().DEFENSE_SUPPORT_DISTANCE === "number"
+          ? getExpansionSettings().DEFENSE_SUPPORT_DISTANCE
+          : 2;
+      if (distance > maxDistance) continue;
+
+      if (
+        distance < bestScore ||
+        (distance === bestScore && (!bestRoomName || room.name < bestRoomName))
+      ) {
+        bestRoomName = room.name;
+        bestScore = distance;
+      }
+    }
+
+    return bestRoomName;
   },
 
   getExpansionLines() {
@@ -698,10 +1091,26 @@ module.exports = {
       `Phases ${formatPhaseCounts(phaseCounts)}`,
     ];
     const expansionSummary = this.getExpansionSummary(roomReports.length);
+    const reservationSummary = reservationManager.getReservationSummary();
     if (expansionSummary.active > 0) {
       lines.push(
         `Expansion active ${expansionSummary.active} | claim ${expansionSummary.claiming} | boot ${expansionSummary.bootstrapping} | blocked ${expansionSummary.blocked}`,
       );
+      const expansionLines = buildExpansionLines();
+      lines.push("[OPS][EMPIRE][EXPANSIONS]");
+      for (let i = 1; i < expansionLines.length; i++) {
+        lines.push(expansionLines[i]);
+      }
+    }
+    if (reservationSummary.active > 0) {
+      lines.push(
+        `Reserved active ${reservationSummary.active} | ready ${reservationSummary.reserved} | scout ${reservationSummary.scouting} | threats ${reservationSummary.threatened} | blocked ${reservationSummary.blocked}`,
+      );
+      const reservedLines = reservationManager.getReservedLines();
+      lines.push("[OPS][EMPIRE][RESERVED]");
+      for (let i = 1; i < reservedLines.length; i++) {
+        lines.push(reservedLines[i]);
+      }
     }
 
     if (roomReports.length > 0) {

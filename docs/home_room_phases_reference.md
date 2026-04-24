@@ -175,6 +175,7 @@ Typical blockers:
 Purpose:
 
 - Build the first durable compact home-room core.
+- Unlock reserved-room operations once the RCL4 core is constructed and stable.
 
 Entry:
 
@@ -198,6 +199,13 @@ What `developmentComplete` means:
 - Storage target is met
 - Wall target is zero in the current active-defense model
 - Rampart target is zero in the current active-defense model
+
+Reserved-room unlock:
+
+- `ops.reserve(targetRoom, [parentRoom])` becomes operational from a parent room at RCL4+ once this development/stable gate is met.
+- Reserved rooms reserve, not claim, their controller.
+- Source containers and minimal roads are planned only while the reserved room is visible, on a throttled interval.
+- Reserved-room miners and haulers return source energy to the parent room.
 
 Primary steps:
 

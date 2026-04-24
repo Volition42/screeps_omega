@@ -18,6 +18,7 @@ const config = require("config");
 const constructionStatus = require("construction_status");
 const defenseManager = require("defense_manager");
 const empireManager = require("empire_manager");
+const reservationManager = require("reservation_manager");
 const reservePolicy = require("economy_reserve_policy");
 const utils = require("utils");
 
@@ -126,7 +127,7 @@ module.exports = {
   },
 
   trySpawnRequest(room, state, spawn, request) {
-    var bodyPlan = bodies.plan(request.role, room, request, state);
+    var bodyPlan = this.getValidatedBodyPlan(room, state, request);
     var body = bodyPlan.body;
     var name = this.getSpawnName(request.role, spawn);
 
@@ -150,6 +151,55 @@ module.exports = {
       },
     });
 
+    if (result === ERR_INVALID_ARGS) {
+      this.logInvalidSpawnArgs(spawn, request, name, bodyPlan);
+
+      var fallbackPlan = this.getEmergencyRetryPlan(room, request, bodyPlan);
+      if (fallbackPlan) {
+        result = spawn.spawnCreep(fallbackPlan.body, name, {
+          memory: {
+            role: request.role,
+            room: room.name,
+            homeRoom: request.homeRoom || room.name,
+            working: false,
+            delivering: false,
+            threatLevel: request.threatLevel || null,
+            threatScore: request.threatScore || null,
+            responseMode: request.responseMode || null,
+            sourceId: request.sourceId || null,
+            targetId: request.targetId || null,
+            targetRoom: request.targetRoom || null,
+            operation: request.operation || null,
+            defenseType: request.defenseType || null,
+            bodyProfile: fallbackPlan.profile || null,
+            bodyCost: fallbackPlan.cost || null,
+          },
+        });
+
+        if (result === OK) {
+          console.log(
+            "[DBG][SPAWN " +
+              spawn.name +
+              "] recovered role=" +
+              request.role +
+              " with emergency fallback body=" +
+              JSON.stringify(fallbackPlan.body),
+          );
+          return;
+        }
+
+        if (result === ERR_INVALID_ARGS) {
+          this.logInvalidSpawnArgs(
+            spawn,
+            request,
+            name,
+            fallbackPlan,
+            "emergency_retry",
+          );
+        }
+      }
+    }
+
     if (
       result !== OK &&
       result !== ERR_NOT_ENOUGH_ENERGY &&
@@ -164,6 +214,71 @@ module.exports = {
           result,
       );
     }
+  },
+
+  getValidatedBodyPlan(room, state, request) {
+    var bodyPlan = bodies.plan(request.role, room, request, state);
+    var validation = bodies.validateBody(bodyPlan && bodyPlan.body);
+
+    if (validation.valid) {
+      return bodyPlan;
+    }
+
+    var fallbackPlan = bodies.getEmergencyPlan(request.role, room);
+    if (fallbackPlan) {
+      console.log(
+        "[DBG][SPAWN_BODY] replaced invalid plan role=" +
+          request.role +
+          " reason=" +
+          validation.reason +
+          " body=" +
+          JSON.stringify(bodyPlan && bodyPlan.body ? bodyPlan.body : null),
+      );
+      return fallbackPlan;
+    }
+
+    bodyPlan.validationError = validation.reason;
+    return bodyPlan;
+  },
+
+  getEmergencyRetryPlan(room, request, currentPlan) {
+    var fallbackPlan = bodies.getEmergencyPlan(request.role, room);
+
+    if (!fallbackPlan) {
+      return null;
+    }
+
+    if (
+      currentPlan &&
+      JSON.stringify(currentPlan.body || []) === JSON.stringify(fallbackPlan.body || [])
+    ) {
+      return null;
+    }
+
+    return fallbackPlan;
+  },
+
+  logInvalidSpawnArgs(spawn, request, name, bodyPlan, phase) {
+    var validation = bodies.validateBody(bodyPlan && bodyPlan.body);
+
+    console.log(
+      "[DBG][SPAWN " +
+        spawn.name +
+        "] invalid_args phase=" +
+        (phase || "initial") +
+        " role=" +
+        request.role +
+        " name=" +
+        name +
+        " profile=" +
+        (bodyPlan && bodyPlan.profile ? bodyPlan.profile : "unknown") +
+        " cost=" +
+        (bodyPlan && bodyPlan.cost ? bodyPlan.cost : 0) +
+        " parts=" +
+        JSON.stringify(bodyPlan && bodyPlan.body ? bodyPlan.body : null) +
+        " validation=" +
+        JSON.stringify(validation),
+    );
   },
 
   getSpawnName(role, spawn) {
@@ -283,6 +398,7 @@ module.exports = {
 
     this.addDefenseRequests(room, state, requests, reaction);
     this.addExpansionRequests(room, state, requests);
+    this.addReservationRequests(room, state, requests);
     this.addCoreEconomyRequests(room, state, requests, {
       includeRepairs: true,
     });
@@ -299,6 +415,17 @@ module.exports = {
 
     for (let i = 0; i < expansionRequests.length; i++) {
       requests.push(expansionRequests[i]);
+    }
+  },
+
+  addReservationRequests(room, state, requests) {
+    const reservationRequests = reservationManager.getReservationSpawnRequests(
+      room,
+      state,
+    );
+
+    for (let i = 0; i < reservationRequests.length; i++) {
+      requests.push(reservationRequests[i]);
     }
   },
 

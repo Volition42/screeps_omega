@@ -834,6 +834,7 @@ function createController(x, y, options) {
     user: "tester",
     my: !!spec.my,
     owner: spec.owner || null,
+    reservation: spec.reservation || null,
   };
 }
 
@@ -900,6 +901,24 @@ function createCreep(name, role, x, y, options) {
       target.my = true;
       target.owner = { username: "tester" };
       target.user = "tester";
+      return OK;
+    },
+    reserveController(target) {
+      currentRuntime.creepActions.push({
+        creep: this.name,
+        action: "reserveController",
+        targetId: target ? target.id || null : null,
+      });
+      if (!target || target.type !== "controller") return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 1) return ERR_NOT_IN_RANGE;
+      if (target.owner && !target.my) return ERR_INVALID_TARGET;
+      target.reservation = {
+        username: "tester",
+        ticksToEnd: Math.min(
+          5000,
+          ((target.reservation && target.reservation.ticksToEnd) || 0) + 1,
+        ),
+      };
       return OK;
     },
     attackController(target) {
@@ -1165,6 +1184,12 @@ function addSupportContainers(room) {
   }
 
   return support;
+}
+
+function addRcl4StableStructures(room) {
+  satisfyDevelopmentRequirements(room);
+  room.energyCapacityAvailable = Math.max(room.energyCapacityAvailable, 1300);
+  room.energyAvailable = room.energyCapacityAvailable;
 }
 
 function buildRoomScenario(name, options) {
@@ -1447,6 +1472,9 @@ const constructionStatus = require("construction_status");
 const constructionRoadmap = require("construction_roadmap");
 const roomReporting = require("room_reporting");
 const empireManager = require("empire_manager");
+const reservationManager = require("reservation_manager");
+const ops = require("ops");
+const creepManager = require("creep_manager");
 const hud = require("hud");
 const advancedStructureManager = require("advanced_structure_manager");
 const defenseManager = require("defense_manager");
@@ -1457,6 +1485,10 @@ const roleWorker = require("role_worker");
 const roleJrWorker = require("role_jrworker");
 const roleClaimer = require("role_claimer");
 const rolePioneer = require("role_pioneer");
+const roleReserver = require("role_reserver");
+const roleRemoteWorker = require("role_remoteworker");
+const roleRemoteMiner = require("role_remoteminer");
+const roleRemoteHauler = require("role_remotehauler");
 const roleDefender = require("role_defender");
 const towerManager = require("tower_manager");
 const statsManager = require("stats_manager");
@@ -4565,6 +4597,7 @@ function runExpansionClaimRequestScenario() {
     ],
   });
   parent.controller.my = true;
+  addRcl4StableStructures(parent);
 
   const target = new FakeRoom("VAL_EXPAND_TARGET", new FakeTerrain());
   target.setController(
@@ -4616,6 +4649,7 @@ function runExpansionPioneerRequestScenario() {
     ],
   });
   parent.controller.my = true;
+  addRcl4StableStructures(parent);
 
   const target = new FakeRoom("VAL_BOOT_TARGET", new FakeTerrain());
   target.setController(
@@ -4759,6 +4793,619 @@ function runExpansionHudLabelsScenario() {
   assert(labels.indexOf("Pi") !== -1, `expected pioneer HUD label, got ${labels.join(",")}`);
 }
 
+function buildStableReservationParent(name, tick) {
+  const parent = buildRoomScenario(name, {
+    tick: tick,
+    controllerLevel: 4,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: `${name}_worker`, role: "worker", x: 24, y: 25 },
+      { name: `${name}_miner1`, role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: `${name}_miner2`, role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: `${name}_hauler`, role: "hauler", x: 25, y: 24 },
+      { name: `${name}_upgrader`, role: "upgrader", x: 26, y: 25 },
+    ],
+  });
+  parent.controller.my = true;
+  parent.controller.owner = { username: "tester" };
+  addRcl4StableStructures(parent);
+  return parent;
+}
+
+function buildNeutralReserveRoom(name, options) {
+  const settings = options || {};
+  const room = new FakeRoom(name, new FakeTerrain());
+  room.setController(
+    createController(settings.controllerX || 20, settings.controllerY || 20, {
+      roomName: name,
+      level: 0,
+      reservation: settings.reservation || null,
+    }),
+  );
+  room.addSource(createSource(settings.sourceAX || 15, settings.sourceAY || 25, { roomName: name }));
+  if (settings.sourceCount !== 1) {
+    room.addSource(createSource(settings.sourceBX || 35, settings.sourceBY || 25, { roomName: name }));
+  }
+  room.addMineral(createMineral(35, 20, { roomName: name }));
+
+  if (settings.sourceContainers) {
+    addContainersForSources(room, room.find(FIND_SOURCES));
+  }
+
+  if (settings.hostiles) {
+    for (let i = 0; i < settings.hostiles.length; i++) {
+      const spec = settings.hostiles[i];
+      const hostile = createCreep(spec.name || `reserveHostile${i + 1}`, "hostile", spec.x, spec.y, {
+        roomName: name,
+        my: false,
+        body: spec.body || [{ type: ATTACK }, { type: MOVE }],
+      });
+      hostile.owner = { username: spec.username || "Invader" };
+      room._hostileCreeps.push(hostile);
+    }
+  }
+
+  return room;
+}
+
+function runReservationOpsScenario() {
+  const parent = buildStableReservationParent("W5N5", 1000);
+  buildNeutralReserveRoom("W5N6");
+
+  ops.registerGlobals();
+  const missingParent = global.ops.reserve("W5N6");
+  assert(missingParent && missingParent.ok === false, "reserve without current room should error when parent omitted");
+
+  global.ops.room(parent.name, "overview");
+  const result = global.ops.reserve("W5N6");
+  assert(result.ok, `expected reserve plan through current room, got ${result.message}`);
+
+  const lines = global.ops.reserved(parent.name);
+  assert(
+    lines.some(function (line) { return line.indexOf("W5N6") !== -1; }),
+    `expected reserved report to list W5N6, got ${lines.join(" / ")}`,
+  );
+
+  const empireReport = global.ops.empire();
+  assert(
+    empireReport.lines.some(function (line) { return line.indexOf("Reserved active 1") !== -1; }),
+    `expected empire report reserved summary, got ${empireReport.lines.join(" / ")}`,
+  );
+  assert(
+    empireReport.lines.some(function (line) { return line === "[OPS][EMPIRE][RESERVED]"; }) &&
+      empireReport.lines.some(function (line) { return line.indexOf("- W5N6 |") !== -1; }),
+    `expected empire report reserved detail block, got ${empireReport.lines.join(" / ")}`,
+  );
+}
+
+function runReservationStableGateScenario() {
+  const parent = buildRoomScenario("W6N5", {
+    tick: 1025,
+    controllerLevel: 4,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [{ name: "unstableWorker", role: "worker", x: 24, y: 25 }],
+  });
+  parent.controller.my = true;
+  buildNeutralReserveRoom("W6N6");
+
+  let result = reservationManager.createReservation("W6N6", parent.name);
+  assert(result.ok, `expected reservation plan creation, got ${result.message}`);
+
+  let state = roomState.collect(parent);
+  let requests = spawnManager.getSpawnRequests(parent, state);
+  assert(
+    !requests.some(function (request) { return request.role === "reserver"; }),
+    "unstable RCL4 parent should not spawn reservation creeps",
+  );
+
+  addRcl4StableStructures(parent);
+  state = roomState.collect(parent);
+  requests = spawnManager.getSpawnRequests(parent, state);
+  assert(
+    requests.some(function (request) { return request.role === "reserver" && request.targetRoom === "W6N6"; }),
+    "stable RCL4 parent should request a reserver",
+  );
+}
+
+function runReservationEarlyPlanScenario() {
+  const parent = buildRoomScenario("W6N3", {
+    tick: 1030,
+    controllerLevel: 2,
+    spawnEnergy: 300,
+    energyAvailable: 550,
+    energyCapacityAvailable: 550,
+    sourceContainers: true,
+    supportContainers: true,
+    creeps: [{ name: "earlyReserveWorker", role: "worker", x: 24, y: 25 }],
+  });
+  parent.controller.my = true;
+  buildNeutralReserveRoom("W6N4");
+
+  const result = reservationManager.createReservation("W6N4", parent.name);
+  assert(result.ok, `expected early reservation plan creation, got ${result.message}`);
+
+  let state = roomState.collect(parent);
+  let requests = spawnManager.getSpawnRequests(parent, state);
+  assert(
+    !requests.some(function (request) { return request.targetRoom === "W6N4"; }),
+    `expected pre-stable RCL2 reservation to hold off on energy use, got ${JSON.stringify(requests)}`,
+  );
+
+  reservationManager.run([parent], { W6N3: state });
+  const target = Game.rooms.W6N4;
+  assert(
+    target.find(FIND_CONSTRUCTION_SITES).length === 0,
+    "pre-stable RCL2 reservation should not place remote construction sites",
+  );
+}
+
+function runReservationReserverRoleScenario() {
+  const room = buildNeutralReserveRoom("W7N6", { sourceCount: 1 });
+  const reserver = createCreep("reserver1", "reserver", room.controller.pos.x + 1, room.controller.pos.y, {
+    roomName: room.name,
+    body: [{ type: CLAIM }, { type: MOVE }],
+    memory: {
+      role: "reserver",
+      room: "W7N5",
+      homeRoom: "W7N5",
+      targetRoom: room.name,
+      operation: "reservation",
+    },
+  });
+
+  roleReserver.run(reserver);
+
+  assert(room.controller.reservation, "reserver should reserve the target controller when adjacent");
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === "reserver1" && action.action === "reserveController";
+    }),
+    "expected reserveController action to be recorded",
+  );
+}
+
+function runReservationRemoteConstructionScenario() {
+  const parent = buildStableReservationParent("W8N5", 1075);
+  const target = buildNeutralReserveRoom("W8N6");
+  const result = reservationManager.createReservation(target.name, parent.name);
+  assert(result.ok, `expected reservation plan, got ${result.message}`);
+
+  const state = roomState.collect(parent);
+  reservationManager.run([parent], { W8N5: state });
+
+  const containerSites = target.find(FIND_CONSTRUCTION_SITES, {
+    filter: function (site) { return site.structureType === STRUCTURE_CONTAINER; },
+  });
+  assert(containerSites.length > 0, "remote planner should create source container sites");
+
+  addContainersForSources(target, target.find(FIND_SOURCES));
+  const roadPlaced = reservationManager.placeRemoteRoads(target, target, 5);
+  assert(roadPlaced > 0, "remote road planner should create minimal de-duplicated road sites when route is visible");
+}
+
+function runReservationRemoteRequestsScenario() {
+  const parent = buildStableReservationParent("W9N5", 1100);
+  buildNeutralReserveRoom("W9N6", { sourceContainers: true });
+  const result = reservationManager.createReservation("W9N6", parent.name);
+  assert(result.ok, `expected reservation plan, got ${result.message}`);
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  const roles = requests.map(function (request) { return request.role; });
+
+  assert(roles.indexOf("reserver") !== -1, `expected reserver request, got ${roles.join(",")}`);
+  assert(roles.indexOf("remoteminer") !== -1, `expected remoteminer request, got ${roles.join(",")}`);
+  assert(roles.indexOf("remotehauler") !== -1, `expected remotehauler request, got ${roles.join(",")}`);
+}
+
+function runReservationRemoteRolesScenario() {
+  const room = buildNeutralReserveRoom("W10N6", { sourceContainers: true });
+  const source = room.find(FIND_SOURCES)[0];
+  const container = room.find(FIND_STRUCTURES, {
+    filter: function (structure) {
+      return structure.structureType === STRUCTURE_CONTAINER && structure.pos.getRangeTo(source) <= 1;
+    },
+  })[0];
+  container.store.energy = 0;
+
+  const miner = createCreep("remoteMiner1", "remoteminer", container.pos.x, container.pos.y, {
+    roomName: room.name,
+    store: { energy: 0 },
+    storeCapacity: 50,
+    body: [{ type: WORK }, { type: WORK }, { type: CARRY }, { type: MOVE }],
+    memory: {
+      role: "remoteminer",
+      room: "W10N5",
+      homeRoom: "W10N5",
+      targetRoom: room.name,
+      sourceId: source.id,
+      targetId: container.id,
+      operation: "reservation",
+    },
+  });
+  roleRemoteMiner.run(miner);
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === "remoteMiner1" && action.action === "harvest";
+    }),
+    "remote miner should harvest its assigned source",
+  );
+
+  container.store.energy = 500;
+  const hauler = createCreep("remoteHauler1", "remotehauler", container.pos.x, container.pos.y, {
+    roomName: room.name,
+    store: { energy: 0 },
+    storeCapacity: 100,
+    body: [{ type: CARRY }, { type: CARRY }, { type: MOVE }],
+    memory: {
+      role: "remotehauler",
+      room: "W10N5",
+      homeRoom: "W10N5",
+      targetRoom: room.name,
+      sourceId: source.id,
+      targetId: container.id,
+      operation: "reservation",
+    },
+  });
+  roleRemoteHauler.run(hauler);
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === "remoteHauler1" && action.action === "withdraw";
+    }),
+    "remote hauler should withdraw from its source container",
+  );
+
+  room.createConstructionSite(source.pos.x + 1, source.pos.y + 1, STRUCTURE_ROAD);
+  const worker = createCreep("remoteWorker1", "remoteworker", source.pos.x, source.pos.y + 1, {
+    roomName: room.name,
+    store: { energy: 50 },
+    storeCapacity: 50,
+    body: [{ type: WORK }, { type: CARRY }, { type: MOVE }],
+    memory: {
+      role: "remoteworker",
+      room: "W10N5",
+      homeRoom: "W10N5",
+      targetRoom: room.name,
+      working: true,
+      operation: "reservation",
+    },
+  });
+  roleRemoteWorker.run(worker);
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === "remoteWorker1" && action.action === "build";
+    }),
+    "remote worker should build visible remote construction sites",
+  );
+}
+
+function runReservationDefenseScenario() {
+  const parent = buildStableReservationParent("W11N5", 1150);
+  buildNeutralReserveRoom("W11N6", {
+    sourceContainers: true,
+    hostiles: [{ name: "reserveInvader", x: 23, y: 23, body: [{ type: ATTACK }, { type: MOVE }] }],
+  });
+  const result = reservationManager.createReservation("W11N6", parent.name);
+  assert(result.ok, `expected reservation plan, got ${result.message}`);
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  const defense = requests.find(function (request) {
+    return request.role === "defender" && request.targetRoom === "W11N6";
+  });
+
+  assert(defense, "reserved-room threat should request a parent defender");
+  assert(defense.operation === "reservation_defense", `expected reservation_defense, got ${defense.operation}`);
+}
+
+function runReservationStaleThreatDefenseScenario() {
+  const parent = buildRoomScenario("W11N7", {
+    tick: 1160,
+    controllerLevel: 4,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "reserveThreatWorker", role: "worker", x: 24, y: 25 },
+      { name: "reserveThreatMiner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "reserveThreatMiner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "reserveThreatHauler", role: "hauler", x: 26, y: 25 },
+      { name: "reserveThreatUpgrader", role: "upgrader", x: 25, y: 24 },
+    ],
+  });
+  parent.controller.my = true;
+  parent.controller.owner = { username: "tester" };
+
+  const target = buildNeutralReserveRoom("W11N8", {
+    sourceContainers: true,
+    hostiles: [{ name: "staleReserveInvader", x: 24, y: 24, body: [{ type: ATTACK }, { type: MOVE }] }],
+  });
+
+  const result = reservationManager.createReservation(target.name, parent.name);
+  assert(result.ok, `expected reservation plan, got ${result.message}`);
+
+  const plan = reservationManager.getActiveReservation(target.name);
+  plan.startedAt = Game.time - 25;
+
+  delete Game.rooms[target.name];
+  delete currentRuntime.rooms[target.name];
+  Game.time += 25;
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  const defender = requests.find(function (request) {
+    return request.role === "defender" && request.targetRoom === target.name;
+  });
+  const reserver = requests.find(function (request) {
+    return request.role === "reserver" && request.targetRoom === target.name;
+  });
+
+  assert(defender, `expected stale reservation threat to keep a defender queued, got ${JSON.stringify(requests)}`);
+  assert(defender.operation === "reservation_defense", `expected reservation_defense, got ${defender.operation}`);
+  assert(reserver, `expected active reservation to refresh visibility with a reserver, got ${JSON.stringify(requests)}`);
+}
+
+function runReservationExpansionTakeoverScenario() {
+  const parent = buildStableReservationParent("W12N5", 1175);
+  buildNeutralReserveRoom("W12N6", {
+    sourceContainers: true,
+    reservation: { username: "tester", ticksToEnd: 4000 },
+  });
+  const reserveResult = reservationManager.createReservation("W12N6", parent.name);
+  assert(reserveResult.ok, `expected reservation plan, got ${reserveResult.message}`);
+
+  const expandResult = empireManager.createExpansion("W12N6");
+  assert(expandResult.ok, `expected expansion takeover, got ${expandResult.message}`);
+  assert(expandResult.plan.parentRoom === parent.name, "expansion should inherit reservation parent when parent omitted");
+  assert(
+    !reservationManager.getActiveReservation("W12N6"),
+    "reservation should be converted after expansion takeover",
+  );
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  assert(
+    requests.some(function (request) {
+      return request.role === "claimer" && request.targetRoom === "W12N6";
+    }),
+    "takeover should request a claimer",
+  );
+  assert(
+    !requests.some(function (request) {
+      return request.role === "pioneer" && request.targetRoom === "W12N6";
+    }),
+    "takeover should not request pioneers before the room is claimed",
+  );
+}
+
+function runExpansionCancellationScenario() {
+  const parent = buildStableReservationParent("W13N5", 1190);
+  const target = buildNeutralReserveRoom("W13N6", { sourceCount: 1 });
+
+  const result = empireManager.createExpansion(target.name, parent.name);
+  assert(result.ok, `expected expansion plan, got ${result.message}`);
+
+  let state = roomState.collect(parent);
+  spawnManager.run(parent, state);
+  let queue = Memory.rooms[parent.name] && Memory.rooms[parent.name].spawnQueue
+    ? Memory.rooms[parent.name].spawnQueue
+    : [];
+  assert(
+    queue.some(function (item) { return item.operation === "expansion" && item.targetRoom === target.name; }),
+    "expected queued expansion spawn requests before cancellation",
+  );
+
+  const cancelResult = empireManager.cancelExpansion(target.name);
+  assert(cancelResult.ok, `expected expansion cancellation, got ${cancelResult.message}`);
+  assert(!empireManager.getActiveExpansion(target.name), "cancelled expansion should no longer be active");
+
+  queue = Memory.rooms[parent.name] && Memory.rooms[parent.name].spawnQueue
+    ? Memory.rooms[parent.name].spawnQueue
+    : [];
+  assert(
+    !queue.some(function (item) { return item.targetRoom === target.name && item.operation === "expansion"; }),
+    `expected expansion queue entries to be pruned, got ${JSON.stringify(queue)}`,
+  );
+
+  state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  assert(
+    !requests.some(function (request) { return request.targetRoom === target.name && request.operation === "expansion"; }),
+    "cancelled expansion should stop requesting claimer or pioneer spawns",
+  );
+
+  const claimer = createCreep("cancelledClaimer", "claimer", target.controller.pos.x + 1, target.controller.pos.y, {
+    roomName: target.name,
+    body: [{ type: CLAIM }, { type: MOVE }],
+    memory: {
+      role: "claimer",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: target.name,
+      operation: "expansion",
+    },
+  });
+  currentRuntime.creepActions = [];
+  creepManager.run(
+    target,
+    roomState.collect(target),
+    null,
+    null,
+    { pressure: "normal", thinkIntervalMultiplier: 1 },
+  );
+  assert(
+    !currentRuntime.creepActions.some(function (action) { return action.creep === claimer.name; }),
+    "cancelled expansion should stop active claimer control",
+  );
+}
+
+function runReservationCancellationScenario() {
+  const parent = buildStableReservationParent("W14N5", 1210);
+  const target = buildNeutralReserveRoom("W14N6", { sourceContainers: true, sourceCount: 1 });
+
+  const result = reservationManager.createReservation(target.name, parent.name);
+  assert(result.ok, `expected reservation plan, got ${result.message}`);
+
+  let state = roomState.collect(parent);
+  spawnManager.run(parent, state);
+  let queue = Memory.rooms[parent.name] && Memory.rooms[parent.name].spawnQueue
+    ? Memory.rooms[parent.name].spawnQueue
+    : [];
+  assert(
+    queue.some(function (item) { return item.targetRoom === target.name && item.operation === "reservation"; }),
+    "expected queued reservation spawn requests before cancellation",
+  );
+
+  ops.registerGlobals();
+  const cancelResult = global.ops.cancelReserve(target.name);
+  assert(cancelResult.ok, `expected reservation cancellation, got ${cancelResult.message}`);
+  assert(!reservationManager.getActiveReservation(target.name), "cancelled reservation should no longer be active");
+
+  queue = Memory.rooms[parent.name] && Memory.rooms[parent.name].spawnQueue
+    ? Memory.rooms[parent.name].spawnQueue
+    : [];
+  assert(
+    !queue.some(function (item) { return item.targetRoom === target.name; }),
+    `expected reservation queue entries to be pruned, got ${JSON.stringify(queue)}`,
+  );
+
+  state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  assert(
+    !requests.some(function (request) { return request.targetRoom === target.name; }),
+    "cancelled reservation should stop requesting remote creeps",
+  );
+
+  const reserver = createCreep("cancelledReserver", "reserver", target.controller.pos.x + 1, target.controller.pos.y, {
+    roomName: target.name,
+    body: [{ type: CLAIM }, { type: MOVE }],
+    memory: {
+      role: "reserver",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: target.name,
+      operation: "reservation",
+    },
+  });
+  currentRuntime.creepActions = [];
+  creepManager.run(
+    target,
+    roomState.collect(target),
+    null,
+    null,
+    { pressure: "normal", thinkIntervalMultiplier: 1 },
+  );
+  assert(
+    !currentRuntime.creepActions.some(function (action) { return action.creep === reserver.name; }),
+    "cancelled reservation should stop active reserver control",
+  );
+}
+
+function runExpansionStaleThreatDefenseScenario() {
+  const parent = buildRoomScenario("W15N5", {
+    tick: 1220,
+    controllerLevel: 4,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "expandThreatWorker", role: "worker", x: 24, y: 25 },
+      { name: "expandThreatMiner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "expandThreatMiner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "expandThreatHauler", role: "hauler", x: 26, y: 25 },
+      { name: "expandThreatUpgrader", role: "upgrader", x: 25, y: 24 },
+    ],
+  });
+  parent.controller.my = true;
+  parent.controller.owner = { username: "tester" };
+
+  const target = buildNeutralReserveRoom("W15N6", {
+    sourceContainers: true,
+    hostiles: [{ name: "staleExpandInvader", x: 24, y: 24, body: [{ type: ATTACK }, { type: MOVE }] }],
+  });
+
+  const result = empireManager.createExpansion(target.name, parent.name);
+  assert(result.ok, `expected expansion plan, got ${result.message}`);
+
+  const plan = empireManager.getActiveExpansion(target.name);
+  plan.startedAt = Game.time - 25;
+
+  delete Game.rooms[target.name];
+  delete currentRuntime.rooms[target.name];
+  Game.time += 25;
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  const defender = requests.find(function (request) {
+    return request.role === "defender" && request.targetRoom === target.name;
+  });
+
+  assert(defender, `expected stale expansion threat to keep a defender queued, got ${JSON.stringify(requests)}`);
+  assert(defender.operation === "expansion_defense", `expected expansion_defense, got ${defender.operation}`);
+}
+
+function runExpansionThreatRetreatScenario() {
+  const parent = buildStableReservationParent("W16N5", 1235);
+  const target = buildNeutralReserveRoom("W16N6", {
+    sourceContainers: true,
+    hostiles: [{ name: "expandInvader", x: 23, y: 23, body: [{ type: ATTACK }, { type: MOVE }] }],
+  });
+
+  const result = empireManager.createExpansion(target.name, parent.name);
+  assert(result.ok, `expected expansion plan, got ${result.message}`);
+
+  const plan = empireManager.getActiveExpansion(target.name);
+  plan.startedAt = Game.time - 25;
+
+  const claimer = createCreep("threatenedClaimer", "claimer", 24, 24, {
+    roomName: target.name,
+    body: [{ type: CLAIM }, { type: MOVE }],
+    memory: {
+      role: "claimer",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: target.name,
+      operation: "expansion",
+    },
+  });
+
+  currentRuntime.creepActions = [];
+  creepManager.run(
+    parent,
+    roomState.collect(parent),
+    null,
+    null,
+    { pressure: "normal", thinkIntervalMultiplier: 1 },
+  );
+
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === claimer.name && action.action === "moveTo";
+    }),
+    "threatened expansion creeps should retreat toward home instead of continuing expansion control",
+  );
+}
+
 function runHudConfigControlsScenario() {
   const originalHud = Object.assign({}, config.HUD);
   const room = buildRoomScenario("VAL_HUD_CONFIG", {
@@ -4857,6 +5504,87 @@ function runCpuRoomScaleScenario() {
   );
 }
 
+function runSpawnBodyValidationScenario() {
+  const validBody = bodies.validateBody([WORK, CARRY, MOVE]);
+  assert(validBody.valid, `expected [WORK,CARRY,MOVE] to validate, got ${JSON.stringify(validBody)}`);
+
+  const invalidBody = bodies.validateBody([WORK, undefined, MOVE]);
+  assert(
+    !invalidBody.valid && invalidBody.reason === "invalid_part",
+    `expected invalid part validation, got ${JSON.stringify(invalidBody)}`,
+  );
+
+  const room = buildRoomScenario("VAL_SPAWN_BODY_VALIDATION", {
+    tick: 900,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+    roads: true,
+    constructionSites: [],
+    creeps: [],
+  });
+
+  const originalPlan = bodies.plan;
+
+  try {
+    bodies.plan = function () {
+      return {
+        role: "upgrader",
+        profile: "broken_test_plan",
+        body: [WORK, undefined, MOVE],
+        cost: 150,
+      };
+    };
+
+    const repairedPlan = spawnManager.getValidatedBodyPlan(
+      room,
+      roomState.collect(room),
+      { role: "upgrader" },
+    );
+    const repairedValidation = bodies.validateBody(repairedPlan.body);
+
+    assert(
+      repairedPlan.emergencyFallback === true,
+      `expected invalid upgrader plan to fall back, got ${JSON.stringify(repairedPlan)}`,
+    );
+    assert(
+      repairedValidation.valid,
+      `expected fallback plan body to validate, got ${JSON.stringify(repairedValidation)}`,
+    );
+  } finally {
+    bodies.plan = originalPlan;
+  }
+}
+
+function runSpawnBodyMissingEnergyCapacityScenario() {
+  const room = buildRoomScenario("VAL_SPAWN_BODY_MISSING_CAPACITY", {
+    tick: 905,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+    roads: true,
+    creeps: [],
+  });
+
+  room.energyCapacityAvailable = undefined;
+
+  const workerPlan = bodies.plan("worker", room, { role: "worker" }, roomState.collect(room));
+  const upgraderPlan = bodies.plan("upgrader", room, { role: "upgrader" }, roomState.collect(room));
+
+  assert(
+    bodies.validateBody(workerPlan.body).valid,
+    `expected worker plan to stay valid when energy capacity is missing, got ${JSON.stringify(workerPlan)}`,
+  );
+  assert(
+    bodies.validateBody(upgraderPlan.body).valid,
+    `expected upgrader plan to stay valid when energy capacity is missing, got ${JSON.stringify(upgraderPlan)}`,
+  );
+}
+
 function main() {
   const scenarios = [
     ["bootstrap", runBootstrapScenario],
@@ -4915,8 +5643,24 @@ function main() {
     ["expansion_claimer_role", runExpansionClaimerRoleScenario],
     ["expansion_pioneer_spawn_site", runExpansionPioneerSpawnSiteScenario],
     ["expansion_hud_labels", runExpansionHudLabelsScenario],
+    ["reservation_ops", runReservationOpsScenario],
+    ["reservation_stable_gate", runReservationStableGateScenario],
+    ["reservation_early_plan", runReservationEarlyPlanScenario],
+    ["reservation_reserver_role", runReservationReserverRoleScenario],
+    ["reservation_remote_construction", runReservationRemoteConstructionScenario],
+    ["reservation_remote_requests", runReservationRemoteRequestsScenario],
+    ["reservation_remote_roles", runReservationRemoteRolesScenario],
+    ["reservation_defense", runReservationDefenseScenario],
+    ["reservation_stale_threat_defense", runReservationStaleThreatDefenseScenario],
+    ["reservation_expansion_takeover", runReservationExpansionTakeoverScenario],
+    ["expansion_cancel", runExpansionCancellationScenario],
+    ["reservation_cancel", runReservationCancellationScenario],
+    ["expansion_stale_threat_defense", runExpansionStaleThreatDefenseScenario],
+    ["expansion_threat_retreat", runExpansionThreatRetreatScenario],
     ["hud_config_controls", runHudConfigControlsScenario],
     ["cpu_room_scale", runCpuRoomScaleScenario],
+    ["spawn_body_validation", runSpawnBodyValidationScenario],
+    ["spawn_body_missing_energy_capacity", runSpawnBodyMissingEnergyCapacityScenario],
   ];
 
   const results = [];

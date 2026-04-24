@@ -29,7 +29,7 @@ module.exports = {
     ENABLED: true,
     ROOM_SUMMARY: true,
     ROOM_SUMMARY_INTERVAL: 1,
-    CREEP_LABELS: false,
+    CREEP_LABELS: true,
     LABEL_INTERVAL: 1,
   },
 
@@ -84,6 +84,37 @@ module.exports = {
     PIONEER_PRIORITY: 75,
     CLAIMER_REPLACE_TTL: 200,
     PIONEER_REPLACE_TTL: 200,
+  },
+
+  /*
+  Developer Notes:
+  Reserved Room Operations
+
+  Reserved rooms are manually registered with ops.reserve(). They stay attached
+  to a stable parent room and return remote source energy home. Keep planning
+  throttled so extra rooms do not add owned-room-level CPU every tick.
+  */
+  RESERVATION: {
+    ENABLED: true,
+    MIN_PARENT_RCL: 4,
+    REQUIRE_STABLE_PARENT: true,
+    MAX_DISTANCE: 3,
+    REMOTE_PLAN_INTERVAL: 100,
+    MAX_REMOTE_SITES_PER_ROOM: 5,
+    RESERVATION_REFRESH_TICKS: 2500,
+    RESERVER_PRIORITY: 96,
+    REMOTE_WORKER_PRIORITY: 74,
+    REMOTE_MINER_PRIORITY: 73,
+    REMOTE_HAULER_PRIORITY: 72,
+    DEFENSE_PRIORITY: 1050,
+    DEFENSE_SPAWN_COOLDOWN: 25,
+    DEFENSE_SUPPORT_ENABLED: true,
+    DEFENSE_SUPPORT_DISTANCE: 2,
+    MAX_REMOTE_DEFENDERS: 1,
+    RESERVER_REPLACE_TTL: 200,
+    REMOTE_CREEP_REPLACE_TTL: 100,
+    SOURCE_INCOME_PER_TICK: 10,
+    REMOTE_HAULER_CARRY_PARTS: 8,
   },
 
   /*
@@ -346,7 +377,10 @@ module.exports = {
     workerMaxWork: 8,
     minerMaxWork: 5,
     mineralMinerMaxWork: 5,
+    remoteMinerMaxWork: 5,
+    remoteWorkerMaxWork: 6,
     haulerMaxCarry: 16,
+    remoteHaulerMaxCarry: 16,
     upgraderMaxWork: 8,
     repairMaxWork: 6,
     haulerRoundTripBuffer: 4,
