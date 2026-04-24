@@ -4442,6 +4442,26 @@ function runCommandScenario() {
       siteTypes.includes(STRUCTURE_NUKER),
     `command should place late-game command structure sites, got sites: ${siteTypes.join(",") || "none"}`,
   );
+
+  ops.registerGlobals();
+  const originalLog = console.log;
+  const helpLines = [];
+  console.log = function (line) {
+    helpLines.push(String(line));
+  };
+  try {
+    global.ops.help();
+  } finally {
+    console.log = originalLog;
+  }
+  assert(
+    helpLines.some(function (line) { return line === "ops.roomRole([roomName], [role])"; }),
+    `expected help to include roomRole command, got ${helpLines.join(" / ")}`,
+  );
+  assert(
+    helpLines.every(function (line) { return line.length <= 80; }),
+    `expected help output lines to stay within 80 chars, got ${helpLines.filter(function (line) { return line.length > 80; }).join(" / ")}`,
+  );
 }
 
 function runCommandUtilityLinksScenario() {
@@ -4908,6 +4928,128 @@ function runExpansionFocusConstructionScenario() {
   );
 }
 
+function runRoomRoleOpsScenario() {
+  const room = buildRoomScenario("W4N4", {
+    tick: 982,
+    controllerLevel: 4,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "roleWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  addRcl4StableStructures(room);
+  if (!Memory.rooms) Memory.rooms = {};
+  if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+  Memory.rooms[room.name].roomFocus = "legacy";
+
+  ops.registerGlobals();
+  global.ops.room(room.name, "overview");
+  let result = global.ops.roomRole();
+  assert(result.ok && result.role === "full", `expected legacy owned room focus to migrate to full, got ${JSON.stringify(result)}`);
+  assert(Memory.rooms[room.name].roomFocus === "full", "owned room focus migration should write full to room memory");
+
+  result = global.ops.roomRole("energy");
+  assert(result.ok && result.role === "energy", `expected current room energy focus, got ${JSON.stringify(result)}`);
+  assert(Memory.rooms[room.name].roomFocus === "energy", "roomRole should update owned room focus memory");
+
+  const parent = buildStableReservationParent("W4N5", 983);
+  const remote = buildNeutralReserveRoom("W4N6");
+  const reserve = reservationManager.createReservation(remote.name, parent.name);
+  assert(reserve.ok, `expected reservation setup, got ${reserve.message}`);
+  result = global.ops.roomRole(remote.name, "energy");
+  assert(!result.ok && result.message.indexOf("reserved rooms use") !== -1, `expected energy focus rejection for reservation, got ${JSON.stringify(result)}`);
+  result = global.ops.roomRole(remote.name, "hold");
+  assert(result.ok && reservationManager.getActiveReservation(remote.name).focus === "hold", `expected reservation hold focus, got ${JSON.stringify(result)}`);
+
+  const target = new FakeRoom("W4N7", new FakeTerrain());
+  target.setController(
+    createController(20, 20, {
+      roomName: target.name,
+      level: 1,
+      my: true,
+      owner: { username: "tester" },
+    }),
+  );
+  target.addSource(createSource(15, 25, { roomName: target.name }));
+  target.addMineral(createMineral(35, 20, { roomName: target.name }));
+  const expansion = empireManager.createExpansion(target.name, parent.name, "full");
+  assert(expansion.ok, `expected expansion setup, got ${expansion.message}`);
+  result = global.ops.roomRole(target.name, "mineral");
+  assert(result.ok && empireManager.getActiveExpansion(target.name).focus === "mineral", `expected expansion mineral focus, got ${JSON.stringify(result)}`);
+}
+
+function runExpansionIndependenceScenario() {
+  const target = buildRoomScenario("W3N4", {
+    tick: 984,
+    controllerLevel: 3,
+    spawnEnergy: 800,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "independentWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  target.controller.my = true;
+  target.controller.owner = { username: "tester" };
+  const parent = new FakeRoom("W3N3", new FakeTerrain());
+  parent.setController(
+    createController(20, 20, {
+      roomName: parent.name,
+      level: 4,
+    }),
+  );
+  parent.controller.my = true;
+  parent.controller.owner = { username: "tester" };
+  parent.addStructure(
+    createStructure(STRUCTURE_SPAWN, 25, 25, {
+      roomName: parent.name,
+      name: "ParentSpawn",
+      store: { energy: 300 },
+      storeCapacityResource: { energy: 300 },
+      hits: 5000,
+      hitsMax: 5000,
+    }),
+  );
+  parent.addSource(createSource(15, 25, { roomName: parent.name }));
+  parent.addMineral(createMineral(35, 20, { roomName: parent.name }));
+  parent.energyAvailable = 300;
+  parent.energyCapacityAvailable = 1300;
+  if (!Memory.rooms[parent.name]) Memory.rooms[parent.name] = {};
+  const expansion = empireManager.createExpansion(target.name, parent.name, "energy");
+  assert(expansion.ok, `expected expansion setup, got ${expansion.message}`);
+  assert(empireManager.getActiveExpansion(target.name).parentRoom === parent.name, "RCL3 expansion should keep parent");
+
+  target.controller.level = 4;
+  addRcl4StableStructures(target);
+  Memory.rooms[parent.name].spawnQueue = [
+    { role: "pioneer", targetRoom: target.name, operation: "expansion" },
+    { role: "defender", targetRoom: target.name, operation: "expansion_defense" },
+  ];
+  const plan = empireManager.getActiveExpansion(target.name);
+  assert(plan && plan.parentRoom === null, `RCL4 expansion should clear parent, got ${JSON.stringify(plan)}`);
+  assert(plan.independentAt === Game.time, "RCL4 expansion should record independentAt");
+  assert(plan.focus === "energy", "RCL4 expansion should preserve focus");
+  assert(Memory.rooms[parent.name].spawnQueue.length === 0, "RCL4 independence should prune parent expansion queue");
+
+  const report = empireManager.buildReport();
+  assert(
+    !report.lines.some(function (line) { return line.indexOf(`expansion ${target.name}`) !== -1; }),
+    `independent expansion should not render as child row, got ${report.lines.join(" / ")}`,
+  );
+}
+
 function runExpansionPioneerRequestScenario() {
   const parent = buildRoomScenario("VAL_BOOT_PARENT", {
     tick: 900,
@@ -5302,6 +5444,86 @@ function runReservationOpsScenario() {
     Memory.empire.reservation.plans.W9N6.cancelReason === "no_parent_in_range",
     `expected no_parent_in_range cancel reason, got ${Memory.empire.reservation.plans.W9N6.cancelReason}`,
   );
+}
+
+function runReservedRoomHudScenario() {
+  const parent = buildStableReservationParent("W5N5", 1010);
+  const remote = buildNeutralReserveRoom("W5N6", {
+    reservation: { username: "tester", ticksToEnd: 3200 },
+    sourceContainers: true,
+  });
+  const sources = remote.find(FIND_SOURCES);
+  if (sources.length > 1) {
+    const containers = remote.find(FIND_STRUCTURES, {
+      filter: function (structure) {
+        return structure.structureType === STRUCTURE_CONTAINER &&
+          structure.pos.getRangeTo(sources[1]) <= 1;
+      },
+    });
+    for (let i = 0; i < containers.length; i++) {
+      containers[i].destroy();
+    }
+  }
+  createCreep("hudRemoteMiner", "remoteminer", 15, 24, {
+    roomName: remote.name,
+    memory: {
+      role: "remoteminer",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: remote.name,
+      sourceId: sources[0].id,
+    },
+  });
+  createCreep("hudRemoteHauler", "remotehauler", 16, 24, {
+    roomName: remote.name,
+    memory: {
+      role: "remotehauler",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: remote.name,
+      sourceId: sources[0].id,
+    },
+  });
+  createCreep("hudRemoteWorker", "remoteworker", 17, 24, {
+    roomName: remote.name,
+    memory: {
+      role: "remoteworker",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: remote.name,
+    },
+  });
+  createCreep("hudReserver", "reserver", remote.controller.pos.x + 1, remote.controller.pos.y, {
+    roomName: remote.name,
+    memory: {
+      role: "reserver",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: remote.name,
+    },
+  });
+
+  const result = reservationManager.createReservation(remote.name, parent.name);
+  assert(result.ok, `expected reservation plan, got ${result.message}`);
+  const report = reservationManager.getReservedRoomHudReport(remote);
+  assert(report && report.hudLines[0].indexOf("Reserved W5N6") === 0, `expected reserved HUD report, got ${JSON.stringify(report)}`);
+  assert(
+    report.hudLines.some(function (line) { return line.indexOf("Parent W5N5") !== -1 && line.indexOf("Reserve 3200") !== -1; }),
+    `expected parent and reserve ticks in reserved HUD, got ${JSON.stringify(report.hudLines)}`,
+  );
+  assert(
+    report.hudLines.some(function (line) { return line.indexOf("Sources 1/2 ctr") !== -1 && line.indexOf("M 1 H 1 W 1") !== -1; }),
+    `expected source and remote creep counts in reserved HUD, got ${JSON.stringify(report.hudLines)}`,
+  );
+  currentRuntime.visuals = [];
+  hud.runReservedRooms();
+  const labels = currentRuntime.visuals
+    .filter(function (item) { return item.type === "text"; })
+    .map(function (item) { return item.text; });
+  assert(labels.indexOf("RM") !== -1, `expected remoteminer label, got ${labels.join(",")}`);
+  assert(labels.indexOf("RH") !== -1, `expected remotehauler label, got ${labels.join(",")}`);
+  assert(labels.indexOf("RW") !== -1, `expected remoteworker label, got ${labels.join(",")}`);
+  assert(labels.indexOf("Rs") !== -1, `expected reserver label, got ${labels.join(",")}`);
 }
 
 function runReservationStableGateScenario() {
@@ -6146,11 +6368,14 @@ function main() {
     ["empire_awareness", runEmpireAwarenessScenario],
     ["expansion_claim_request", runExpansionClaimRequestScenario],
     ["expansion_focus_construction", runExpansionFocusConstructionScenario],
+    ["room_role_ops", runRoomRoleOpsScenario],
+    ["expansion_independence", runExpansionIndependenceScenario],
     ["expansion_pioneer_request", runExpansionPioneerRequestScenario],
     ["expansion_claimer_role", runExpansionClaimerRoleScenario],
     ["expansion_pioneer_spawn_site", runExpansionPioneerSpawnSiteScenario],
     ["expansion_hud_labels", runExpansionHudLabelsScenario],
     ["reservation_ops", runReservationOpsScenario],
+    ["reserved_room_hud", runReservedRoomHudScenario],
     ["reservation_stable_gate", runReservationStableGateScenario],
     ["reservation_early_plan", runReservationEarlyPlanScenario],
     ["reservation_reserver_role", runReservationReserverRoleScenario],

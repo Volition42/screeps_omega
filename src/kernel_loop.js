@@ -2,6 +2,7 @@ const memory = require("kernel_memory");
 const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
 const roomManager = require("room_manager");
+const hud = require("hud");
 const kernelProfiler = require("kernel_profiler");
 const statsManager = require("stats_manager");
 
@@ -57,6 +58,11 @@ module.exports = {
       ownedRooms,
       roomStates,
     );
+
+    const runtimeMode = statsManager.getRuntimeMode();
+    if (!runtimeMode.skipHud && !statsManager.isPastSoftCpuLimit(1)) {
+      profiler.wrap("reservation.hud", hud.runReservedRooms, hud);
+    }
 
     profiler.wrap(
       "empire.record",

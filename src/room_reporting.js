@@ -555,10 +555,12 @@ function formatHudFocusLine(room, plan) {
   const expansionPlan = getExpansionPlanForRoom(room.name);
   if (expansionPlan) {
     const focus = expansionFocus.normalize(expansionPlan.focus) || expansionFocus.DEFAULT;
-    return `Expansion ${focus} | Plan ${plan.focus}`;
+    return expansionPlan.parentRoom
+      ? `Expansion ${focus} | Parent ${expansionPlan.parentRoom}`
+      : `Focus ${focus} | Independent`;
   }
 
-  return `Focus ${plan.focus}`;
+  return `Focus ${expansionFocus.getEffectiveFocusForRoom(room.name)} | Plan ${plan.focus}`;
 }
 
 function getContainerEnergy(container) {

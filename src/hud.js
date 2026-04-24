@@ -10,6 +10,7 @@ Purpose:
 
 const config = require("config");
 const opsState = require("ops_state");
+const reservationManager = require("reservation_manager");
 const roomReporting = require("room_reporting");
 
 module.exports = {
@@ -22,6 +23,28 @@ module.exports = {
 
     if (this.isCreepLabelsEnabled() && this.shouldDrawCreepLabels()) {
       this.drawCreepLabels(room, state);
+    }
+  },
+
+  runReservedRooms() {
+    if (!opsState.getHudEnabled()) return;
+
+    const entries = reservationManager.getVisibleReservedRooms();
+    for (let i = 0; i < entries.length; i++) {
+      const room = entries[i].room;
+      const report = reservationManager.getReservedRoomHudReport(room);
+      if (!report) continue;
+
+      if (this.isRoomSummaryEnabled()) {
+        this.drawPanel(room, report.hudLines, report);
+      }
+
+      if (this.isCreepLabelsEnabled() && this.shouldDrawCreepLabels()) {
+        this.drawCreepLabels(room, {
+          creeps: room.find(FIND_MY_CREEPS),
+          homeCreeps: [],
+        });
+      }
     }
   },
 
@@ -221,7 +244,7 @@ module.exports = {
       case "claimer":
         return "Cl";
       case "reserver":
-        return "Rv";
+        return "Rs";
       case "pioneer":
         return "Pi";
       case "remoteworker":

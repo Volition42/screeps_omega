@@ -671,6 +671,13 @@ function getParentDeliveryTarget(parentRoom) {
   return parentRoom.storage || parentRoom.find(FIND_MY_SPAWNS)[0] || parentRoom.controller || null;
 }
 
+function getDeliveryTargetLabel(target) {
+  if (!target) return "none";
+  if (target.structureType) return target.structureType;
+  if (target.type === "controller") return "controller";
+  return "target";
+}
+
 function getRemoteContainersBySource(room) {
   const sources = room.find(FIND_SOURCES);
   const containers = room.find(FIND_STRUCTURES, {
@@ -963,6 +970,41 @@ module.exports = {
     if (!reconcileReservationParent(plan)) return null;
 
     return plan;
+  },
+
+  setReservationFocus(targetRoomName, focusName) {
+    const targetRoom = normalizeRoomName(targetRoomName);
+    const focus = reservationFocus.normalize(focusName);
+    if (!targetRoom || !focus) {
+      return {
+        ok: false,
+        message: `Reservation focus must be one of: ${reservationFocus.VALUES.join(", ")}.`,
+      };
+    }
+
+    const plan = this.getActiveReservation(targetRoom);
+    if (!plan) {
+      return {
+        ok: false,
+        message: `No active reserved-room plan for ${targetRoom}.`,
+      };
+    }
+
+    const previousFocus = getPlanFocus(plan);
+    plan.focus = focus;
+    plan.updatedAt = Game.time;
+    const removed = previousFocus !== reservationFocus.HOLD && focus === reservationFocus.HOLD
+      ? pruneReservationEconomyQueue(targetRoom)
+      : 0;
+
+    return {
+      ok: true,
+      plan: plan,
+      message:
+        removed > 0
+          ? `Reserved room ${targetRoom} focus set to ${focus}. Removed ${removed} queued remote economy requests.`
+          : `Reserved room ${targetRoom} focus set to ${focus}.`,
+    };
   },
 
   getReservationThreat(planOrTargetRoom) {
@@ -1535,5 +1577,65 @@ module.exports = {
     });
 
     return rows;
+  },
+
+  getVisibleReservedRooms() {
+    const plans = getActivePlanList();
+    const rooms = [];
+
+    for (let i = 0; i < plans.length; i++) {
+      const plan = plans[i];
+      const room = Game.rooms[plan.targetRoom] || null;
+      if (!room) continue;
+      if (room.controller && room.controller.my) continue;
+      rooms.push({
+        plan: plan,
+        room: room,
+      });
+    }
+
+    return rooms;
+  },
+
+  getReservedRoomHudReport(room) {
+    if (!room) return null;
+
+    const plan = this.getActiveReservation(room.name);
+    if (!plan) return null;
+    this.updatePlanIntel(plan);
+
+    const parent = getOwnedRoom(plan.parentRoom);
+    const reserveTicks = getReservationTicks(plan);
+    const sourceCount = getRemoteSourceCount(plan, room);
+    const builtSources = getBuiltRemoteSourceCount(plan, room);
+    const miners =
+      countCreeps("remoteminer", plan.targetRoom, plan.parentRoom) +
+      countQueued("remoteminer", plan.targetRoom, plan.parentRoom);
+    const haulers =
+      countCreeps("remotehauler", plan.targetRoom, plan.parentRoom) +
+      countQueued("remotehauler", plan.targetRoom, plan.parentRoom);
+    const workers =
+      countCreeps("remoteworker", plan.targetRoom, plan.parentRoom) +
+      countQueued("remoteworker", plan.targetRoom, plan.parentRoom);
+    const threat = this.getReservationThreat(plan);
+    const delivery = getParentDeliveryTarget(parent);
+    const focus = getPlanFocus(plan);
+
+    return {
+      alert: {
+        active: !!threat,
+        hostiles: threat ? threat.hostileCount || 0 : 0,
+      },
+      state: {
+        phase: "reserved",
+      },
+      hudLines: [
+        `Reserved ${room.name} | ${focus}`,
+        `Parent ${plan.parentRoom || "none"} | Reserve ${reserveTicks}`,
+        `Sources ${builtSources}/${sourceCount} ctr | M ${miners} H ${haulers} W ${workers}`,
+        `Hostiles ${threat ? threat.hostileCount || 0 : "clear"} | Drop ${getDeliveryTargetLabel(delivery)}`,
+        `Next ${getEmpireRowNextGoal(plan, room)}`,
+      ],
+    };
   },
 };

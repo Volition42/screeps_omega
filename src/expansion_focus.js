@@ -53,8 +53,26 @@ function getFocusForRoom(roomName) {
       : null;
   const plan = plans && roomName ? plans[roomName] : null;
 
-  if (!plan || plan.cancelled) return FULL;
+  if (!plan || plan.cancelled) return getStoredRoomFocus(roomName);
   return normalize(plan.focus) || FULL;
+}
+
+function getStoredRoomFocus(roomName) {
+  const roomMemory = ensureRoomFocus(roomName);
+  return roomMemory ? roomMemory.roomFocus : FULL;
+}
+
+function getEffectiveFocusForRoom(roomName) {
+  const plans =
+    Memory.empire &&
+    Memory.empire.expansion &&
+    Memory.empire.expansion.plans
+      ? Memory.empire.expansion.plans
+      : null;
+  const plan = plans && roomName ? plans[roomName] : null;
+
+  if (plan && !plan.cancelled) return normalize(plan.focus) || FULL;
+  return getStoredRoomFocus(roomName);
 }
 
 function applyToPlan(plan, focusName) {
@@ -103,6 +121,36 @@ function applyToPlan(plan, focusName) {
   return plan;
 }
 
+function ensureRoomFocus(roomName) {
+  if (!roomName) return null;
+  if (!Memory.rooms) Memory.rooms = {};
+  if (!Memory.rooms[roomName]) Memory.rooms[roomName] = {};
+
+  const roomMemory = Memory.rooms[roomName];
+  const focus = normalize(roomMemory.roomFocus);
+  if (!focus) {
+    roomMemory.roomFocus = FULL;
+    roomMemory.roomFocusMigratedAt = Game.time;
+  } else if (roomMemory.roomFocus !== focus) {
+    roomMemory.roomFocus = focus;
+    roomMemory.roomFocusMigratedAt = Game.time;
+  }
+
+  return roomMemory;
+}
+
+function setRoomFocus(roomName, focusName) {
+  const focus = normalize(focusName);
+  if (!roomName || !focus) return null;
+
+  const roomMemory = ensureRoomFocus(roomName);
+  if (!roomMemory) return null;
+  roomMemory.roomFocus = focus;
+  roomMemory.roomFocusUpdatedAt = Game.time;
+
+  return focus;
+}
+
 module.exports = {
   FULL,
   MINERAL,
@@ -111,6 +159,10 @@ module.exports = {
   VALUES,
   normalize,
   getFocusForRoom,
+  getStoredRoomFocus,
+  getEffectiveFocusForRoom,
+  ensureRoomFocus,
+  setRoomFocus,
   applyToPlan,
 
   isFocus(value) {

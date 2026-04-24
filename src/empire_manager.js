@@ -267,9 +267,12 @@ function getPlanStatus(plan, ownedRoomCount) {
     targetRoom &&
     targetRoom.find(FIND_MY_SPAWNS).length > 0
   );
+  const targetLevel =
+    targetRoom && targetRoom.controller ? targetRoom.controller.level || 0 : 0;
   const gcl = getGclSummary(ownedRoomCount);
 
-  if (targetOwned && hasSpawn) return "complete";
+  if (targetOwned && hasSpawn && targetLevel >= 4) return "complete";
+  if (targetOwned) return "bootstrapping";
   if (
     !targetOwned &&
     gcl.roomSlotsLimit !== null &&
@@ -286,7 +289,6 @@ function getPlanStatus(plan, ownedRoomCount) {
     return "blocked_owner";
   }
   if (module.exports.getExpansionThreat(plan)) return "threatened";
-  if (targetOwned) return "bootstrapping";
 
   return "claiming";
 }
@@ -617,6 +619,32 @@ function ensureExpansionPlanDefaults(plan, targetRoom) {
   return plan;
 }
 
+function reconcileExpansionIndependence(plan) {
+  if (!plan || plan.cancelled || !plan.parentRoom) return false;
+
+  const room = plan.targetRoom ? Game.rooms[plan.targetRoom] : null;
+  const hasIndependentSpawn = !!(
+    room &&
+    room.controller &&
+    room.controller.my &&
+    room.controller.level >= 4 &&
+    room.find(FIND_MY_SPAWNS).length > 0
+  );
+  if (!hasIndependentSpawn) return false;
+
+  if (!plan.previousParents) plan.previousParents = [];
+  plan.previousParents.push({
+    room: plan.parentRoom,
+    clearedAt: Game.time,
+  });
+  plan.parentRoom = null;
+  plan.independentAt = plan.independentAt || Game.time;
+  plan.updatedAt = Game.time;
+  pruneExpansionQueue(plan.targetRoom);
+
+  return true;
+}
+
 function getActivePlanList() {
   const plans = getExpansionPlans();
   const result = [];
@@ -626,6 +654,7 @@ function getActivePlanList() {
     const plan = plans[targetRoom];
     if (!plan || plan.cancelled) continue;
     ensureExpansionPlanDefaults(plan, targetRoom);
+    reconcileExpansionIndependence(plan);
     result.push(plan);
   }
 
@@ -664,6 +693,7 @@ function getEmpireExpansionRows(ownedRoomCount) {
 
   for (let i = 0; i < plans.length; i++) {
     const plan = plans[i];
+    if (!plan.parentRoom) continue;
     const targetRoom = Game.rooms[plan.targetRoom] || null;
     if (targetRoom) {
       module.exports.updatePlanIntel(plan);
@@ -757,6 +787,7 @@ module.exports = {
 
     for (let i = 0; i < rooms.length; i++) {
       const room = rooms[i];
+      expansionFocus.ensureRoomFocus(room.name);
       const state = states[room.name] || null;
       const spawns = state && state.spawns
         ? state.spawns
@@ -907,6 +938,7 @@ module.exports = {
     const plan = getExpansionPlans()[targetRoom] || null;
     if (!plan || plan.cancelled) return null;
     ensureExpansionPlanDefaults(plan, targetRoom);
+    reconcileExpansionIndependence(plan);
 
     return plan;
   },
@@ -976,6 +1008,34 @@ module.exports = {
         removed > 0
           ? `Expansion plan cancelled: ${targetRoom}. Removed ${removed} queued spawn requests.`
           : `Expansion plan cancelled: ${targetRoom}.`,
+    };
+  },
+
+  setExpansionFocus(targetRoomName, focusName) {
+    const targetRoom = normalizeRoomName(targetRoomName);
+    const focus = expansionFocus.normalize(focusName);
+    if (!targetRoom || !focus) {
+      return {
+        ok: false,
+        message: `Expansion focus must be one of: ${expansionFocus.VALUES.join(", ")}.`,
+      };
+    }
+
+    const plan = this.getActiveExpansion(targetRoom);
+    if (!plan) {
+      return {
+        ok: false,
+        message: `No active expansion plan for ${targetRoom}.`,
+      };
+    }
+
+    plan.focus = focus;
+    plan.updatedAt = Game.time;
+
+    return {
+      ok: true,
+      plan: plan,
+      message: `Expansion room ${targetRoom} focus set to ${focus}.`,
     };
   },
 
