@@ -4729,7 +4729,7 @@ function runEmpireAwarenessScenario() {
   assert(report.summary.gcl.roomSlotsAvailable === 1, "empire report should expose open GCL slot");
   assert(
     report.lines.some(function (line) {
-      return line.indexOf("Rooms 2/3") !== -1;
+      return line.indexOf("Rooms: 2/3") !== -1;
     }),
     `expected empire lines to include slot summary, got ${report.lines.join(" / ")}`,
   );
@@ -5032,13 +5032,16 @@ function runReservationOpsScenario() {
 
   const empireReport = global.ops.empire();
   assert(
-    empireReport.lines.some(function (line) { return line.indexOf("Reserved active 1") !== -1; }),
-    `expected empire report reserved summary, got ${empireReport.lines.join(" / ")}`,
+    empireReport.lines.some(function (line) { return line.indexOf("Rooms: 1/") !== -1; }),
+    `expected empire report summary line, got ${empireReport.lines.join(" / ")}`,
   );
   assert(
-    empireReport.lines.some(function (line) { return line === "[OPS][EMPIRE][RESERVED]"; }) &&
-      empireReport.lines.some(function (line) { return line.indexOf("- W5N6 |") !== -1; }),
-    `expected empire report reserved detail block, got ${empireReport.lines.join(" / ")}`,
+    empireReport.lines.some(function (line) { return line.indexOf("reserved W5N6") !== -1; }),
+    `expected empire report to group reserved room under parent, got ${empireReport.lines.join(" / ")}`,
+  );
+  assert(
+    !empireReport.lines.some(function (line) { return line === "[OPS][EMPIRE][RESERVED]"; }),
+    `expected empire report to remove the separate reserved block, got ${empireReport.lines.join(" / ")}`,
   );
 }
 

@@ -139,6 +139,67 @@ function formatPhaseCounts(counts) {
   return parts.length > 0 ? parts.join(" | ") : "none";
 }
 
+const EMPIRE_ROW_WIDTHS = {
+  room: 15,
+  phase: 13,
+  status: 8,
+  goal: 33,
+};
+
+function trimCell(value, width) {
+  const text = value === undefined || value === null ? "" : String(value);
+  if (text.length <= width) return text;
+  if (width <= 3) return text.slice(0, width);
+  return text.slice(0, width - 3) + "...";
+}
+
+function padCell(value, width) {
+  const text = trimCell(value, width);
+  return text + " ".repeat(Math.max(0, width - text.length));
+}
+
+function formatEmpireRow(roomLabel, phaseLabel, statusLabel, goalLabel) {
+  return [
+    padCell(roomLabel, EMPIRE_ROW_WIDTHS.room),
+    padCell(phaseLabel, EMPIRE_ROW_WIDTHS.phase),
+    padCell(statusLabel, EMPIRE_ROW_WIDTHS.status),
+    trimCell(goalLabel, EMPIRE_ROW_WIDTHS.goal),
+  ].join("  ");
+}
+
+function formatCompactNumber(value) {
+  const amount = typeof value === "number" ? value : parseInt(value || 0, 10) || 0;
+
+  if (Math.abs(amount) >= 1000000) {
+    return (amount / 1000000).toFixed(amount >= 10000000 ? 0 : 1) + "m";
+  }
+
+  if (Math.abs(amount) >= 1000) {
+    return (amount / 1000).toFixed(amount >= 10000 ? 0 : 1) + "k";
+  }
+
+  return String(amount);
+}
+
+function capitalizeLabel(value) {
+  const text = value ? String(value) : "";
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function getEmpireRoomStatus(report) {
+  if (report.alert && report.alert.active) return "alert";
+  if (report.state && report.state.phase === "bootstrap") return "startup";
+  return "clear";
+}
+
+function getEmpirePhaseLabel(report) {
+  const phase = report.state && report.state.phase ? report.state.phase : "unknown";
+  const room = Game.rooms[report.room];
+  const rcl = room && room.controller ? room.controller.level || 0 : 0;
+  return `${phase} ${rcl}`.trim();
+}
+
 function getRuntimeLabel() {
   if (Memory.stats && Memory.stats.runtime && Memory.stats.runtime.pressure) {
     return Memory.stats.runtime.pressure;
@@ -1075,49 +1136,69 @@ module.exports = {
         : 0;
       summary.energyAvailable += room ? room.energyAvailable || 0 : 0;
       summary.energyCapacityAvailable += room
-        ? room.energyCapacityAvailable || 0
-        : 0;
+          ? room.energyCapacityAvailable || 0
+          : 0;
+    }
+
+    const reservationRows = reservationManager.getEmpireChildRows();
+    const reservationsByParent = {};
+
+    for (let i = 0; i < reservationRows.length; i++) {
+      const row = reservationRows[i];
+      if (!reservationsByParent[row.parentRoom]) {
+        reservationsByParent[row.parentRoom] = [];
+      }
+      reservationsByParent[row.parentRoom].push(row);
     }
 
     const lines = [
       "[OPS][EMPIRE]",
-      `${getRoomSlotLabel(gcl)} | ${getGclLabel(gcl)} | Slots ${
-        gcl.roomSlotsAvailable === null ? "?" : gcl.roomSlotsAvailable
-      } open | CPU ${summary.pressure}`,
-      `Creeps ${summary.creepCount} | Sites ${summary.constructionSites} | Queue ${summary.spawnQueueSize} | Alerts ${
+      `Rooms: ${summary.roomCount}/${
+        gcl.roomSlotsLimit === null ? "?" : gcl.roomSlotsLimit
+      }   CPU: ${summary.pressure}   Creeps: ${summary.creepCount}   Queue: ${
+        summary.spawnQueueSize
+      }   Sites: ${summary.constructionSites}`,
+      `Alerts: ${
         summary.alertRooms > 0 ? summary.alertRooms : "clear"
-      }`,
-      `Energy ${summary.energyAvailable}/${summary.energyCapacityAvailable} | Storage ${summary.storageEnergy}`,
-      `Phases ${formatPhaseCounts(phaseCounts)}`,
+      }   Storage: ${formatCompactNumber(summary.storageEnergy)}   Energy: ${
+        summary.energyAvailable
+      }/${summary.energyCapacityAvailable}`,
     ];
     const expansionSummary = this.getExpansionSummary(roomReports.length);
-    const reservationSummary = reservationManager.getReservationSummary();
     if (expansionSummary.active > 0) {
       lines.push(
-        `Expansion active ${expansionSummary.active} | claim ${expansionSummary.claiming} | boot ${expansionSummary.bootstrapping} | blocked ${expansionSummary.blocked}`,
+        `Expansions: ${expansionSummary.active} active | claim ${expansionSummary.claiming} | boot ${expansionSummary.bootstrapping} | blocked ${expansionSummary.blocked}`,
       );
-      const expansionLines = buildExpansionLines();
-      lines.push("[OPS][EMPIRE][EXPANSIONS]");
-      for (let i = 1; i < expansionLines.length; i++) {
-        lines.push(expansionLines[i]);
-      }
-    }
-    if (reservationSummary.active > 0) {
-      lines.push(
-        `Reserved active ${reservationSummary.active} | ready ${reservationSummary.reserved} | scout ${reservationSummary.scouting} | threats ${reservationSummary.threatened} | blocked ${reservationSummary.blocked}`,
-      );
-      const reservedLines = reservationManager.getReservedLines();
-      lines.push("[OPS][EMPIRE][RESERVED]");
-      for (let i = 1; i < reservedLines.length; i++) {
-        lines.push(reservedLines[i]);
-      }
     }
 
     if (roomReports.length > 0) {
-      lines.push("[OPS][EMPIRE][ROOMS]");
-      const roomLines = roomReporting.buildRoomsOverview(roomReports);
-      for (let i = 1; i < roomLines.length; i++) {
-        lines.push(roomLines[i]);
+      lines.push(
+        formatEmpireRow("Room", "Phase/RCL", "Status", "Next Goal"),
+      );
+
+      for (let i = 0; i < roomReports.length; i++) {
+        const report = roomReports[i];
+        lines.push(
+          formatEmpireRow(
+            report.room,
+            getEmpirePhaseLabel(report),
+            getEmpireRoomStatus(report),
+            capitalizeLabel(report.nextTask),
+          ),
+        );
+
+        const childRows = reservationsByParent[report.room] || [];
+        for (let j = 0; j < childRows.length; j++) {
+          const child = childRows[j];
+          lines.push(
+            formatEmpireRow(
+              `reserved ${child.targetRoom}`,
+              "",
+              child.status,
+              child.nextGoal,
+            ),
+          );
+        }
       }
     }
 

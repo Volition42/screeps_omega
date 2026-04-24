@@ -381,6 +381,83 @@ function getReservationTicks(plan) {
   return 0;
 }
 
+function getBuiltRemoteSourceCount(plan, targetRoom) {
+  if (targetRoom) {
+    const bySourceId = getRemoteContainersBySource(targetRoom);
+    let built = 0;
+
+    for (const sourceId in bySourceId) {
+      if (!Object.prototype.hasOwnProperty.call(bySourceId, sourceId)) continue;
+      if (
+        bySourceId[sourceId] &&
+        bySourceId[sourceId].structureType === STRUCTURE_CONTAINER
+      ) {
+        built++;
+      }
+    }
+
+    return built;
+  }
+
+  const intelSources = plan && plan.intel && plan.intel.sources ? plan.intel.sources : [];
+  let built = 0;
+
+  for (let i = 0; i < intelSources.length; i++) {
+    if (intelSources[i] && intelSources[i].containerId) built++;
+  }
+
+  return built;
+}
+
+function getRemoteSourceCount(plan, targetRoom) {
+  if (targetRoom) {
+    return targetRoom.find(FIND_SOURCES).length;
+  }
+
+  return plan && plan.intel && typeof plan.intel.sourceCount === "number"
+    ? plan.intel.sourceCount
+    : 0;
+}
+
+function getEmpireRowStatus(plan) {
+  const status = getPlanStatus(plan);
+
+  if (status === "threatened") return "alert";
+  if (status.indexOf("blocked") === 0) return "blocked";
+  if (status === "scouting") return "scouting";
+
+  return "clear";
+}
+
+function getEmpireRowNextGoal(plan, targetRoom) {
+  const status = getPlanStatus(plan);
+  const reserveTicks = getReservationTicks(plan);
+  const reserveRefresh =
+    typeof getSettings().RESERVATION_REFRESH_TICKS === "number"
+      ? getSettings().RESERVATION_REFRESH_TICKS
+      : 2500;
+  const sourceCount = getRemoteSourceCount(plan, targetRoom);
+  const builtSources = getBuiltRemoteSourceCount(plan, targetRoom);
+
+  if (status === "threatened") return "Defend remote";
+  if (status === "blocked_owner") return "Blocked by owner";
+  if (status === "blocked_parent") return "Parent unavailable";
+  if (!targetRoom) {
+    return reserveTicks > 0 ? "Refresh vision" : "Reserve upkeep";
+  }
+  if (builtSources < sourceCount) {
+    return `Build src ${builtSources}/${sourceCount}`;
+  }
+  if (reserveTicks < reserveRefresh) {
+    return "Reserve upkeep";
+  }
+  if (sourceCount > 0) {
+    return `Mine ${builtSources}/${sourceCount} sources`;
+  }
+
+  return "Survey remote";
+}
+
 function isParentStable(room, state) {
   const settings = getSettings();
   const minRcl =
@@ -1243,5 +1320,39 @@ module.exports = {
     }
 
     return lines;
+  },
+
+  getEmpireChildRows(parentRoomName) {
+    const parentFilter = normalizeRoomName(parentRoomName);
+    const plans = getActivePlanList();
+    const rows = [];
+
+    for (let i = 0; i < plans.length; i++) {
+      const plan = plans[i];
+      if (parentFilter && plan.parentRoom !== parentFilter) continue;
+
+      const targetRoom = Game.rooms[plan.targetRoom] || null;
+      if (targetRoom) {
+        this.updatePlanIntel(plan);
+      }
+
+      rows.push({
+        parentRoom: plan.parentRoom,
+        targetRoom: plan.targetRoom,
+        phaseLabel: "reserved",
+        status: getEmpireRowStatus(plan),
+        nextGoal: getEmpireRowNextGoal(plan, targetRoom),
+      });
+    }
+
+    rows.sort(function (a, b) {
+      if ((a.parentRoom || "") !== (b.parentRoom || "")) {
+        return (a.parentRoom || "").localeCompare(b.parentRoom || "");
+      }
+
+      return (a.targetRoom || "").localeCompare(b.targetRoom || "");
+    });
+
+    return rows;
   },
 };
