@@ -1,5 +1,6 @@
 const memory = require("kernel_memory");
 const empireManager = require("empire_manager");
+const reservationManager = require("reservation_manager");
 const roomManager = require("room_manager");
 const kernelProfiler = require("kernel_profiler");
 const statsManager = require("stats_manager");
@@ -47,6 +48,14 @@ module.exports = {
         }
       },
       this,
+    );
+
+    profiler.wrap(
+      "reservation.run",
+      reservationManager.run,
+      reservationManager,
+      ownedRooms,
+      roomStates,
     );
 
     profiler.wrap(

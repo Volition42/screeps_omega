@@ -177,6 +177,35 @@ scripts/private_server/pause_simulation.sh
 scripts/private_server/resume_simulation.sh
 ```
 
+Reserved-room validation loop:
+
+```bash
+scripts/private_server/check_dev_server.sh
+scripts/private_server/reset_dev_world.sh
+python3 scripts/private_server/world_tool.py set-controller-level --room W5N5 --level 4
+python3 scripts/private_server/world_tool.py complete-owned-sites --room W5N5
+python3 scripts/private_server/world_tool.py fill-room-energy --room W5N5
+npm run upload:ptr
+```
+
+Then in the Screeps console:
+
+```js
+ops.room("W5N5", "build")
+ops.reserve("W5N6", "W5N5")
+ops.reserved("W5N5")
+ops.empire()
+```
+
+Expected behavior:
+
+- The parent only starts reservation work after it is RCL4+ and development/stable.
+- A `reserver` maintains the target controller reservation.
+- Visible reserved rooms receive source container sites first, then minimal road sites.
+- `remoteminer` and `remotehauler` creeps move source energy back to the parent.
+- Visible hostiles in the reserved room pause remote civilian work and request parent defense.
+- `ops.expand("W5N6")` converts the reservation into a normal expansion plan and stops reserved-room mining.
+
 ## Deployment Role
 
 - Keep `src/` as the single source of truth.

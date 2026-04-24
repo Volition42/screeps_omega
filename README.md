@@ -5,7 +5,7 @@ Working overview and operator reference for the `src/` game code.
 ## What This Bot Does
 
 - Runs one manager loop per owned room.
-- Uses room phases to control spawning, construction, logistics, defense, and remotes.
+- Uses room phases to control spawning, construction, logistics, defense, expansion, and reserved-room operations.
 - Favors simple, reactive behavior over wide automation.
 - Tracks CPU and can reduce work when pressure rises.
 
@@ -81,18 +81,14 @@ Home roles:
 
 Remote roles:
 
-- `remotejrworker`
-  Early remote bootstrap.
-- `remoteworker`
-  Remote infrastructure build support.
-- `remoteminer`
-  Remote source harvesting.
-- `remotehauler`
-  Remote energy transport.
 - `reserver`
-  Reservation maintenance.
-- `rangeddefender`
-  Remote-only ranged defense.
+  Maintains a reserved-room controller for its parent room.
+- `remoteworker`
+  Builds and repairs reserved-room source containers and minimal roads.
+- `remoteminer`
+  Harvests reserved-room source containers.
+- `remotehauler`
+  Carries reserved-room source energy back to the parent room.
 
 ## Logistics And Defense
 
@@ -110,19 +106,25 @@ Remote roles:
 Defense notes:
 
 - Defense is reactive only.
-- Remote alerts can stay latched from cached intel until vision clears the room.
-- Civilian creeps retreat from threatened rooms.
+- Reserved-room hostiles pause remote civilian spawning.
+- Reserved-room civilian creeps retreat to their parent room when the target is visibly threatened.
+- Parent rooms spawn defenders for threatened reserved rooms; nearby eligible rooms can help if the parent cannot.
 
-## Remote Mining
+## Reserved Rooms
 
-- `src/remote_manager.js`
-  Normalizes remote config, caches remote intel, and schedules remote scans.
+- `src/reservation_manager.js`
+  Tracks `Memory.empire.reservation.plans`, creates reserved-room spawn requests, records remote intel, and plans throttled visible-room construction.
+- `ops.reserve(targetRoom, [parentRoom])`
+  Starts or updates a reserved-room plan. If no parent is provided, the current room selected by `ops.room(...)` is used.
+- `ops.reserved([parentRoom])`
+  Shows reserved rooms grouped by parent, or one parent when provided.
 
-Remote notes:
+Reserved-room notes:
 
-- Remotes are configured in `src/config.js`.
-- Remote work is budgeted to save CPU.
-- Cached intel is reused when a remote does not need a fresh scan.
+- Reserved rooms unlock from a stable RCL4 parent room.
+- Remote construction only runs when the reserved room is visible and only on the configured planning interval.
+- Source containers are placed first, then minimal de-duplicated roads from source containers toward the parent delivery route.
+- `ops.expand(targetRoom, [parentRoom])` can take over an active reserved room, inheriting the reservation parent when no parent is provided.
 
 ## CPU And Visibility
 
@@ -139,6 +141,7 @@ CPU notes:
 
 - `DIRECTIVES.DEBUG_CPU_*` controls opt-in CPU debug output.
 - Runtime pressure can reduce HUD, directives, planning cadence, and remote scan work.
+- `ops.tickRate([sampleTicks])` measures wall-clock tick speed over a short sample and auto-prints `ms/tick`.
 
 ## Config And Setup
 
@@ -151,7 +154,7 @@ CPU notes:
 
 Common operator tasks:
 
-- Change remote rooms in `REMOTE_MINING.SITES`.
+- Add reserved rooms with `ops.reserve(...)` and tune them in `RESERVATION`.
 - Change creep targets in `CREEPS`.
 - Change construction cadence and advanced planning in `CONSTRUCTION`.
 - Change CPU logging in `STATS`.
@@ -192,6 +195,7 @@ Validation notes:
 - Room runtime state is cached during the tick for reuse by managers.
 - Construction future plans are stored in `Memory.rooms[roomName].construction.futurePlan`.
 - Remote intel is stored in `Memory.rooms[targetRoom].remoteIntel`.
+- Reserved-room plans and intel are stored in `Memory.empire.reservation.plans`.
 - CPU history is stored in `Memory.stats`.
 
 ## Quick File Map
@@ -203,7 +207,7 @@ Validation notes:
 - `src/spawn_manager.js`: spawn queue builder
 - `src/creep_manager.js`: role dispatcher
 - `src/role_*.js`: creep role behavior
-- `src/remote_manager.js`: remote planning and cache
+- `src/reservation_manager.js`: reserved-room planning, memory, reports, and spawn requests
 - `src/defense_manager.js`: threat planning
 - `src/logistics_manager.js`: shared energy rules
 - `src/hud.js`: room visuals

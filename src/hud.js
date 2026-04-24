@@ -199,10 +199,14 @@ module.exports = {
         return "W";
       case "miner":
         return "M";
+      case "remoteminer":
+        return "RM";
       case "mineral_miner":
         return "Mm";
       case "hauler":
         return "H";
+      case "remotehauler":
+        return "RH";
       case "upgrader":
         return "U";
       case "repair":
@@ -213,8 +217,12 @@ module.exports = {
           : "D";
       case "claimer":
         return "Cl";
+      case "reserver":
+        return "Rv";
       case "pioneer":
         return "Pi";
+      case "remoteworker":
+        return "RW";
       default:
         return "?";
     }
@@ -228,10 +236,14 @@ module.exports = {
         return "#8ecae6";
       case "miner":
         return "#ffb703";
+      case "remoteminer":
+        return "#ffd166";
       case "mineral_miner":
         return "#fb8500";
       case "hauler":
         return "#90be6d";
+      case "remotehauler":
+        return "#52b788";
       case "upgrader":
         return "#c77dff";
       case "repair":
@@ -242,8 +254,12 @@ module.exports = {
           : "#ff8fa3";
       case "claimer":
         return "#80ed99";
+      case "reserver":
+        return "#b7e4c7";
       case "pioneer":
         return "#4cc9f0";
+      case "remoteworker":
+        return "#48cae4";
       default:
         return "#e0fbff";
     }

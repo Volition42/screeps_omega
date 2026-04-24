@@ -22,6 +22,12 @@ const roleRepair = require("role_repair");
 const roleDefender = require("role_defender");
 const roleClaimer = require("role_claimer");
 const rolePioneer = require("role_pioneer");
+const roleReserver = require("role_reserver");
+const roleRemoteWorker = require("role_remoteworker");
+const roleRemoteMiner = require("role_remoteminer");
+const roleRemoteHauler = require("role_remotehauler");
+const empireManager = require("empire_manager");
+const reservationManager = require("reservation_manager");
 const statsManager = require("stats_manager");
 const utils = require("utils");
 
@@ -51,7 +57,19 @@ module.exports = {
         continue;
       }
 
+      if (this.shouldSuspendOperationCreep(creep)) {
+        continue;
+      }
+
       if (this.runDefenseRetreat(creep, state)) {
+        continue;
+      }
+
+      if (this.runReservationRetreat(creep)) {
+        continue;
+      }
+
+      if (this.runExpansionRetreat(creep)) {
         continue;
       }
 
@@ -139,6 +157,26 @@ module.exports = {
         case "pioneer":
           runRole("pioneer", rolePioneer.run.bind(rolePioneer), creep);
           break;
+
+        case "reserver":
+          runRole("reserver", roleReserver.run.bind(roleReserver), creep);
+          break;
+
+        case "remoteworker":
+          runRole("remoteworker", roleRemoteWorker.run.bind(roleRemoteWorker), creep);
+          break;
+
+        case "remoteminer":
+          runRole("remoteminer", roleRemoteMiner.run.bind(roleRemoteMiner), creep);
+          break;
+
+        case "remotehauler":
+          runRole(
+            "remotehauler",
+            roleRemoteHauler.run.bind(roleRemoteHauler),
+            creep,
+          );
+          break;
       }
     }
   },
@@ -159,10 +197,13 @@ module.exports = {
       case "defender":
         return 0;
       case "hauler":
+      case "remotehauler":
         return 1;
       case "miner":
+      case "remoteminer":
         return 2;
       case "worker":
+      case "remoteworker":
         return 3;
       case "jrworker":
         return 4;
@@ -173,6 +214,8 @@ module.exports = {
       case "mineral_miner":
         return 7;
       case "claimer":
+        return 8;
+      case "reserver":
         return 8;
       case "pioneer":
         return 9;
@@ -186,19 +229,92 @@ module.exports = {
     if (!statsManager.isPastSoftCpuLimit(0)) return false;
 
     const role = creep.memory.role;
-    if (role === "defender" || role === "claimer" || role === "pioneer") {
+    if (
+      role === "defender" ||
+      role === "claimer" ||
+      role === "reserver" ||
+      role === "pioneer"
+    ) {
       return false;
     }
 
     if (!runtimeMode || runtimeMode.pressure === "normal") {
-      return role !== "hauler" && role !== "miner";
+      return role !== "hauler" &&
+        role !== "miner" &&
+        role !== "remotehauler" &&
+        role !== "remoteminer";
     }
 
     if (runtimeMode.pressure === "tight") {
-      return role !== "hauler" && role !== "miner";
+      return role !== "hauler" &&
+        role !== "miner" &&
+        role !== "remotehauler" &&
+        role !== "remoteminer";
     }
 
     return true;
+  },
+
+  runReservationRetreat(creep) {
+    if (!creep || !creep.memory) return false;
+    if (creep.memory.operation !== "reservation") return false;
+    if (creep.memory.role === "defender" || creep.memory.role === "reserver") {
+      return false;
+    }
+
+    const targetRoom = creep.memory.targetRoom;
+    const homeRoom = creep.memory.homeRoom || creep.memory.room;
+    if (!targetRoom || !homeRoom) return false;
+    if (creep.room.name !== targetRoom) return false;
+    if (!reservationManager.isRoomThreatened(targetRoom)) return false;
+
+    this.moveToRoom(creep, homeRoom);
+    return true;
+  },
+
+  runExpansionRetreat(creep) {
+    if (!creep || !creep.memory) return false;
+    if (creep.memory.operation !== "expansion") return false;
+    if (creep.memory.role === "defender") return false;
+
+    const targetRoom = creep.memory.targetRoom;
+    const homeRoom = creep.memory.homeRoom || creep.memory.room;
+    if (!targetRoom || !homeRoom) return false;
+    if (creep.room.name !== targetRoom) return false;
+    if (!empireManager.getExpansionThreat(targetRoom)) return false;
+
+    this.moveToRoom(creep, homeRoom);
+    return true;
+  },
+
+  shouldSuspendOperationCreep(creep) {
+    if (!creep || !creep.memory || !creep.memory.operation) return false;
+
+    const operation = creep.memory.operation;
+    const targetRoom = creep.memory.targetRoom;
+
+    if (!targetRoom) return false;
+
+    if (operation === "expansion") {
+      return !empireManager.getActiveExpansion(targetRoom);
+    }
+
+    if (
+      operation === "expansion_defense" ||
+      operation === "expansion_defense_support"
+    ) {
+      return !empireManager.getActiveExpansion(targetRoom);
+    }
+
+    if (
+      operation === "reservation" ||
+      operation === "reservation_defense" ||
+      operation === "reservation_defense_support"
+    ) {
+      return !reservationManager.getActiveReservation(targetRoom);
+    }
+
+    return false;
   },
 
   runDefenseRetreat(creep, state) {

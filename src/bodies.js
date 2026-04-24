@@ -25,8 +25,91 @@ module.exports = {
     return this.plan(role, room, request, state).body;
   },
 
+  validateBody(body) {
+    if (!Array.isArray(body)) {
+      return {
+        valid: false,
+        reason: "body_not_array",
+      };
+    }
+
+    if (body.length <= 0) {
+      return {
+        valid: false,
+        reason: "body_empty",
+      };
+    }
+
+    if (body.length > 50) {
+      return {
+        valid: false,
+        reason: "body_too_large",
+        parts: body.length,
+      };
+    }
+
+    for (let i = 0; i < body.length; i++) {
+      if (!Object.prototype.hasOwnProperty.call(PART_COSTS, body[i])) {
+        return {
+          valid: false,
+          reason: "invalid_part",
+          index: i,
+          part: body[i],
+        };
+      }
+    }
+
+    const cost = this.getBodyCost(body);
+    if (cost <= 0) {
+      return {
+        valid: false,
+        reason: "body_zero_cost",
+      };
+    }
+
+    return {
+      valid: true,
+      cost: cost,
+      parts: body.length,
+    };
+  },
+
+  getEmergencyPlan(role, room) {
+    const energyCapacity = this.getEnergyCapacity(room);
+    let body = [WORK, CARRY, MOVE];
+    let profile = "emergency_fallback";
+
+    switch (role) {
+      case "hauler":
+      case "remotehauler":
+        body = [CARRY, MOVE];
+        break;
+
+      case "defender":
+        body = [ATTACK, MOVE];
+        break;
+
+      case "claimer":
+      case "reserver":
+        body = [CLAIM, MOVE];
+        break;
+
+      default:
+        body = [WORK, CARRY, MOVE];
+        break;
+    }
+
+    if (this.getBodyCost(body) > energyCapacity) {
+      return null;
+    }
+
+    return this.finalizePlan(role, profile, body, {
+      emergencyFallback: true,
+    });
+  },
+
   plan(role, room, request, state) {
-    const energyCapacity = room ? room.energyCapacityAvailable : 300;
+    const energyCapacity = this.getEnergyCapacity(room);
     const infrastructure = this.getInfrastructure(room, state);
     const threatLevel =
       request && typeof request.threatLevel === "number"
@@ -47,11 +130,17 @@ module.exports = {
       case "miner":
         return this.planMinerBody(energyCapacity, request, room, state);
 
+      case "remoteminer":
+        return this.planRemoteMinerBody(energyCapacity);
+
       case "mineral_miner":
         return this.planMineralMinerBody(energyCapacity, request, room, state);
 
       case "hauler":
         return this.planHaulerBody(energyCapacity, request, room, state);
+
+      case "remotehauler":
+        return this.planRemoteHaulerBody(energyCapacity);
 
       case "upgrader":
         return this.planUpgraderBody(energyCapacity, infrastructure, room, state);
@@ -62,8 +151,14 @@ module.exports = {
       case "claimer":
         return this.planClaimerBody(energyCapacity);
 
+      case "reserver":
+        return this.planReserverBody(energyCapacity);
+
       case "pioneer":
         return this.planPioneerBody(energyCapacity, infrastructure);
+
+      case "remoteworker":
+        return this.planRemoteWorkerBody(energyCapacity, infrastructure);
 
       case "defender":
         return this.finalizePlan(
@@ -156,6 +251,32 @@ module.exports = {
     );
   },
 
+  planRemoteMinerBody(energyCapacity) {
+    const maxWork = this.getConfiguredLimit("remoteMinerMaxWork", 5);
+    const counts = {
+      work: Math.min(
+        maxWork,
+        2 + Math.floor(Math.max(0, energyCapacity - 300) / 125),
+      ),
+      carry: 1,
+      move: 2,
+    };
+    const minimums = { work: 2, carry: 1, move: 2 };
+
+    counts.move = Math.max(2, Math.ceil((counts.work + counts.carry) / 2));
+    this.fitEconomicCounts(counts, minimums, energyCapacity, [
+      "move",
+      "carry",
+      "work",
+    ]);
+
+    return this.finalizePlan(
+      "remoteminer",
+      "reserved_source_container",
+      this.buildEconomicBody(counts),
+    );
+  },
+
   planMineralMinerBody(energyCapacity, request, room, state) {
     const maxWork = this.getConfiguredLimit("mineralMinerMaxWork", 5);
     const mineralContainer =
@@ -214,6 +335,33 @@ module.exports = {
       this.buildHaulerBody(counts),
       {
         carryDemand: carryDemand,
+      },
+    );
+  },
+
+  planRemoteHaulerBody(energyCapacity) {
+    const maxCarry = this.getConfiguredLimit("remoteHaulerMaxCarry", 16);
+    const targetCarry =
+      config.RESERVATION &&
+      typeof config.RESERVATION.REMOTE_HAULER_CARRY_PARTS === "number"
+        ? config.RESERVATION.REMOTE_HAULER_CARRY_PARTS
+        : 8;
+    const counts = {
+      work: 0,
+      carry: Math.max(2, Math.min(maxCarry, targetCarry)),
+      move: 1,
+    };
+    const minimums = { work: 0, carry: 2, move: 1 };
+
+    counts.move = Math.max(1, Math.ceil(counts.carry / 2));
+    this.fitEconomicCounts(counts, minimums, energyCapacity, ["move", "carry"]);
+
+    return this.finalizePlan(
+      "remotehauler",
+      "reserved_room_transport",
+      this.buildHaulerBody(counts),
+      {
+        carryDemand: targetCarry,
       },
     );
   },
@@ -324,12 +472,49 @@ module.exports = {
     return this.finalizePlan("claimer", "claim", [CLAIM, MOVE]);
   },
 
+  planReserverBody(energyCapacity) {
+    if (energyCapacity >= 1300) {
+      return this.finalizePlan("reserver", "extended_reserve", [
+        CLAIM,
+        CLAIM,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    return this.finalizePlan("reserver", "reserve", [CLAIM, MOVE]);
+  },
+
   planPioneerBody(energyCapacity, infrastructure) {
     const plan = this.planWorkerBody(energyCapacity, infrastructure);
 
     return this.finalizePlan("pioneer", "expansion_bootstrap", plan.body, {
       carryDemand: plan.carryParts || 1,
     });
+  },
+
+  planRemoteWorkerBody(energyCapacity, infrastructure) {
+    const plan = this.planWorkerBody(energyCapacity, infrastructure);
+    const maxWork = this.getConfiguredLimit("remoteWorkerMaxWork", 6);
+    const counts = {
+      work: Math.min(maxWork, Math.max(1, plan.workParts || 1)),
+      carry: Math.max(1, plan.carryParts || 1),
+      move: Math.max(1, plan.moveParts || 1),
+    };
+    const minimums = { work: 1, carry: 1, move: 1 };
+
+    counts.move = Math.max(1, Math.ceil((counts.work + counts.carry) / 2));
+    this.fitEconomicCounts(counts, minimums, energyCapacity, [
+      "move",
+      "carry",
+      "work",
+    ]);
+
+    return this.finalizePlan(
+      "remoteworker",
+      "reserved_room_builder",
+      this.buildEconomicBody(counts),
+    );
   },
 
   getInfrastructure(room, state) {
@@ -421,16 +606,17 @@ module.exports = {
 
   buildEconomicBody(counts) {
     const body = [];
+    const normalized = this.normalizeCounts(counts);
 
-    for (let i = 0; i < counts.work; i++) {
+    for (let i = 0; i < normalized.work; i++) {
       body.push(WORK);
     }
 
-    for (let i = 0; i < counts.carry; i++) {
+    for (let i = 0; i < normalized.carry; i++) {
       body.push(CARRY);
     }
 
-    for (let i = 0; i < counts.move; i++) {
+    for (let i = 0; i < normalized.move; i++) {
       body.push(MOVE);
     }
 
@@ -439,12 +625,13 @@ module.exports = {
 
   buildHaulerBody(counts) {
     const body = [];
+    const normalized = this.normalizeCounts(counts);
 
-    for (let i = 0; i < counts.carry; i++) {
+    for (let i = 0; i < normalized.carry; i++) {
       body.push(CARRY);
     }
 
-    for (let i = 0; i < counts.move; i++) {
+    for (let i = 0; i < normalized.move; i++) {
       body.push(MOVE);
     }
 
@@ -487,6 +674,40 @@ module.exports = {
     }
 
     return count;
+  },
+
+  getEnergyCapacity(room) {
+    const capacity = room && typeof room.energyCapacityAvailable === "number"
+      ? room.energyCapacityAvailable
+      : null;
+    if (capacity !== null && Number.isFinite(capacity) && capacity > 0) {
+      return Math.floor(capacity);
+    }
+
+    const available = room && typeof room.energyAvailable === "number"
+      ? room.energyAvailable
+      : null;
+    if (available !== null && Number.isFinite(available) && available > 0) {
+      return Math.max(300, Math.floor(available));
+    }
+
+    return 300;
+  },
+
+  normalizeCounts(counts) {
+    return {
+      work: this.normalizeCountValue(counts && counts.work),
+      carry: this.normalizeCountValue(counts && counts.carry),
+      move: this.normalizeCountValue(counts && counts.move),
+    };
+  },
+
+  normalizeCountValue(value) {
+    if (!Number.isFinite(value) || value <= 0) {
+      return 0;
+    }
+
+    return Math.floor(value);
   },
 
   getConfiguredLimit(key, fallback) {
