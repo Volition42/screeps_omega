@@ -295,6 +295,14 @@ module.exports = {
       return sourceContainer;
     }
 
+    // Prefer staged buffers first so haulers can keep room energy flow smooth,
+    // but do not leave builders stranded on direct harvest when storage already
+    // has energy available.
+    const storage = logisticsManager.getStorageEnergyTarget(creep.room);
+    if (storage) {
+      return storage;
+    }
+
     let source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
     if (!source) {
       source = creep.pos.findClosestByRange(FIND_SOURCES);
