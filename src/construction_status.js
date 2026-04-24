@@ -16,6 +16,7 @@ Important Notes:
 const config = require("config");
 const roadmap = require("construction_roadmap");
 const stamps = require("stamp_library");
+const expansionFocus = require("expansion_focus");
 
 var cachedTick = null;
 var cachedStatusByRoomPhase = {};
@@ -49,6 +50,7 @@ module.exports = {
       typeof Memory.rooms[roomName].construction.futurePlan.tick === "number"
         ? Memory.rooms[roomName].construction.futurePlan.tick
         : 0;
+    var focusName = expansionFocus.getFocusForRoom(roomName);
     var cacheKey =
       roomName +
       ":" +
@@ -62,12 +64,17 @@ module.exports = {
       ":" +
       creepCount +
       ":" +
+      focusName +
+      ":" +
       futurePlanTick;
     if (cachedStatusByRoomPhase[cacheKey]) {
       return cachedStatusByRoomPhase[cacheKey];
     }
 
-    var plan = roadmap.getPlan(state.phase, room.controller.level);
+    var plan = expansionFocus.applyToPlan(
+      roadmap.getPlan(state.phase, room.controller.level),
+      focusName,
+    );
     var goals = plan.goals || {};
     var anchor = stamps.getAnchorOrigin(room, state);
     var futurePlan = this.getFuturePlan(room);
@@ -94,7 +101,7 @@ module.exports = {
       STRUCTURE_EXTENSION,
     );
 
-    var towersNeeded = roadmap.getDesiredTowerCount(room.controller.level);
+    var towersNeeded = this.getTowerGoal(room, plan);
     var towersBuilt = this.countBuiltAndSites(room, state, STRUCTURE_TOWER);
 
     var storageNeeded = this.hasAction(plan, "storage")
@@ -609,8 +616,7 @@ module.exports = {
     }
 
     if (anchor && this.hasAction(plan, "towerStamp")) {
-      var towerStampsNeeded =
-        roadmap.getDesiredTowerCount(room.controller.level) > 0 ? 1 : 0;
+      var towerStampsNeeded = this.getTowerGoal(room, plan) > 0 ? 1 : 0;
 
       var towerOrigins = stamps.getTowerStampOrigins(anchor);
       for (var j = 0; j < towerOrigins.length && j < towerStampsNeeded; j++) {
@@ -922,6 +928,26 @@ module.exports = {
       room.controller ? room.controller.level : 0,
       STRUCTURE_EXTRACTOR,
     );
+  },
+
+  getTowerGoal(room, plan) {
+    if (!this.hasAction(plan, "towerStamp")) return 0;
+
+    var controllerLevel = room.controller ? room.controller.level : 0;
+    var desiredCount = roadmap.getDesiredTowerCount(controllerLevel);
+    var structureTargets = plan.goals && plan.goals.structureTargets
+      ? plan.goals.structureTargets
+      : null;
+    var overrideCount = structureTargets &&
+      typeof structureTargets[STRUCTURE_TOWER] === "number"
+      ? structureTargets[STRUCTURE_TOWER]
+      : null;
+
+    if (typeof overrideCount === "number") {
+      return Math.min(desiredCount, Math.max(0, overrideCount));
+    }
+
+    return desiredCount;
   },
 
   getStructureGoal(room, plan, action, structureType) {

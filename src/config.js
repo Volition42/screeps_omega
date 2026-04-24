@@ -93,7 +93,8 @@ module.exports = {
 
   Expansion is console-driven in this phase. The empire layer may observe all
   rooms, but it only spawns claimers/pioneers for rooms explicitly registered
-  with ops.expand().
+  with ops.expand(). Expansion focus can trim late construction while every
+  expansion still races to RCL8 and terminal access.
   */
   EXPANSION: {
     ENABLED: true,
@@ -110,8 +111,9 @@ module.exports = {
   Reserved Room Operations
 
   Reserved rooms are manually registered with ops.reserve(). They stay attached
-  to a stable parent room and return remote source energy home. Keep planning
-  throttled so extra rooms do not add owned-room-level CPU every tick.
+  to a stable parent room and can either hold controller reservation only or
+  return remote source energy home. Keep planning throttled so extra rooms do
+  not add owned-room-level CPU every tick.
   */
   RESERVATION: {
     ENABLED: true,

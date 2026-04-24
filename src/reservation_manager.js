@@ -18,6 +18,7 @@ Important Notes:
 const config = require("config");
 const utils = require("utils");
 const defenseManager = require("defense_manager");
+const reservationFocus = require("reservation_focus");
 
 function ensureEmpireMemory() {
   if (!Memory.empire) Memory.empire = {};
@@ -182,6 +183,30 @@ function getPlans() {
   return getReservationMemory().plans || {};
 }
 
+function ensurePlanDefaults(plan, targetRoom) {
+  if (!plan) return plan;
+
+  let changed = false;
+  if (!plan.targetRoom && targetRoom) {
+    plan.targetRoom = targetRoom;
+    changed = true;
+  }
+  if (!reservationFocus.isFocus(plan.focus)) {
+    plan.focus = reservationFocus.DEFAULT;
+    changed = true;
+  }
+  if (!plan.operation) {
+    plan.operation = "reservation";
+    changed = true;
+  }
+  if (changed) {
+    plan.defaultsUpgradedAt = Game.time;
+    plan.updatedAt = Game.time;
+  }
+
+  return plan;
+}
+
 function getThreatMemoryTtl() {
   const settings = getSettings();
   return typeof settings.DEFENSE_MEMORY_TTL === "number"
@@ -226,6 +251,46 @@ function pruneReservationQueue(targetRoomName) {
   return removed;
 }
 
+function pruneReservationEconomyQueue(targetRoomName) {
+  const targetRoom = normalizeRoomName(targetRoomName);
+  if (!targetRoom || !Memory.rooms) return 0;
+
+  const economyRoles = {
+    remoteworker: true,
+    remoteminer: true,
+    remotehauler: true,
+  };
+  let removed = 0;
+
+  for (const roomName in Memory.rooms) {
+    if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+
+    const roomMemory = Memory.rooms[roomName];
+    if (!roomMemory || !roomMemory.spawnQueue) continue;
+
+    const before = roomMemory.spawnQueue.length;
+    roomMemory.spawnQueue = roomMemory.spawnQueue.filter(function (item) {
+      return !(
+        item &&
+        item.targetRoom === targetRoom &&
+        item.operation === "reservation" &&
+        economyRoles[item.role]
+      );
+    });
+    removed += before - roomMemory.spawnQueue.length;
+  }
+
+  return removed;
+}
+
+function getPlanFocus(plan) {
+  return reservationFocus.normalize(plan && plan.focus) || reservationFocus.DEFAULT;
+}
+
+function isHoldPlan(plan) {
+  return getPlanFocus(plan) === reservationFocus.HOLD;
+}
+
 function getActivePlanList() {
   const plans = getPlans();
   const result = [];
@@ -235,6 +300,7 @@ function getActivePlanList() {
 
     const plan = plans[targetRoom];
     if (!plan || plan.cancelled || plan.convertedToExpansion) continue;
+    ensurePlanDefaults(plan, targetRoom);
     if (!reconcileReservationParent(plan)) continue;
     result.push(plan);
   }
@@ -531,6 +597,7 @@ function getEmpireRowNextGoal(plan, targetRoom) {
   if (status === "threatened") return "Defend remote";
   if (status === "blocked_owner") return "Blocked by owner";
   if (status === "blocked_parent") return "Parent unavailable";
+  if (isHoldPlan(plan)) return "Hold reservation";
   if (!targetRoom) {
     return reserveTicks > 0 ? "Refresh vision" : "Reserve upkeep";
   }
@@ -759,11 +826,13 @@ module.exports = {
         continue;
       }
 
-      this.planRemoteConstruction(plan, parent);
+      if (!isHoldPlan(plan)) {
+        this.planRemoteConstruction(plan, parent);
+      }
     }
   },
 
-  createReservation(targetRoomName, parentRoomName) {
+  createReservation(targetRoomName, parentRoomName, focusName) {
     if (!isEnabled()) {
       return {
         ok: false,
@@ -776,6 +845,14 @@ module.exports = {
       return {
         ok: false,
         message: "Target room is required.",
+      };
+    }
+
+    const focus = reservationFocus.normalize(focusName);
+    if (!focus) {
+      return {
+        ok: false,
+        message: `Reservation focus must be one of: ${reservationFocus.VALUES.join(", ")}.`,
       };
     }
 
@@ -807,9 +884,11 @@ module.exports = {
 
     const plans = getPlans();
     const existing = plans[targetRoom] || {};
+    const previousFocus = getPlanFocus(existing);
     const plan = Object.assign({}, existing, {
       targetRoom: targetRoom,
       parentRoom: parentRoom,
+      focus: focus,
       createdAt: existing.createdAt || Game.time,
       updatedAt: Game.time,
       cancelled: false,
@@ -818,12 +897,18 @@ module.exports = {
     });
 
     plans[targetRoom] = plan;
+    const removed = previousFocus !== reservationFocus.HOLD && focus === reservationFocus.HOLD
+      ? pruneReservationEconomyQueue(targetRoom)
+      : 0;
     this.updatePlanIntel(plan);
 
     return {
       ok: true,
       plan: plan,
-      message: `Reserved room plan active: ${targetRoom} from ${parentRoom}.`,
+      message:
+        removed > 0
+          ? `Reserved room plan active: ${targetRoom} from ${parentRoom} (${focus}). Removed ${removed} queued remote economy requests.`
+          : `Reserved room plan active: ${targetRoom} from ${parentRoom} (${focus}).`,
     };
   },
 
@@ -874,6 +959,7 @@ module.exports = {
 
     const plan = getPlans()[targetRoom] || null;
     if (!plan || plan.cancelled || plan.convertedToExpansion) return null;
+    ensurePlanDefaults(plan, targetRoom);
     if (!reconcileReservationParent(plan)) return null;
 
     return plan;
@@ -918,7 +1004,10 @@ module.exports = {
       const threat = this.getReservationThreat(plan);
       const started = hasStartedReservationOperation(plan, targetRoom);
 
-      if (plan.parentRoom === room.name && started) {
+      if (
+        plan.parentRoom === room.name &&
+        (started || (isHoldPlan(plan) && isParentStable(room, state)))
+      ) {
         this.addReservationMaintenanceRequests(
           room,
           state,
@@ -938,6 +1027,7 @@ module.exports = {
 
       if (plan.parentRoom !== room.name) continue;
       if (!isParentStable(room, state)) continue;
+      if (isHoldPlan(plan)) continue;
 
       this.addRemoteEconomyRequests(room, state, requests, plan, targetRoom);
     }
@@ -1402,7 +1492,7 @@ module.exports = {
       for (let j = 0; j < parentPlans.length; j++) {
         const plan = parentPlans[j];
         lines.push(
-          `- ${plan.targetRoom} | ${getStatusLabel(plan)} | reserve ${getReservationTicks(plan)} | age ${
+          `- ${plan.targetRoom} | ${getPlanFocus(plan)} | ${getStatusLabel(plan)} | reserve ${getReservationTicks(plan)} | age ${
             Game.time - (plan.createdAt || Game.time)
           }`,
         );
@@ -1430,7 +1520,7 @@ module.exports = {
         kind: "reserved",
         parentRoom: plan.parentRoom,
         targetRoom: plan.targetRoom,
-        phaseLabel: "reserved",
+        phaseLabel: isHoldPlan(plan) ? "reserved:hold" : "reserved",
         status: getEmpireRowStatus(plan),
         nextGoal: getEmpireRowNextGoal(plan, targetRoom),
       });

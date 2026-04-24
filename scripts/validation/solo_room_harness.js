@@ -4775,13 +4775,52 @@ function runExpansionClaimRequestScenario() {
 
   const result = empireManager.createExpansion(target.name, parent.name);
   assert(result.ok, `expected expansion plan to be created, got ${result.message}`);
+  assert(
+    empireManager.getActiveExpansion(target.name).focus === "full",
+    "expansion should default to full focus",
+  );
+  delete empireManager.getActiveExpansion(target.name).focus;
+  assert(
+    empireManager.getActiveExpansion(target.name).focus === "full",
+    "legacy expansion plan should backfill full focus",
+  );
 
   const empireReport = empireManager.buildReport();
   assert(
     empireReport.lines.some(function (line) {
-      return line.indexOf("expansion VA") !== -1 && line.indexOf("Claim controller") !== -1;
+      return line.indexOf("expansion VA") !== -1 &&
+        line.indexOf("full") !== -1 &&
+        line.indexOf("Claim controller") !== -1;
     }),
-    `expected empire report to group expansion under parent, got ${empireReport.lines.join(" / ")}`,
+    `expected empire report to group expansion with focus under parent, got ${empireReport.lines.join(" / ")}`,
+  );
+  let lines = empireManager.getExpansionLines();
+  assert(
+    lines.some(function (line) {
+      return line.indexOf(target.name) !== -1 && line.indexOf("focus full") !== -1;
+    }),
+    `expected expansion report to show full focus, got ${lines.join(" / ")}`,
+  );
+
+  const mineralResult = empireManager.createExpansion(target.name, parent.name, "mineral");
+  assert(mineralResult.ok, `expected mineral focus conversion, got ${mineralResult.message}`);
+  assert(
+    empireManager.getActiveExpansion(target.name).focus === "mineral",
+    "expansion should switch to mineral focus",
+  );
+  lines = empireManager.getExpansionLines();
+  assert(
+    lines.some(function (line) {
+      return line.indexOf(target.name) !== -1 && line.indexOf("focus mineral") !== -1;
+    }),
+    `expected expansion report to show mineral focus, got ${lines.join(" / ")}`,
+  );
+
+  const energyResult = empireManager.createExpansion(target.name, parent.name, "energy");
+  assert(energyResult.ok, `expected energy focus conversion, got ${energyResult.message}`);
+  assert(
+    empireManager.getActiveExpansion(target.name).focus === "energy",
+    "expansion should switch to energy focus",
   );
 
   const state = roomState.collect(parent);
@@ -4793,6 +4832,60 @@ function runExpansionClaimRequestScenario() {
   assert(claimRequest, "active expansion should request a claimer from the parent room");
   assert(claimRequest.homeRoom === parent.name, "claimer request should keep parent as home room");
   assert(claimRequest.operation === "expansion", "claimer request should be marked as expansion work");
+}
+
+function runExpansionFocusConstructionScenario() {
+  const room = buildRoomScenario("VAL_FOCUS_ROOM", {
+    tick: 890,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  Memory.empire = { expansion: { plans: {} } };
+  Memory.empire.expansion.plans[room.name] = {
+    targetRoom: room.name,
+    parentRoom: "VAL_PARENT",
+    focus: "full",
+    createdAt: Game.time,
+  };
+
+  let state = roomState.collect(room);
+  state.phase = "command";
+  let status = constructionStatus.getStatus(room, state);
+  assert(status.towersNeeded > 2, `full focus should keep normal tower max, got ${status.towersNeeded}`);
+  assert(status.labsNeeded === 10, `full focus should keep full labs, got ${status.labsNeeded}`);
+  assert(status.factoryNeeded === 1, `full focus should keep factory, got ${status.factoryNeeded}`);
+  assert(status.terminalNeeded === 1, `full focus should keep terminal, got ${status.terminalNeeded}`);
+  assert(status.extractorNeeded === 1, `full focus should keep extractor, got ${status.extractorNeeded}`);
+
+  Memory.empire.expansion.plans[room.name].focus = "mineral";
+  state = roomState.collect(room);
+  state.phase = "command";
+  status = constructionStatus.getStatus(room, state);
+  assert(status.towersNeeded === 2, `mineral focus should cap towers at 2, got ${status.towersNeeded}`);
+  assert(status.labsNeeded === 3, `mineral focus should keep minimal 3 labs, got ${status.labsNeeded}`);
+  assert(status.factoryNeeded === 0, `mineral focus should skip factory, got ${status.factoryNeeded}`);
+  assert(status.terminalNeeded === 1, `mineral focus should keep terminal, got ${status.terminalNeeded}`);
+  assert(status.extractorNeeded === 1, `mineral focus should keep extractor, got ${status.extractorNeeded}`);
+  assert(status.mineralContainersNeeded === 1, `mineral focus should keep mineral container, got ${status.mineralContainersNeeded}`);
+
+  Memory.empire.expansion.plans[room.name].focus = "energy";
+  state = roomState.collect(room);
+  state.phase = "command";
+  status = constructionStatus.getStatus(room, state);
+  assert(status.towersNeeded === 2, `energy focus should cap towers at 2, got ${status.towersNeeded}`);
+  assert(status.labsNeeded === 0, `energy focus should skip labs, got ${status.labsNeeded}`);
+  assert(status.factoryNeeded === 0, `energy focus should skip factory, got ${status.factoryNeeded}`);
+  assert(status.terminalNeeded === 1, `energy focus should keep terminal, got ${status.terminalNeeded}`);
+  assert(status.extractorNeeded === 0, `energy focus should skip extractor, got ${status.extractorNeeded}`);
+  assert(status.mineralContainersNeeded === 0, `energy focus should skip mineral container, got ${status.mineralContainersNeeded}`);
 }
 
 function runExpansionPioneerRequestScenario() {
@@ -5051,11 +5144,52 @@ function runReservationOpsScenario() {
   global.ops.room(parent.name, "overview");
   const result = global.ops.reserve("W5N6");
   assert(result.ok, `expected reserve plan through current room, got ${result.message}`);
+  assert(
+    reservationManager.getActiveReservation("W5N6").focus === "full",
+    "reservation should default to full focus",
+  );
+  delete reservationManager.getActiveReservation("W5N6").focus;
+  delete reservationManager.getActiveReservation("W5N6").operation;
+  assert(
+    reservationManager.getActiveReservation("W5N6").focus === "full" &&
+      reservationManager.getActiveReservation("W5N6").operation === "reservation",
+    "legacy reservation plan should backfill full focus and operation marker",
+  );
 
   const lines = global.ops.reserved(parent.name);
   assert(
     lines.some(function (line) { return line.indexOf("W5N6") !== -1; }),
     `expected reserved report to list W5N6, got ${lines.join(" / ")}`,
+  );
+  assert(
+    lines.some(function (line) { return line.indexOf("W5N6") !== -1 && line.indexOf("full") !== -1; }),
+    `expected reserved report to list full focus, got ${lines.join(" / ")}`,
+  );
+
+  Memory.rooms[parent.name].spawnQueue = [
+    { role: "remoteworker", targetRoom: "W5N6", operation: "reservation" },
+    { role: "remoteminer", targetRoom: "W5N6", operation: "reservation" },
+    { role: "remotehauler", targetRoom: "W5N6", operation: "reservation" },
+    { role: "reserver", targetRoom: "W5N6", operation: "reservation" },
+    { role: "defender", targetRoom: "W5N6", operation: "reservation_defense" },
+  ];
+  const holdResult = global.ops.reserve("W5N6", "hold");
+  assert(holdResult.ok, `expected hold reservation conversion, got ${holdResult.message}`);
+  assert(
+    reservationManager.getActiveReservation("W5N6").focus === "hold",
+    "reservation should switch to hold focus",
+  );
+  assert(
+    Memory.rooms[parent.name].spawnQueue.length === 2 &&
+      Memory.rooms[parent.name].spawnQueue.some(function (item) { return item.role === "reserver"; }) &&
+      Memory.rooms[parent.name].spawnQueue.some(function (item) { return item.role === "defender"; }),
+    "hold conversion should prune queued remote economy creeps but keep reserver and defense requests",
+  );
+  const fullResult = global.ops.reserve("W5N6", "full");
+  assert(fullResult.ok, `expected full reservation conversion, got ${fullResult.message}`);
+  assert(
+    reservationManager.getActiveReservation("W5N6").focus === "full",
+    "reservation should switch back to full focus",
   );
 
   const empireReport = global.ops.empire();
@@ -5182,6 +5316,29 @@ function runReservationStableGateScenario() {
   assert(
     requests.some(function (request) { return request.role === "reserver" && request.targetRoom === "W6N6"; }),
     "stable RCL4 parent should request a reserver",
+  );
+
+  buildNeutralReserveRoom("W6N7");
+  result = reservationManager.createReservation("W6N7", parent.name, "hold");
+  assert(result.ok, `expected hold reservation plan creation, got ${result.message}`);
+  state = roomState.collect(parent);
+  requests = spawnManager.getSpawnRequests(parent, state);
+  assert(
+    requests.some(function (request) { return request.role === "reserver" && request.targetRoom === "W6N7"; }),
+    "hold reservation should request a reserver",
+  );
+  assert(
+    !requests.some(function (request) {
+      return (
+        request.targetRoom === "W6N7" &&
+        (
+          request.role === "remoteworker" ||
+          request.role === "remoteminer" ||
+          request.role === "remotehauler"
+        )
+      );
+    }),
+    "hold reservation should not request remote economy creeps",
   );
 }
 
@@ -5927,6 +6084,7 @@ function main() {
     ["factory_ops", runFactoryOpsScenario],
     ["empire_awareness", runEmpireAwarenessScenario],
     ["expansion_claim_request", runExpansionClaimRequestScenario],
+    ["expansion_focus_construction", runExpansionFocusConstructionScenario],
     ["expansion_pioneer_request", runExpansionPioneerRequestScenario],
     ["expansion_claimer_role", runExpansionClaimerRoleScenario],
     ["expansion_pioneer_spawn_site", runExpansionPioneerSpawnSiteScenario],

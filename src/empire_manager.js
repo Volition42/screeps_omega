@@ -17,6 +17,7 @@ const roomReporting = require("room_reporting");
 const config = require("config");
 const defenseManager = require("defense_manager");
 const reservationManager = require("reservation_manager");
+const expansionFocus = require("expansion_focus");
 const roomProgress = require("room_progress");
 const utils = require("utils");
 
@@ -223,6 +224,10 @@ function normalizeRoomName(roomName) {
 
 function getExpansionMemory() {
   return ensureEmpireMemory().expansion;
+}
+
+function getPlanFocus(plan) {
+  return expansionFocus.normalize(plan && plan.focus) || expansionFocus.DEFAULT;
 }
 
 function getExpansionSettings() {
@@ -592,6 +597,26 @@ function getExpansionPlans() {
   return expansion.plans || {};
 }
 
+function ensureExpansionPlanDefaults(plan, targetRoom) {
+  if (!plan) return plan;
+
+  let changed = false;
+  if (!plan.targetRoom && targetRoom) {
+    plan.targetRoom = targetRoom;
+    changed = true;
+  }
+  if (!expansionFocus.isFocus(plan.focus)) {
+    plan.focus = expansionFocus.DEFAULT;
+    changed = true;
+  }
+  if (changed) {
+    plan.defaultsUpgradedAt = Game.time;
+    plan.updatedAt = Game.time;
+  }
+
+  return plan;
+}
+
 function getActivePlanList() {
   const plans = getExpansionPlans();
   const result = [];
@@ -600,6 +625,7 @@ function getActivePlanList() {
     if (!Object.prototype.hasOwnProperty.call(plans, targetRoom)) continue;
     const plan = plans[targetRoom];
     if (!plan || plan.cancelled) continue;
+    ensureExpansionPlanDefaults(plan, targetRoom);
     result.push(plan);
   }
 
@@ -623,7 +649,7 @@ function buildExpansionLines() {
   for (let i = 0; i < plans.length; i++) {
     const plan = plans[i];
     lines.push(
-      `${plan.targetRoom} | parent ${plan.parentRoom || "none"} | ${getPlanStatusLabel(plan, ownedRooms.length)} | age ${
+      `${plan.targetRoom} | focus ${getPlanFocus(plan)} | parent ${plan.parentRoom || "none"} | ${getPlanStatusLabel(plan, ownedRooms.length)} | age ${
         Game.time - (plan.createdAt || Game.time)
       }`,
     );
@@ -648,7 +674,7 @@ function getEmpireExpansionRows(ownedRoomCount) {
       kind: "expansion",
       parentRoom: plan.parentRoom,
       targetRoom: plan.targetRoom,
-      phaseLabel: formatExpansionProgressLabel(progress),
+      phaseLabel: `${formatExpansionProgressLabel(progress)} ${getPlanFocus(plan)}`,
       status: getExpansionRowStatus(plan, ownedRoomCount),
       nextGoal: appendExpansionEta(
         getExpansionRowNextGoal(plan, ownedRoomCount),
@@ -796,7 +822,7 @@ module.exports = {
     return memory;
   },
 
-  createExpansion(targetRoomName, parentRoomName) {
+  createExpansion(targetRoomName, parentRoomName, focusName) {
     if (!isExpansionEnabled()) {
       return {
         ok: false,
@@ -809,6 +835,14 @@ module.exports = {
       return {
         ok: false,
         message: "Target room is required.",
+      };
+    }
+
+    const focus = expansionFocus.normalize(focusName);
+    if (!focus) {
+      return {
+        ok: false,
+        message: `Expansion focus must be one of: ${expansionFocus.VALUES.join(", ")}.`,
       };
     }
 
@@ -847,6 +881,7 @@ module.exports = {
     const plan = Object.assign({}, existing, {
       targetRoom: targetRoom,
       parentRoom: parentRoom,
+      focus: focus,
       createdAt: existing.createdAt || Game.time,
       updatedAt: Game.time,
       cancelled: false,
@@ -861,7 +896,7 @@ module.exports = {
     return {
       ok: true,
       plan: plan,
-      message: `Expansion plan active: ${targetRoom} from ${parentRoom}.`,
+      message: `Expansion plan active: ${targetRoom} from ${parentRoom} (${focus}).`,
     };
   },
 
@@ -871,6 +906,7 @@ module.exports = {
 
     const plan = getExpansionPlans()[targetRoom] || null;
     if (!plan || plan.cancelled) return null;
+    ensureExpansionPlanDefaults(plan, targetRoom);
 
     return plan;
   },

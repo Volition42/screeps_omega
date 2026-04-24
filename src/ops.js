@@ -2,6 +2,8 @@ const opsState = require("ops_state");
 const roomReporting = require("room_reporting");
 const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
+const reservationFocus = require("reservation_focus");
+const expansionFocus = require("expansion_focus");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -251,14 +253,14 @@ function getConsoleCommandHelp() {
       example: "ops.tickRate(5)",
     },
     {
-      command: "ops.expand(targetRoom, [parentRoom])",
-      description: "Start a manual expansion plan from an owned parent room.",
-      example: 'ops.expand("W5N6", "W5N5")',
+      command: "ops.expand(targetRoom, [focus], [parentRoom])",
+      description: 'Start or update a manual expansion plan. Focus is "full", "mineral", or "energy".',
+      example: 'ops.expand("W5N6", "mineral", "W5N5")',
     },
     {
-      command: "ops.reserve(targetRoom, [parentRoom])",
-      description: "Start a reserved-room plan from the current or named parent room.",
-      example: 'ops.reserve("W5N6", "W5N5")',
+      command: "ops.reserve(targetRoom, [focus], [parentRoom])",
+      description: 'Start or update a reserved-room plan. Focus is "full" or "hold".',
+      example: 'ops.reserve("W5N6", "hold", "W5N5")',
     },
     {
       command: "ops.reserved([parentRoom])",
@@ -339,11 +341,11 @@ module.exports = {
       tickSpeed: function (sampleTicks) {
         return module.exports.tickRate(sampleTicks);
       },
-      expand: function (targetRoom, parentRoom) {
-        return module.exports.expand(targetRoom, parentRoom);
+      expand: function (targetRoom, focus, parentRoom) {
+        return module.exports.expand(targetRoom, focus, parentRoom);
       },
-      reserve: function (targetRoom, parentRoom) {
-        return module.exports.reserve(targetRoom, parentRoom);
+      reserve: function (targetRoom, focus, parentRoom) {
+        return module.exports.reserve(targetRoom, focus, parentRoom);
       },
       reserved: function (parentRoom) {
         return module.exports.reserved(parentRoom);
@@ -508,10 +510,33 @@ module.exports = {
     );
   },
 
-  expand(targetRoom, parentRoom) {
+  expand(targetRoom, focusOrParentRoom, parentRoom) {
+    let resolvedFocus = expansionFocus.DEFAULT;
+    let resolvedParent = parentRoom || null;
+
+    if (typeof focusOrParentRoom !== "undefined" && focusOrParentRoom !== null) {
+      const possibleFocus = expansionFocus.normalize(focusOrParentRoom);
+      if (possibleFocus) {
+        resolvedFocus = possibleFocus;
+      } else if (!resolvedParent) {
+        resolvedParent = focusOrParentRoom;
+      } else {
+        const message = `expand: invalid focus "${focusOrParentRoom}". Use ${expansionFocus.VALUES.join(" or ")}.`;
+        printLine(`[OPS] ${message}`);
+        return {
+          ok: false,
+          message: message,
+        };
+      }
+    }
+
     const reservation = reservationManager.getActiveReservation(targetRoom);
-    const takeoverParent = parentRoom || (reservation ? reservation.parentRoom : null);
-    const result = empireManager.createExpansion(targetRoom, takeoverParent);
+    const takeoverParent = resolvedParent || (reservation ? reservation.parentRoom : null);
+    const result = empireManager.createExpansion(
+      targetRoom,
+      takeoverParent,
+      resolvedFocus,
+    );
     printLine(`[OPS] ${result.message}`);
 
     if (result.ok) {
@@ -528,8 +553,25 @@ module.exports = {
     return result;
   },
 
-  reserve(targetRoom, parentRoom) {
+  reserve(targetRoom, focusOrParentRoom, parentRoom) {
+    let resolvedFocus = reservationFocus.DEFAULT;
     let resolvedParent = parentRoom || null;
+
+    if (typeof focusOrParentRoom !== "undefined" && focusOrParentRoom !== null) {
+      const possibleFocus = reservationFocus.normalize(focusOrParentRoom);
+      if (possibleFocus) {
+        resolvedFocus = possibleFocus;
+      } else if (!resolvedParent) {
+        resolvedParent = focusOrParentRoom;
+      } else {
+        const message = `reserve: invalid focus "${focusOrParentRoom}". Use ${reservationFocus.VALUES.join(" or ")}.`;
+        printLine(`[OPS] ${message}`);
+        return {
+          ok: false,
+          message: message,
+        };
+      }
+    }
 
     if (!resolvedParent) {
       const currentRoomName = opsState.getCurrentRoomName();
@@ -548,7 +590,11 @@ module.exports = {
       resolvedParent = currentRoom.name;
     }
 
-    const result = reservationManager.createReservation(targetRoom, resolvedParent);
+    const result = reservationManager.createReservation(
+      targetRoom,
+      resolvedParent,
+      resolvedFocus,
+    );
     printLine(`[OPS] ${result.message}`);
 
     if (result.ok) {

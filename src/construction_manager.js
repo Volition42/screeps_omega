@@ -25,6 +25,7 @@ const constructionStatus = require("construction_status");
 const roadmap = require("construction_roadmap");
 const statsManager = require("stats_manager");
 const stamps = require("stamp_library");
+const expansionFocus = require("expansion_focus");
 
 module.exports = {
   plan(room, state, profiler, roomLabelPrefix) {
@@ -53,9 +54,13 @@ module.exports = {
       state,
       mem,
     );
-    var plan = roadmap.getPlan(
-      state.phase,
-      room.controller ? room.controller.level : 0,
+    var focusName = expansionFocus.getFocusForRoom(room.name);
+    var plan = expansionFocus.applyToPlan(
+      roadmap.getPlan(
+        state.phase,
+        room.controller ? room.controller.level : 0,
+      ),
+      focusName,
     );
     var planningPlan = this.getPlanningPlan(room, state, plan);
     if (!planningPlan || !planningPlan.buildList) return;
@@ -186,6 +191,7 @@ module.exports = {
       phase: basePlan.phase,
       roadmapPhase: basePlan.roadmapPhase,
       focus: basePlan.focus,
+      expansionFocus: basePlan.expansionFocus || "full",
       summary: basePlan.summary,
       buildList: basePlan.buildList.slice(),
       goals: roadmap.cloneGoals(basePlan.goals || {}),
@@ -407,6 +413,7 @@ module.exports = {
 
     return [
       plan.roadmapPhase,
+      plan.expansionFocus || "full",
       controllerLevel,
       storageCount,
       sourceCount,
@@ -2723,9 +2730,12 @@ module.exports = {
       );
     }
 
-    var desiredTowers = context.room.controller
-      ? roadmap.getDesiredTowerCount(context.room.controller.level)
-      : 0;
+    var desiredTowers =
+      context.buildStatus && typeof context.buildStatus.towersNeeded === "number"
+        ? context.buildStatus.towersNeeded
+        : context.room.controller
+          ? roadmap.getDesiredTowerCount(context.room.controller.level)
+          : 0;
     var towerStampCapacity = Math.max(1, stamps.getTowerCapacity("tower_cluster_v1"));
     var towerStampsNeeded = Math.ceil(desiredTowers / towerStampCapacity);
     var towerOrigins = stamps.getTowerStampOrigins(origin);

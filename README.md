@@ -114,17 +114,18 @@ Defense notes:
 
 - `src/reservation_manager.js`
   Tracks `Memory.empire.reservation.plans`, creates reserved-room spawn requests, records remote intel, and plans throttled visible-room construction.
-- `ops.reserve(targetRoom, [parentRoom])`
-  Starts or updates a reserved-room plan. If no parent is provided, the current room selected by `ops.room(...)` is used.
+- `ops.reserve(targetRoom, [focus], [parentRoom])`
+  Starts or updates a reserved-room plan. Focus defaults to `full`; `hold` keeps only reserver upkeep and defense reporting. If no parent is provided, the current room selected by `ops.room(...)` is used.
 - `ops.reserved([parentRoom])`
   Shows reserved rooms grouped by parent, or one parent when provided.
 
 Reserved-room notes:
 
 - Reserved rooms unlock from a stable RCL4 parent room.
+- `hold` focus suppresses new remote workers, miners, haulers, and remote construction while allowing existing creeps to expire naturally.
 - Remote construction only runs when the reserved room is visible and only on the configured planning interval.
 - Source containers are placed first, then minimal de-duplicated roads from source containers toward the parent delivery route.
-- `ops.expand(targetRoom, [parentRoom])` can take over an active reserved room, inheriting the reservation parent when no parent is provided.
+- `ops.expand(targetRoom, [focus], [parentRoom])` can take over an active reserved room, inheriting the reservation parent when no parent is provided. Focus defaults to `full`; `mineral` builds terminal, mineral extraction, 3 labs, and caps towers at 2; `energy` builds terminal, skips mineral/lab/factory late infrastructure, and caps towers at 2.
 
 ## CPU And Visibility
 
