@@ -35,10 +35,12 @@ module.exports = {
       runtimeMode && runtimeMode.constructionIntervalMultiplier
         ? runtimeMode.constructionIntervalMultiplier
         : 1;
-    var planInterval = Math.max(
-      1,
-      (config.CONSTRUCTION.PLAN_INTERVAL || 50) * intervalMultiplier,
-    );
+    var baseInterval = config.CONSTRUCTION.PLAN_INTERVAL || 50;
+    var earlyInterval = this.getEarlyPlanInterval(room, state);
+    if (earlyInterval && earlyInterval > 0) {
+      baseInterval = Math.min(baseInterval, earlyInterval);
+    }
+    var planInterval = Math.max(1, baseInterval * intervalMultiplier);
 
     if (Game.time - mem.lastPlan < planInterval) return;
     mem.lastPlan = Game.time;
@@ -153,6 +155,30 @@ module.exports = {
       }
     }
 
+  },
+
+  getEarlyPlanInterval(room, state) {
+    if (
+      !config.EARLY_GROWTH ||
+      typeof config.EARLY_GROWTH.MAX_CONTROLLER_LEVEL !== "number"
+    ) {
+      return null;
+    }
+
+    const controllerLevel =
+      room && room.controller ? room.controller.level || 0 : 0;
+    if (controllerLevel > config.EARLY_GROWTH.MAX_CONTROLLER_LEVEL) {
+      return null;
+    }
+
+    if (
+      !config.CONSTRUCTION ||
+      typeof config.CONSTRUCTION.EARLY_PLAN_INTERVAL !== "number"
+    ) {
+      return null;
+    }
+
+    return config.CONSTRUCTION.EARLY_PLAN_INTERVAL;
   },
 
   getPlanningPlan(room, state, basePlan) {
@@ -2412,8 +2438,6 @@ module.exports = {
     var storagePos = this.getStoragePlanningPosition(context);
     if (!storagePos) return;
 
-    this.placeStampRoads(context, storagePos, "storage_hub_v1");
-
     stamps.forEachStoragePosition(
       storagePos,
       "storage_hub_v1",
@@ -2423,6 +2447,10 @@ module.exports = {
       },
       this,
     );
+
+    if (this.isSiteCapReached(context)) return;
+
+    this.placeStampRoads(context, storagePos, "storage_hub_v1");
   },
 
   placeSpawns(context) {

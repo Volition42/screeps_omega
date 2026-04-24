@@ -363,6 +363,18 @@ module.exports = {
       this.addDefenseRequests(room, state, requests, reaction);
 
       if (!this.areSourceContainersReady(state)) {
+        if (this.getReadySourceContainerCount(state) > 0) {
+          this.addCoreEconomyRequests(room, state, requests, {
+            includeRepairs: false,
+          });
+
+          requests.sort(function (a, b) {
+            return b.priority - a.priority;
+          });
+
+          return requests;
+        }
+
         var desiredBootstrapWorkers = this.getDesiredWorkers(room, state);
         var currentBootstrapWorkers = roleCounts.worker || 0;
         var queuedBootstrapWorkers = this.countQueued(room, "worker");
@@ -475,6 +487,13 @@ module.exports = {
       }
     }
 
+    if (state.phase === "foundation") {
+      this.addHaulerRequests(room, state, requests, {
+        priority: 95,
+        maxPerSource: 1,
+      });
+    }
+
     var desiredWorkers = this.getDesiredWorkers(room, state);
     var currentWorkers = roleCounts.worker || 0;
     var queuedWorkers = this.countQueued(room, "worker");
@@ -508,39 +527,9 @@ module.exports = {
       });
     }
 
-    for (var j = 0; j < sources.length; j++) {
-      var haulSource = sources[j];
-      var haulContainer = sourceContainersBySourceId[haulSource.id];
-      if (!haulContainer) continue;
-
-      var desiredHaulersForSource = this.getDesiredHaulersForSource(
-        room,
-        state,
-        haulSource.id,
-      );
-      var existingHaulers = this.getRoleSourceCount(
-        state,
-        "hauler",
-        haulSource.id,
-      );
-      var queuedHaulers = this.countQueuedForSource(
-        room,
-        "hauler",
-        haulSource.id,
-      );
-
-      for (
-        var haulerIndex = existingHaulers + queuedHaulers;
-        haulerIndex < desiredHaulersForSource;
-        haulerIndex++
-      ) {
-        requests.push({
-          role: "hauler",
-          priority: 70,
-          sourceId: haulSource.id,
-        });
-      }
-    }
+    this.addHaulerRequests(room, state, requests, {
+      priority: 70,
+    });
 
     this.addMineralRequests(room, state, requests);
 
@@ -559,6 +548,59 @@ module.exports = {
       desiredRepairs
     ) {
       requests.push({ role: "repair", priority: 60 });
+    }
+  },
+
+  addHaulerRequests(room, state, requests, options) {
+    var settings = options || {};
+    var sources = state.sources || [];
+    var sourceContainersBySourceId = state.sourceContainersBySourceId || {};
+    var priority =
+      typeof settings.priority === "number" ? settings.priority : 70;
+    var maxPerSource =
+      typeof settings.maxPerSource === "number"
+        ? Math.max(0, settings.maxPerSource)
+        : null;
+
+    for (var i = 0; i < sources.length; i++) {
+      var haulSource = sources[i];
+      var haulContainer = sourceContainersBySourceId[haulSource.id];
+      if (!haulContainer) continue;
+
+      var desiredHaulersForSource = this.getDesiredHaulersForSource(
+        room,
+        state,
+        haulSource.id,
+      );
+      if (maxPerSource !== null) {
+        desiredHaulersForSource = Math.min(
+          desiredHaulersForSource,
+          maxPerSource,
+        );
+      }
+
+      var existingHaulers = this.getRoleSourceCount(
+        state,
+        "hauler",
+        haulSource.id,
+      );
+      var queuedHaulers = this.countQueuedForSource(
+        room,
+        "hauler",
+        haulSource.id,
+      );
+
+      for (
+        var haulerIndex = existingHaulers + queuedHaulers;
+        haulerIndex < desiredHaulersForSource;
+        haulerIndex++
+      ) {
+        requests.push({
+          role: "hauler",
+          priority: priority,
+          sourceId: haulSource.id,
+        });
+      }
     }
   },
 
@@ -731,7 +773,7 @@ module.exports = {
 
     // Keep the first room stable enough to upgrade out of RCL1 instead of
     // endlessly refilling the spawn with an oversized emergency workforce.
-    return Math.min(configured, 2);
+    return Math.min(configured, this.getEarlyRcl1JrWorkerCap());
   },
 
   getDesiredWorkers(room, state) {
@@ -741,11 +783,19 @@ module.exports = {
     var targetWork = 2;
     var hasStorage = !!(state && state.infrastructure && state.infrastructure.hasStorage);
     var bankingReserve = reservePolicy.shouldBankStorageEnergy(room, state);
+    var earlyGrowthRoom = this.isEarlyGrowthRoom(room);
 
     if (state.phase === "foundation") {
       targetWork = Math.max(4, (state.sources ? state.sources.length : 1) * 2);
     } else if (state.phase === "development") {
-      targetWork = sites > 0 ? 2 + Math.min(4, sites) : 0;
+      targetWork = sites > 0
+        ? 2 + Math.min(
+            earlyGrowthRoom
+              ? this.getEarlyDevelopmentWorkerSiteCap()
+              : 4,
+            sites,
+          )
+        : 0;
     } else {
       targetWork = hasStorage ? 0 : 4;
 
@@ -777,7 +827,9 @@ module.exports = {
     var plan = bodies.plan("upgrader", room, { role: "upgrader" }, state);
     var workPerCreep = Math.max(1, plan.workParts || 1);
     var sites = state && state.sites ? state.sites.length : 0;
-    var targetWork = state.phase === "foundation" ? 2 : 4;
+    var targetWork = state.phase === "foundation"
+      ? this.getFoundationUpgraderTargetWork(room)
+      : 4;
     var storageEnergy =
       state.infrastructure && state.infrastructure.storageEnergy
         ? state.infrastructure.storageEnergy
@@ -796,8 +848,16 @@ module.exports = {
       return 0;
     }
 
-    if (state.phase === "development" && sites > 3) {
-      targetWork = 2;
+    if (
+      state.phase === "development" &&
+      sites > this.getDevelopmentUpgraderReductionThreshold()
+    ) {
+      targetWork = this.isEarlyGrowthRoom(room)
+        ? Math.max(
+            this.getDevelopmentUpgraderMinTargetWork(),
+            targetWork - 1,
+          )
+        : 2;
     }
 
     targetWork = Math.max(
@@ -810,7 +870,12 @@ module.exports = {
       !state.buildStatus.currentRoadmapReady &&
       sites > 0
     ) {
-      targetWork = Math.max(2, targetWork - 2);
+      targetWork = this.isEarlyGrowthRoom(room)
+        ? Math.max(
+            this.getDevelopmentUpgraderMinTargetWork(),
+            targetWork - 1,
+          )
+        : Math.max(2, targetWork - 2);
     }
 
     if (
@@ -966,6 +1031,82 @@ module.exports = {
     }
 
     return Math.ceil(Math.min(8, targetWork) / workPerCreep);
+  },
+
+  getReadySourceContainerCount(state) {
+    if (!state || !state.sourceContainersBySourceId) return 0;
+
+    var count = 0;
+    for (var sourceId in state.sourceContainersBySourceId) {
+      if (
+        Object.prototype.hasOwnProperty.call(
+          state.sourceContainersBySourceId,
+          sourceId,
+        ) &&
+        state.sourceContainersBySourceId[sourceId]
+      ) {
+        count++;
+      }
+    }
+
+    return count;
+  },
+
+  isEarlyGrowthRoom(room) {
+    if (!room || !room.controller) return false;
+
+    return (
+      (room.controller.level || 0) <= this.getEarlyGrowthMaxControllerLevel()
+    );
+  },
+
+  getEarlyGrowthMaxControllerLevel() {
+    return config.EARLY_GROWTH &&
+      typeof config.EARLY_GROWTH.MAX_CONTROLLER_LEVEL === "number"
+      ? config.EARLY_GROWTH.MAX_CONTROLLER_LEVEL
+      : 5;
+  },
+
+  getEarlyRcl1JrWorkerCap() {
+    return config.EARLY_GROWTH &&
+      typeof config.EARLY_GROWTH.RCL1_JRWORKER_CAP === "number"
+      ? Math.max(1, config.EARLY_GROWTH.RCL1_JRWORKER_CAP)
+      : 2;
+  },
+
+  getEarlyDevelopmentWorkerSiteCap() {
+    return config.EARLY_GROWTH &&
+      typeof config.EARLY_GROWTH.DEVELOPMENT_WORKER_SITE_CAP === "number"
+      ? Math.max(1, config.EARLY_GROWTH.DEVELOPMENT_WORKER_SITE_CAP)
+      : 4;
+  },
+
+  getDevelopmentUpgraderReductionThreshold() {
+    return config.EARLY_GROWTH &&
+      typeof config.EARLY_GROWTH.DEVELOPMENT_UPGRADER_SITE_REDUCTION_THRESHOLD === "number"
+      ? Math.max(
+          1,
+          config.EARLY_GROWTH.DEVELOPMENT_UPGRADER_SITE_REDUCTION_THRESHOLD,
+        )
+      : 3;
+  },
+
+  getDevelopmentUpgraderMinTargetWork() {
+    return config.EARLY_GROWTH &&
+      typeof config.EARLY_GROWTH.DEVELOPMENT_UPGRADER_MIN_TARGET_WORK === "number"
+      ? Math.max(1, config.EARLY_GROWTH.DEVELOPMENT_UPGRADER_MIN_TARGET_WORK)
+      : 3;
+  },
+
+  getFoundationUpgraderTargetWork(room) {
+    if (this.isEarlyGrowthRoom(room)) {
+      return config.EARLY_GROWTH &&
+        typeof config.EARLY_GROWTH.FOUNDATION_UPGRADER_TARGET_WORK === "number"
+        ? Math.max(1, config.EARLY_GROWTH.FOUNDATION_UPGRADER_TARGET_WORK)
+        : 3;
+    }
+
+    return 2;
   },
 
   countQueued(room, role) {

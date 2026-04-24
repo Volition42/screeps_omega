@@ -21,7 +21,7 @@ As of April 2, 2026:
 - PTR server URL: `http://127.0.0.1:21035`
 - PTR CLI port: `21036`
 - Local dev auth token: `screeps-omega-dev-token`
-- Default local test CPU cap: `20`
+- Default local test CPU cap: `100`
 - Default browser login: `local-dev` / `screeps-local-pass`
 
 The private server stays outside the repo on purpose. Only the helper scripts and docs live in source control.
@@ -143,7 +143,7 @@ scripts/private_server/set_browser_password.sh
 Common fast-loop commands:
 
 ```bash
-scripts/private_server/set_test_cpu.sh 20
+scripts/private_server/set_test_cpu.sh 100
 scripts/private_server/set_fast_tick.sh 100
 scripts/private_server/reseed_dev_room.sh
 scripts/private_server/spawn_test_invader.sh
@@ -152,7 +152,7 @@ scripts/private_server/spawn_test_invader.sh
 If you change the CPU cap, restart the private server before resetting or reseeding:
 
 ```bash
-scripts/private_server/set_test_cpu.sh 20
+scripts/private_server/set_test_cpu.sh 100
 scripts/private_server/stop_dev_server.sh
 scripts/private_server/start_dev_server.sh
 ```
@@ -222,6 +222,6 @@ The private server has already been bootstrapped successfully enough to:
 - place a first spawn in `W5N5`
 - observe the uploaded code spawning a `jrworker`
 - run the current HUD/client path through the localhost browser route
-- maintain the local user at the configured `20` CPU cap
+- maintain the local user at the configured local test CPU cap
 
 That means `src/` is now executing on the private PTR server instead of being limited to syntax checks.

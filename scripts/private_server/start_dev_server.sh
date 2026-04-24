@@ -18,7 +18,7 @@ fi
 
 export LOCAL_NOAUTH=1
 export LOCAL_NOAUTH_TOKEN="${LOCAL_TOKEN}"
-export LOCAL_NOAUTH_CPU="${LOCAL_NOAUTH_CPU:-${SCREEPS_TEST_CPU:-20}}"
+export LOCAL_NOAUTH_CPU="${LOCAL_NOAUTH_CPU:-${SCREEPS_TEST_CPU:-100}}"
 export SCREEPS_OMEGA_REPO_ROOT="${ROOT_DIR}"
 export SCREEPS_OMEGA_WORLD_TOOL="${ROOT_DIR}/scripts/private_server/world_tool.py"
 export SCREEPS_OMEGA_UPLOAD_SCRIPT="${ROOT_DIR}/scripts/private_server/upload_src.sh"

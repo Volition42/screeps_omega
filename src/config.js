@@ -70,6 +70,25 @@ module.exports = {
 
   /*
   Developer Notes:
+  Early Growth Controls
+
+  These settings bias owned rooms toward faster RCL1-RCL5 progression:
+  - allow a slightly larger capped bootstrap labor force at RCL1
+  - keep some upgrader pressure even when development construction is busy
+  - trim excess early builder pressure so leveling stays moving
+  - replan construction more often while the room is still maturing
+  */
+  EARLY_GROWTH: {
+    MAX_CONTROLLER_LEVEL: 5,
+    RCL1_JRWORKER_CAP: 3,
+    DEVELOPMENT_WORKER_SITE_CAP: 3,
+    DEVELOPMENT_UPGRADER_SITE_REDUCTION_THRESHOLD: 5,
+    DEVELOPMENT_UPGRADER_MIN_TARGET_WORK: 3,
+    FOUNDATION_UPGRADER_TARGET_WORK: 3,
+  },
+
+  /*
+  Developer Notes:
   Expansion Controls
 
   Expansion is console-driven in this phase. The empire layer may observe all
@@ -146,6 +165,7 @@ module.exports = {
   CONSTRUCTION: {
     MAX_SITES: 8,
     PLAN_INTERVAL: 50,
+    EARLY_PLAN_INTERVAL: 10,
     ADVANCED_PLAN_INTERVAL: 250,
     ADVANCED_ACTIONS: {
       // Developer note:
@@ -389,7 +409,7 @@ module.exports = {
 
   STATS: {
     RUNTIME_POLICY: {
-      SOFT_CPU_LIMIT: 20,
+      SOFT_CPU_LIMIT: 0,
       TIGHT_CPU_RATIO: 0.8,
       CRITICAL_CPU_RATIO: 0.92,
       TIGHT_BUCKET: 8000,

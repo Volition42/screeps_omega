@@ -1743,6 +1743,66 @@ function runFoundationScenario() {
   assert(siteTypes.includes(STRUCTURE_ROAD), "foundation should also place road sites");
 }
 
+function runFoundationPartialEconomyScenario() {
+  const room = buildRoomScenario("VAL_FOUNDATION_PARTIAL", {
+    tick: 210,
+    controllerLevel: 2,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    supportContainers: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+    ],
+  });
+
+  const sources = room.find(FIND_SOURCES);
+  room.addStructure(
+    createStructure(STRUCTURE_CONTAINER, sources[0].pos.x + 1, sources[0].pos.y, {
+      roomName: room.name,
+      hits: 250000,
+      hitsMax: 250000,
+      store: { energy: 1000 },
+      storeCapacity: 2000,
+    }),
+  );
+
+  const state = roomState.collect(room);
+  const requests = spawnManager.getSpawnRequests(room, state);
+
+  assert(state.phase === "foundation", `expected foundation, got ${state.phase}`);
+  assert(
+    requests.some((request) => request.role === "worker"),
+    "foundation with only one ready source lane should still request workers",
+  );
+  assert(
+    requests.some((request) => request.role === "miner" && request.sourceId === sources[0].id),
+    "foundation should start a miner on the ready source lane",
+  );
+  assert(
+    requests.some((request) => request.role === "hauler" && request.sourceId === sources[0].id),
+    "foundation should start hauling from the ready source lane",
+  );
+  assert(
+    !requests.some((request) => request.role === "miner" && request.sourceId === sources[1].id),
+    "foundation should not request a miner for an unfinished source lane",
+  );
+  assert(
+    requests.findIndex(
+      (request) => request.role === "hauler" && request.sourceId === sources[0].id,
+    ) <
+      requests.findIndex((request) => request.role === "worker"),
+    "foundation should queue the first hauler before generic workers once a source lane is ready",
+  );
+  assert(
+    requests.findIndex(
+      (request) => request.role === "hauler" && request.sourceId === sources[0].id,
+    ) <
+      requests.findIndex((request) => request.role === "upgrader"),
+    "foundation should queue the first hauler before upgraders once a source lane is ready",
+  );
+}
+
 function runFoundationExtensionScenario() {
   const room = buildRoomScenario("VAL_FOUNDATION_EXTENSIONS", {
     tick: 225,
@@ -1814,6 +1874,7 @@ function runBootstrapSpawnCapScenario() {
     creeps: [
       { name: "jr1", role: "jrworker", x: 24, y: 25 },
       { name: "jr2", role: "jrworker", x: 26, y: 25 },
+      { name: "jr3", role: "jrworker", x: 25, y: 24 },
     ],
   });
 
@@ -2001,6 +2062,103 @@ function runDevelopmentScenario() {
   assert(
     siteTypes.includes(STRUCTURE_EXTENSION),
     `development should prioritize extension placement, got ${siteTypes.join(",") || "none"}`,
+  );
+}
+
+function runDevelopmentStoragePriorityScenario() {
+  const room = buildRoomScenario("VAL_DEVELOPMENT_STORAGE_PRIORITY", {
+    tick: 310,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 550,
+    energyCapacityAvailable: 550,
+    sourceContainers: true,
+    supportContainers: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+      { name: "hauler2", role: "hauler", x: 26, y: 24 },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+  });
+
+  const extensionPositions = pickOpenPositions(
+    room,
+    CONTROLLER_STRUCTURES.extension[4] || 0,
+  );
+  for (let i = 0; i < extensionPositions.length; i++) {
+    room.addStructure(
+      createStructure(STRUCTURE_EXTENSION, extensionPositions[i][0], extensionPositions[i][1], {
+        roomName: room.name,
+        store: { energy: 0 },
+        storeCapacityResource: { energy: 50 },
+        hits: 1000,
+        hitsMax: 1000,
+      }),
+    );
+  }
+
+  const towerPositions = pickOpenPositions(room, CONTROLLER_STRUCTURES.tower[4] || 0, [
+    [room.spawn.pos.x + 3, room.spawn.pos.y - 4, 5, 5],
+  ]);
+  for (let i = 0; i < towerPositions.length; i++) {
+    room.addStructure(
+      createStructure(STRUCTURE_TOWER, towerPositions[i][0], towerPositions[i][1], {
+        roomName: room.name,
+        store: { energy: 800 },
+        storeCapacityResource: { energy: 1000 },
+        hits: 3000,
+        hitsMax: 3000,
+      }),
+    );
+  }
+
+  const state = roomState.collect(room);
+  const originalMaxSites = config.CONSTRUCTION.MAX_SITES;
+  config.CONSTRUCTION.MAX_SITES = 1;
+
+  try {
+    constructionManager.plan(room, state);
+  } finally {
+    config.CONSTRUCTION.MAX_SITES = originalMaxSites;
+  }
+
+  const sites = room.find(FIND_CONSTRUCTION_SITES);
+  assert(state.phase === "development", `expected development, got ${state.phase}`);
+  assert(sites.length === 1, `expected one prioritized site, got ${sites.length}`);
+  assert(
+    sites[0].structureType === STRUCTURE_STORAGE,
+    `expected storage to be placed before extra roads once extensions/tower are ready, got ${sites[0].structureType}`,
+  );
+}
+
+function runFoundationUpgraderPressureScenario() {
+  const room = buildRoomScenario("VAL_FOUNDATION_UPGRADER_PRESSURE", {
+    tick: 315,
+    controllerLevel: 2,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    creeps: [
+      { name: "worker1", role: "worker", x: 24, y: 25 },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const desiredUpgraders = spawnManager.getDesiredUpgraders(room, state);
+
+  assert(state.phase === "foundation", `expected foundation, got ${state.phase}`);
+  assert(
+    desiredUpgraders >= 2,
+    `expected faster early foundation upgrading demand, got ${desiredUpgraders}`,
   );
 }
 
@@ -5504,6 +5662,25 @@ function runCpuRoomScaleScenario() {
   );
 }
 
+function runCpuSoftLimitScenario() {
+  const originalLimit = Game.cpu.limit;
+  const originalSoftLimit = config.STATS.RUNTIME_POLICY.SOFT_CPU_LIMIT;
+
+  try {
+    Game.cpu.limit = 80;
+    config.STATS.RUNTIME_POLICY.SOFT_CPU_LIMIT = 0;
+
+    const softLimit = statsManager.getSoftCpuLimit();
+    assert(
+      softLimit === 80,
+      `expected zero soft CPU limit config to use actual CPU limit, got ${softLimit}`,
+    );
+  } finally {
+    Game.cpu.limit = originalLimit;
+    config.STATS.RUNTIME_POLICY.SOFT_CPU_LIMIT = originalSoftLimit;
+  }
+}
+
 function runSpawnBodyValidationScenario() {
   const validBody = bodies.validateBody([WORK, CARRY, MOVE]);
   assert(validBody.valid, `expected [WORK,CARRY,MOVE] to validate, got ${JSON.stringify(validBody)}`);
@@ -5589,6 +5766,7 @@ function main() {
   const scenarios = [
     ["bootstrap", runBootstrapScenario],
     ["foundation", runFoundationScenario],
+    ["foundation_partial_economy", runFoundationPartialEconomyScenario],
     ["foundation_extensions", runFoundationExtensionScenario],
     ["bootstrap_harvest_spread", runBootstrapHarvestSpreadScenario],
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
@@ -5597,6 +5775,8 @@ function main() {
     ["jrworker_dropped_energy_pickup", runJrWorkerDroppedEnergyPickupScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
+    ["development_storage_priority", runDevelopmentStoragePriorityScenario],
+    ["foundation_upgrader_pressure", runFoundationUpgraderPressureScenario],
     ["extension_core", runCompactExtensionCoreScenario],
     ["extension_terrain", runTerrainAwareExtensionPlanScenario],
     ["controller_road_dedup", runControllerRoadDedupScenario],
@@ -5658,6 +5838,7 @@ function main() {
     ["expansion_stale_threat_defense", runExpansionStaleThreatDefenseScenario],
     ["expansion_threat_retreat", runExpansionThreatRetreatScenario],
     ["hud_config_controls", runHudConfigControlsScenario],
+    ["cpu_soft_limit", runCpuSoftLimitScenario],
     ["cpu_room_scale", runCpuRoomScaleScenario],
     ["spawn_body_validation", runSpawnBodyValidationScenario],
     ["spawn_body_missing_energy_capacity", runSpawnBodyMissingEnergyCapacityScenario],

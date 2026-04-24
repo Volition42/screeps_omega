@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 source "${ROOT_DIR}/scripts/private_server/load_server_profile.sh"
 
-CPU_LIMIT="${1:-${SCREEPS_TEST_CPU:-20}}"
+CPU_LIMIT="${1:-${SCREEPS_TEST_CPU:-100}}"
 SERVER_ROOT="${SCREEPS_PRIVATE_SERVER_DIR}"
 SERVER_ENV_FILE="${SERVER_ROOT}/.local-dev.env"
 SCREEPSRC_FILE="${SERVER_ROOT}/.screepsrc"
