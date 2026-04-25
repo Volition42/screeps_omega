@@ -4987,66 +4987,96 @@ function runRoomRoleOpsScenario() {
 }
 
 function runExpansionIndependenceScenario() {
-  const target = buildRoomScenario("W3N4", {
-    tick: 984,
-    controllerLevel: 3,
-    spawnEnergy: 800,
-    energyAvailable: 800,
-    energyCapacityAvailable: 800,
-    sourceContainers: true,
-    supportContainers: true,
-    foundationRoads: true,
-    backboneRoads: true,
-    creeps: [
-      { name: "independentWorker", role: "worker", x: 24, y: 25 },
-    ],
-  });
-  target.controller.my = true;
-  target.controller.owner = { username: "tester" };
-  const parent = new FakeRoom("W3N3", new FakeTerrain());
-  parent.setController(
+  const parent = buildStableReservationParent("W3N3", 984);
+  const target = new FakeRoom("W3N4", new FakeTerrain());
+  target.setController(
     createController(20, 20, {
-      roomName: parent.name,
+      roomName: target.name,
       level: 4,
+      my: true,
+      owner: { username: "tester" },
     }),
   );
-  parent.controller.my = true;
-  parent.controller.owner = { username: "tester" };
-  parent.addStructure(
+  target.addStructure(
     createStructure(STRUCTURE_SPAWN, 25, 25, {
-      roomName: parent.name,
-      name: "ParentSpawn",
+      roomName: target.name,
+      name: "ExpansionSpawn",
       store: { energy: 300 },
       storeCapacityResource: { energy: 300 },
       hits: 5000,
       hitsMax: 5000,
     }),
   );
-  parent.addSource(createSource(15, 25, { roomName: parent.name }));
-  parent.addMineral(createMineral(35, 20, { roomName: parent.name }));
-  parent.energyAvailable = 300;
-  parent.energyCapacityAvailable = 1300;
+  target.addSource(createSource(15, 25, { roomName: target.name }));
+  target.addSource(createSource(35, 25, { roomName: target.name }));
+  target.addMineral(createMineral(35, 20, { roomName: target.name }));
+  target.energyAvailable = 800;
+  target.energyCapacityAvailable = 800;
+  createCreep("independentWorker", "worker", 24, 25, {
+    roomName: target.name,
+    memory: {
+      role: "worker",
+      room: target.name,
+      homeRoom: target.name,
+    },
+  });
   if (!Memory.rooms[parent.name]) Memory.rooms[parent.name] = {};
   const expansion = empireManager.createExpansion(target.name, parent.name, "energy");
   assert(expansion.ok, `expected expansion setup, got ${expansion.message}`);
-  assert(empireManager.getActiveExpansion(target.name).parentRoom === parent.name, "RCL3 expansion should keep parent");
+  assert(empireManager.getActiveExpansion(target.name).parentRoom === null, "self-hosted expansion should detach from parent");
 
-  target.controller.level = 4;
-  addRcl4StableStructures(target);
-  Memory.rooms[parent.name].spawnQueue = [
-    { role: "pioneer", targetRoom: target.name, operation: "expansion" },
-    { role: "defender", targetRoom: target.name, operation: "expansion_defense" },
-  ];
+  let parentState = roomState.collect(parent);
+  let requests = spawnManager.getSpawnRequests(parent, parentState);
+  assert(
+    !requests.some(function (request) {
+      return request.role === "pioneer" && request.targetRoom === target.name;
+    }),
+    `healthy spawned expansion should not request parent pioneers, got ${JSON.stringify(requests)}`,
+  );
+
   const plan = empireManager.getActiveExpansion(target.name);
-  assert(plan && plan.parentRoom === null, `RCL4 expansion should clear parent, got ${JSON.stringify(plan)}`);
-  assert(plan.independentAt === Game.time, "RCL4 expansion should record independentAt");
-  assert(plan.focus === "energy", "RCL4 expansion should preserve focus");
-  assert(Memory.rooms[parent.name].spawnQueue.length === 0, "RCL4 independence should prune parent expansion queue");
+  assert(plan && plan.parentRoom === null, `self-hosted expansion should remain independent, got ${JSON.stringify(plan)}`);
+  assert(plan.focus === "energy", "self-hosted expansion should preserve focus");
 
   const report = empireManager.buildReport();
   assert(
     !report.lines.some(function (line) { return line.indexOf(`expansion ${target.name}`) !== -1; }),
     `independent expansion should not render as child row, got ${report.lines.join(" / ")}`,
+  );
+
+  const targetWorkers = target.find(FIND_MY_CREEPS).filter(function (creep) {
+    return creep.memory && (creep.memory.role === "worker" || creep.memory.role === "jrworker");
+  });
+  for (let i = 0; i < targetWorkers.length; i++) {
+    delete Game.creeps[targetWorkers[i].name];
+    delete currentRuntime.objectsById[targetWorkers[i].id];
+  }
+
+  const targetHaulers = target.find(FIND_MY_CREEPS).filter(function (creep) {
+    return creep.memory && creep.memory.role === "hauler";
+  });
+  for (let j = 0; j < targetHaulers.length; j++) {
+    delete Game.creeps[targetHaulers[j].name];
+    delete currentRuntime.objectsById[targetHaulers[j].id];
+  }
+
+  target.energyAvailable = 0;
+  target.controller.my = true;
+  target.controller.owner = { username: "tester" };
+  if (Game.rooms[target.name]) {
+    Game.rooms[target.name].energyAvailable = 0;
+    Game.rooms[target.name].controller.my = true;
+    Game.rooms[target.name].controller.owner = { username: "tester" };
+  }
+
+  parentState = roomState.collect(parent);
+  requests = spawnManager.getSpawnRequests(parent, parentState);
+  assert(empireManager.getActiveExpansion(target.name).parentRoom === parent.name, "collapsed independent expansion should reattach to a parent");
+  assert(
+    requests.some(function (request) {
+      return request.role === "pioneer" && request.targetRoom === target.name;
+    }),
+    `collapsed spawned expansion should request parent pioneers, got ${JSON.stringify(requests)}`,
   );
 }
 

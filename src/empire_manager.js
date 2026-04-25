@@ -619,18 +619,45 @@ function ensureExpansionPlanDefaults(plan, targetRoom) {
   return plan;
 }
 
-function reconcileExpansionIndependence(plan) {
-  if (!plan || plan.cancelled || !plan.parentRoom) return false;
+function canExpansionSelfSpawn(room) {
+  if (!room) return false;
 
-  const room = plan.targetRoom ? Game.rooms[plan.targetRoom] : null;
-  const hasIndependentSpawn = !!(
-    room &&
-    room.controller &&
-    room.controller.my &&
-    room.controller.level >= 4 &&
-    room.find(FIND_MY_SPAWNS).length > 0
-  );
-  if (!hasIndependentSpawn) return false;
+  const spawns = room.find(FIND_MY_SPAWNS);
+  if (spawns.length <= 0) return false;
+
+  for (let i = 0; i < spawns.length; i++) {
+    if (spawns[i].spawning) return true;
+  }
+
+  return room.energyAvailable >= 200;
+}
+
+function isExpansionTotalCollapse(room) {
+  if (!room || !room.controller || !room.controller.my) return false;
+  if (room.find(FIND_MY_CREEPS).length > 0) return false;
+
+  return !canExpansionSelfSpawn(room);
+}
+
+function adoptExpansionParent(plan, parentRoomName) {
+  if (!plan || !parentRoomName || plan.parentRoom === parentRoomName) return false;
+
+  if (!plan.previousParents) plan.previousParents = [];
+  if (plan.parentRoom) {
+    plan.previousParents.push({
+      room: plan.parentRoom,
+      clearedAt: Game.time,
+    });
+  }
+
+  plan.parentRoom = parentRoomName;
+  plan.recoveredAt = Game.time;
+  plan.updatedAt = Game.time;
+  return true;
+}
+
+function clearExpansionParent(plan) {
+  if (!plan || plan.cancelled || !plan.parentRoom) return false;
 
   if (!plan.previousParents) plan.previousParents = [];
   plan.previousParents.push({
@@ -641,8 +668,74 @@ function reconcileExpansionIndependence(plan) {
   plan.independentAt = plan.independentAt || Game.time;
   plan.updatedAt = Game.time;
   pruneExpansionQueue(plan.targetRoom);
-
   return true;
+}
+
+function reconcileExpansionSupport(plan) {
+  if (!plan || plan.cancelled) return false;
+
+  const room = plan.targetRoom ? Game.rooms[plan.targetRoom] : null;
+  const hasIndependentSpawn = !!(
+    room &&
+    room.controller &&
+    room.controller.my &&
+    room.controller.level >= 4 &&
+    room.find(FIND_MY_SPAWNS).length > 0
+  );
+
+  if (plan.parentRoom) {
+    if (hasIndependentSpawn && !isExpansionTotalCollapse(room)) {
+      return clearExpansionParent(plan);
+    }
+    return false;
+  }
+
+  if (!isExpansionTotalCollapse(room)) return false;
+
+  const selected = chooseParentRoom(plan.targetRoom, module.exports.collectOwnedRooms());
+  if (!selected) return false;
+
+  return adoptExpansionParent(plan, selected.name);
+}
+
+function getTargetRoleCounts(room) {
+  if (!room) return {};
+
+  const cache = utils.getRoomRuntimeCache(room);
+  const state = cache && cache.state ? cache.state : null;
+  if (state && state.roleCounts) {
+    return state.roleCounts;
+  }
+
+  const counts = {};
+  for (const creepName in Game.creeps) {
+    if (!Object.prototype.hasOwnProperty.call(Game.creeps, creepName)) continue;
+
+    const creep = Game.creeps[creepName];
+    if (!creep || !creep.memory || creep.memory.room !== room.name) continue;
+
+    const role = creep.memory.role || "none";
+    counts[role] = (counts[role] || 0) + 1;
+  }
+
+  return counts;
+}
+
+function shouldRequestExpansionPioneerSupport(targetRoom) {
+  if (!targetRoom || !targetRoom.controller || !targetRoom.controller.my) {
+    return false;
+  }
+
+  const hasSpawn = targetRoom.find(FIND_MY_SPAWNS).length > 0;
+  if (!hasSpawn) return true;
+
+  if (!isExpansionTotalCollapse(targetRoom)) return false;
+
+  const roleCounts = getTargetRoleCounts(targetRoom);
+  return (
+    (roleCounts.worker || 0) + (roleCounts.jrworker || 0) <= 0 &&
+    (roleCounts.hauler || 0) <= 0
+  );
 }
 
 function getActivePlanList() {
@@ -654,7 +747,7 @@ function getActivePlanList() {
     const plan = plans[targetRoom];
     if (!plan || plan.cancelled) continue;
     ensureExpansionPlanDefaults(plan, targetRoom);
-    reconcileExpansionIndependence(plan);
+    reconcileExpansionSupport(plan);
     result.push(plan);
   }
 
@@ -938,7 +1031,7 @@ module.exports = {
     const plan = getExpansionPlans()[targetRoom] || null;
     if (!plan || plan.cancelled) return null;
     ensureExpansionPlanDefaults(plan, targetRoom);
-    reconcileExpansionIndependence(plan);
+    reconcileExpansionSupport(plan);
 
     return plan;
   },
@@ -1145,7 +1238,7 @@ module.exports = {
         }
       }
 
-      if (status === "bootstrapping") {
+      if (targetRoom && shouldRequestExpansionPioneerSupport(targetRoom)) {
         const pioneers =
           countExpansionCreeps("pioneer", plan.targetRoom, room.name) +
           countQueuedExpansion("pioneer", plan.targetRoom, room.name);
