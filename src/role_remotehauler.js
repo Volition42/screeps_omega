@@ -78,6 +78,19 @@ module.exports = {
       return;
     }
 
+    const storage = creep.room.storage;
+    if (
+      storage &&
+      storage.store &&
+      storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      delete creep.memory.deliveryTargetId;
+      if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        utils.moveTo(creep, storage, MOVE_OPTIONS);
+      }
+      return;
+    }
+
     const target = this.getDeliveryTarget(creep);
     if (target) {
       if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {

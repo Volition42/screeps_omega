@@ -671,6 +671,16 @@ function getParentDeliveryTarget(parentRoom) {
   return parentRoom.storage || parentRoom.find(FIND_MY_SPAWNS)[0] || parentRoom.controller || null;
 }
 
+function estimateRemoteHaulRoundTrip(parentRoomName, targetRoomName, container, delivery) {
+  if (container && delivery && delivery.pos && container.pos) {
+    if (container.pos.roomName === delivery.pos.roomName) {
+      return container.pos.getRangeTo(delivery.pos) * 2 + 10;
+    }
+  }
+
+  return getRoomDistance(parentRoomName, targetRoomName) * 50 + 20;
+}
+
 function getDeliveryTargetLabel(target) {
   if (!target) return "none";
   if (target.structureType) return target.structureType;
@@ -1296,9 +1306,12 @@ module.exports = {
         ? settings.REMOTE_HAULER_CARRY_PARTS
         : 8;
     const delivery = getParentDeliveryTarget(parentRoom);
-    const range = delivery && delivery.pos
-      ? container.pos.getRangeTo(delivery.pos) * 2 + 10
-      : getRoomDistance(parentRoom.name, targetRoom.name) * 50 + 20;
+    const range = estimateRemoteHaulRoundTrip(
+      parentRoom.name,
+      targetRoom.name,
+      container,
+      delivery,
+    );
 
     return Math.max(1, Math.ceil((incomePerTick * range) / (carryPerHauler * 50)));
   },

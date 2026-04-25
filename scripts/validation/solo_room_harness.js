@@ -5775,6 +5775,39 @@ function runReservationDefenseScenario() {
   assert(defense.operation === "reservation_defense", `expected reservation_defense, got ${defense.operation}`);
 }
 
+function runReservationHoldDefenseScenario() {
+  const parent = buildStableReservationParent("W11N7", 1160);
+  buildNeutralReserveRoom("W11N8", {
+    reservation: { username: "tester", ticksToEnd: 3500 },
+    sourceContainers: true,
+    hostiles: [{ name: "holdInvader", x: 23, y: 23, body: [{ type: ATTACK }, { type: MOVE }] }],
+  });
+  const result = reservationManager.createReservation("W11N8", parent.name, "hold");
+  assert(result.ok, `expected hold reservation plan, got ${result.message}`);
+
+  const state = roomState.collect(parent);
+  const requests = spawnManager.getSpawnRequests(parent, state);
+  const reserver = requests.find(function (request) {
+    return request.role === "reserver" && request.targetRoom === "W11N8";
+  });
+  const defender = requests.find(function (request) {
+    return request.role === "defender" && request.targetRoom === "W11N8";
+  });
+
+  assert(reserver, `expected hold reservation to keep a reserver active, got ${JSON.stringify(requests)}`);
+  assert(defender, `expected hold reservation threat to request defense support, got ${JSON.stringify(requests)}`);
+  assert(
+    !requests.some(function (request) {
+      return request.targetRoom === "W11N8" && (
+        request.role === "remoteworker" ||
+        request.role === "remoteminer" ||
+        request.role === "remotehauler"
+      );
+    }),
+    `hold reservation should not request remote economy creeps, got ${JSON.stringify(requests)}`,
+  );
+}
+
 function runReservationStaleThreatDefenseScenario() {
   const parent = buildRoomScenario("W11N7", {
     tick: 1160,
@@ -6020,6 +6053,52 @@ function runReservationCancellationScenario() {
   assert(
     !currentRuntime.creepActions.some(function (action) { return action.creep === reserver.name; }),
     "cancelled reservation should stop active reserver control",
+  );
+}
+
+function runReservationRemoteHaulerStorageDeliveryScenario() {
+  const parent = buildStableReservationParent("W13N5", 1210);
+  parent.addStructure(
+    createStructure(STRUCTURE_STORAGE, 24, 27, {
+      roomName: parent.name,
+      store: { energy: 2000 },
+      storeCapacityResource: { energy: 1000000 },
+      hits: 10000,
+      hitsMax: 10000,
+    }),
+  );
+  const remote = buildNeutralReserveRoom("W13N6", {
+    reservation: { username: "tester", ticksToEnd: 3200 },
+    sourceContainers: true,
+  });
+  const result = reservationManager.createReservation(remote.name, parent.name);
+  assert(result.ok, `expected reservation plan, got ${result.message}`);
+
+  const hauler = createCreep("remoteStorageHauler", "remotehauler", 25, 25, {
+    roomName: parent.name,
+    store: { energy: 100 },
+    storeCapacity: 100,
+    body: [{ type: CARRY }, { type: CARRY }, { type: MOVE }],
+    memory: {
+      role: "remotehauler",
+      room: parent.name,
+      homeRoom: parent.name,
+      targetRoom: remote.name,
+      sourceId: remote.find(FIND_SOURCES)[0].id,
+      delivering: true,
+      operation: "reservation",
+    },
+  });
+
+  roleRemoteHauler.run(hauler);
+
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === "remoteStorageHauler" &&
+        action.action === "transfer" &&
+        action.targetId === parent.storage.id;
+    }),
+    `remote hauler should prioritize parent storage delivery, got ${JSON.stringify(currentRuntime.creepActions)}`,
   );
 }
 
@@ -6383,7 +6462,9 @@ function main() {
     ["reservation_remote_requests", runReservationRemoteRequestsScenario],
     ["reservation_remote_roles", runReservationRemoteRolesScenario],
     ["reservation_defense", runReservationDefenseScenario],
+    ["reservation_hold_defense", runReservationHoldDefenseScenario],
     ["reservation_stale_threat_defense", runReservationStaleThreatDefenseScenario],
+    ["reservation_remote_hauler_storage", runReservationRemoteHaulerStorageDeliveryScenario],
     ["reservation_expansion_takeover", runReservationExpansionTakeoverScenario],
     ["expansion_reservation_takeover", runExpansionReservationTakeoverScenario],
     ["expansion_cancel", runExpansionCancellationScenario],
