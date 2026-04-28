@@ -7143,6 +7143,39 @@ function runAttackOpsScenario() {
   });
   parent.controller.my = true;
   parent.controller.owner = { username: "tester" };
+  const ally = new FakeRoom("W5N4", new FakeTerrain());
+  ally.setController(
+    createController(20, 20, {
+      roomName: "W5N4",
+      level: 4,
+      my: true,
+      owner: { username: "tester" },
+    }),
+  );
+  ally.addStructure(
+    createStructure(STRUCTURE_SPAWN, 25, 25, {
+      roomName: "W5N4",
+      name: "AllySpawn",
+      hits: 5000,
+      hitsMax: 5000,
+      store: { energy: 1300 },
+      storeCapacityResource: { energy: 300 },
+    }),
+  );
+  const allySources = [
+    ally.addSource(createSource(15, 25, { roomName: "W5N4" })),
+    ally.addSource(createSource(35, 25, { roomName: "W5N4" })),
+  ];
+  ally.addMineral(createMineral(40, 10, { roomName: "W5N4" }));
+  addContainersForSources(ally, allySources);
+  addRcl4StableStructures(ally);
+  createCreep("ally_miner_attack_test", "miner", 15, 25, {
+    roomName: ally.name,
+    memory: { sourceId: allySources[0].id },
+  });
+  createCreep("ally_hauler_attack_test", "hauler", 25, 25, {
+    roomName: ally.name,
+  });
   Game.gcl = { level: 2, progress: 0, progressTotal: 1000 };
 
   const target = new FakeRoom("W5N6", new FakeTerrain());
@@ -7164,10 +7197,11 @@ function runAttackOpsScenario() {
     }),
   );
 
-  const result = ops.attack("W5N6");
+  const result = ops.attack("W5N6", "expand", parent.name, [ally.name]);
   assert(result.ok, `expected attack plan creation, got ${result.message}`);
   assert(result.plan.postAction === "expand", `expected default expand postAction, got ${result.plan.postAction}`);
   assert(result.plan.parentRoom === parent.name, `expected parent ${parent.name}, got ${result.plan.parentRoom}`);
+  assert(result.plan.allies.indexOf(ally.name) !== -1, `expected explicit ally ${ally.name}, got ${result.plan.allies.join(",")}`);
 
   const requests = spawnManager.getSpawnRequests(parent, roomState.collect(parent));
   const roles = requests.map((request) => request.role);
@@ -7175,6 +7209,15 @@ function runAttackOpsScenario() {
   assert(roles.indexOf("upgrader") === -1, `attack hard-war mode should suppress upgraders, got ${roles.join(",")}`);
   assert(roles.indexOf("worker") === -1, `attack hard-war mode should suppress workers, got ${roles.join(",")}`);
   assert(attackManager.isRoomInAttackMode(parent.name), "parent should enter attack mode after offensive request");
+
+  const allyRequests = spawnManager.getSpawnRequests(ally, roomState.collect(ally));
+  const allyAttackRoles = allyRequests
+    .filter((request) => request.operation === "attack")
+    .map((request) => request.role);
+  assert(allyAttackRoles.indexOf("dismantler") !== -1, `expected ally to request dismantler, got ${allyAttackRoles.join(",")}`);
+  assert(allyAttackRoles.indexOf("assault") !== -1, `expected ally to request assault, got ${allyAttackRoles.join(",")}`);
+  assert(allyAttackRoles.indexOf("combat_healer") !== -1, `expected ally to request healer, got ${allyAttackRoles.join(",")}`);
+  assert(attackManager.isRoomInAttackMode(ally.name), "ally should enter attack mode after offensive request");
 }
 
 function runAttackPostActionFallbackScenario() {

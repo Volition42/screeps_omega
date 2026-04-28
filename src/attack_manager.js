@@ -714,20 +714,25 @@ module.exports = {
     };
 
     if (status === STATUS_SCOUTING) {
-      addIfNeeded("assault", isParent ? 1 : 0, 0);
+      addIfNeeded("assault", 1, 0);
       return;
     }
 
     if (status === STATUS_BREACHING) {
       addIfNeeded("dismantler", 1, 20);
       addIfNeeded("combat_healer", room.energyCapacityAvailable >= 300 ? 1 : 0, 35);
-      addIfNeeded("assault", isParent ? 1 : 0, 0);
+      addIfNeeded("assault", 1, 0);
       return;
     }
 
-    if (status === STATUS_CONTROLLER_ATTACK && isParent) {
-      addIfNeeded("controller_attacker", 1, 30);
+    if (status === STATUS_CONTROLLER_ATTACK) {
       addIfNeeded("combat_healer", room.energyCapacityAvailable >= 300 ? 1 : 0, 35);
+      if (isParent) {
+        addIfNeeded("controller_attacker", 1, 30);
+      } else {
+        addIfNeeded("dismantler", 1, 15);
+        addIfNeeded("assault", 1, 0);
+      }
     }
   },
 
