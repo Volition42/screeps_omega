@@ -3204,6 +3204,114 @@ function runWorkerSpawnSiteCacheScenario() {
   );
 }
 
+function runWorkerExtensionFallbackScenario() {
+  const room = buildRoomScenario("VAL_WORKER_EXTENSION_FALLBACK", {
+    tick: 574,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 500,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      {
+        name: "worker1",
+        role: "worker",
+        x: 24,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+
+  const extension = room.find(FIND_MY_STRUCTURES, {
+    filter(structure) {
+      return structure.structureType === STRUCTURE_EXTENSION;
+    },
+  })[0];
+  assert(extension, "expected worker extension fallback test to have an extension");
+  extension.store.energy = 0;
+
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+
+  const worker = Game.creeps.worker1;
+  const workTarget = roleWorker.getWorkTarget(worker, 1);
+
+  assert(
+    workTarget && workTarget.id === extension.id,
+    `expected worker without a hauler to refill an extension, got ${workTarget ? workTarget.id : "none"}`,
+  );
+}
+
+function runWorkerExtensionFallbackWithHaulerScenario() {
+  const room = buildRoomScenario("VAL_WORKER_EXTENSION_WITH_HAULER", {
+    tick: 581,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 500,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      {
+        name: "worker1",
+        role: "worker",
+        x: 24,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24 },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+
+  const extension = room.find(FIND_MY_STRUCTURES, {
+    filter(structure) {
+      return structure.structureType === STRUCTURE_EXTENSION;
+    },
+  })[0];
+  assert(extension, "expected worker hauler guard test to have an extension");
+  extension.store.energy = 0;
+
+  const sitePos = pickOpenPositions(room, 1)[0];
+  assert(sitePos, "expected worker hauler guard test to find an open construction position");
+
+  const siteResult = room.createConstructionSite(
+    sitePos[0],
+    sitePos[1],
+    STRUCTURE_ROAD,
+  );
+  assert(siteResult === OK, `expected worker hauler guard test to create a road site, got ${siteResult}`);
+
+  const site = room.find(FIND_CONSTRUCTION_SITES)[0];
+  assert(site, "expected worker hauler guard test to create a construction site");
+
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+
+  const worker = Game.creeps.worker1;
+  const workTarget = roleWorker.getWorkTarget(worker, 1);
+
+  assert(
+    workTarget && workTarget.id === site.id,
+    `expected worker with a hauler present to keep building instead of refilling extensions, got ${workTarget ? workTarget.id : "none"}`,
+  );
+}
+
 function runTowerBankingThresholdScenario() {
   const room = buildRoomScenario("VAL_TOWER_BANKING", {
     tick: 565,
@@ -6454,6 +6562,8 @@ function main() {
     ["upgrader_reserve", runUpgraderReserveScenario],
     ["worker_reserve_banking", runWorkerReserveBankingScenario],
     ["worker_spawn_site_cache", runWorkerSpawnSiteCacheScenario],
+    ["worker_extension_fallback", runWorkerExtensionFallbackScenario],
+    ["worker_extension_with_hauler", runWorkerExtensionFallbackWithHaulerScenario],
     ["tower_banking_threshold", runTowerBankingThresholdScenario],
     ["mineral_access_road", runMineralAccessRoadScenario],
     ["defense_border_support", runDefenseBorderSupportScenario],

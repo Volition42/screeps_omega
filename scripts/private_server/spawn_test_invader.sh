@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 source "${ROOT_DIR}/scripts/private_server/load_server_profile.sh"
 
-ROOM="${SCREEPS_TEST_ROOM:-W5N5}"
+ROOM="${SCREEPS_TEST_ROOM:-W3N3}"
 X="${SCREEPS_TEST_INVADER_X:-10}"
 Y="${SCREEPS_TEST_INVADER_Y:-10}"
 SIZE="${SCREEPS_TEST_INVADER_SIZE:-small}"

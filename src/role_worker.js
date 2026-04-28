@@ -95,7 +95,7 @@ module.exports = {
 
     const workTarget = this.getWorkTarget(creep, thinkInterval);
 
-    if (this.isSpawnEnergyTarget(workTarget)) {
+    if (this.isRoomEnergyDeliveryTarget(workTarget)) {
       if (creep.transfer(workTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         utils.moveTo(creep, workTarget, MOVE_OPTIONS);
       }
@@ -155,6 +155,10 @@ module.exports = {
         );
       },
     });
+
+    if (!target && !this.hasRoomHauler(creep.room, state)) {
+      target = logisticsManager.getExtensionDeliveryTarget(creep.room, creep);
+    }
 
     if (!target) {
       target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
@@ -239,7 +243,7 @@ module.exports = {
     }
 
     if (
-      this.isSpawnEnergyTarget(target) &&
+      this.isRoomEnergyDeliveryTarget(target) &&
       target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
     ) {
       delete creep.memory.workTargetId;
@@ -263,13 +267,29 @@ module.exports = {
     return target;
   },
 
-  isSpawnEnergyTarget(target) {
+  isRoomEnergyDeliveryTarget(target) {
     return !!(
       target &&
-      target.structureType === STRUCTURE_SPAWN &&
+      (
+        target.structureType === STRUCTURE_SPAWN ||
+        target.structureType === STRUCTURE_EXTENSION
+      ) &&
       target.store &&
       typeof target.store.getFreeCapacity === "function"
     );
+  },
+
+  hasRoomHauler(room, state) {
+    const creeps = state && state.creeps ? state.creeps : room.find(FIND_MY_CREEPS);
+
+    for (let i = 0; i < creeps.length; i++) {
+      const creep = creeps[i];
+      if (creep.memory && creep.memory.role === "hauler") {
+        return true;
+      }
+    }
+
+    return false;
   },
 
   getReserveWithdrawalTarget(creep, state) {

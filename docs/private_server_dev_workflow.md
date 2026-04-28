@@ -157,10 +157,16 @@ scripts/private_server/stop_dev_server.sh
 scripts/private_server/start_dev_server.sh
 ```
 
-Full world reset back to a fresh `src/` room:
+Full world reset back to a fresh `4x4` sector Screeps-like dev world:
 
 ```bash
 scripts/private_server/reset_dev_world.sh
+```
+
+That reset now creates the `local-dev` user, uploads `src/`, and rebuilds the world, but it does not place a first spawn. Seed your first owned room manually when you are ready:
+
+```bash
+scripts/private_server/reseed_dev_room.sh
 ```
 
 If the room view is stuck at `WAITING FOR DATA` after a reset, restart the browser client and reopen the localhost route:
@@ -182,18 +188,18 @@ Reserved-room validation loop:
 ```bash
 scripts/private_server/check_dev_server.sh
 scripts/private_server/reset_dev_world.sh
-python3 scripts/private_server/world_tool.py set-controller-level --room W5N5 --level 4
-python3 scripts/private_server/world_tool.py complete-owned-sites --room W5N5
-python3 scripts/private_server/world_tool.py fill-room-energy --room W5N5
+python3 scripts/private_server/world_tool.py set-controller-level --room W3N3 --level 4
+python3 scripts/private_server/world_tool.py complete-owned-sites --room W3N3
+python3 scripts/private_server/world_tool.py fill-room-energy --room W3N3
 npm run upload:ptr
 ```
 
 Then in the Screeps console:
 
 ```js
-ops.room("W5N5", "build")
-ops.reserve("W5N6", "W5N5")
-ops.reserved("W5N5")
+ops.room("W3N3", "build")
+ops.reserve("W3N4", "W3N3")
+ops.reserved("W3N3")
 ops.empire()
 ```
 
@@ -204,7 +210,7 @@ Expected behavior:
 - Visible reserved rooms receive source container sites first, then minimal road sites.
 - `remoteminer` and `remotehauler` creeps move source energy back to the parent.
 - Visible hostiles in the reserved room pause remote civilian work and request parent defense.
-- `ops.expand("W5N6")` converts the reservation into a normal expansion plan and stops reserved-room mining.
+- `ops.expand("W3N4")` converts the reservation into a normal expansion plan and stops reserved-room mining.
 
 ## Deployment Role
 
@@ -219,7 +225,7 @@ The private server has already been bootstrapped successfully enough to:
 - authenticate with the local dev token
 - upload the repo `src/` modules
 - create a local user
-- place a first spawn in `W5N5`
+- rebuild a `4x4` sector dev world without auto-placing a first spawn
 - observe the uploaded code spawning a `jrworker`
 - run the current HUD/client path through the localhost browser route
 - maintain the local user at the configured local test CPU cap

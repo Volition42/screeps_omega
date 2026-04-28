@@ -189,6 +189,23 @@ FILLABLE_STORE_TYPES = {
     "nuker",
 }
 
+DEFAULT_DEV_HOME_ROOM = os.environ.get("SCREEPS_TEST_ROOM", "W3N3")
+DEV_WORLD_REFERENCE_ROOM = "W5N5"
+DEV_WORLD_SECTOR_COUNT = 4
+DEV_WORLD_SECTOR_SPAN = 10
+DEV_WORLD_INNER_RING_RADIUS = 1
+DEV_WORLD_INNER_RING_TERRAIN_TYPES = {
+    "W4N4": 2,
+    "W3N4": 4,
+    "W2N4": 6,
+    "W4N3": 8,
+    "W3N3": 10,
+    "W2N3": 12,
+    "W4N2": 14,
+    "W3N2": 16,
+    "W2N2": 18,
+}
+
 
 def calc_gcl_total(level: int) -> int:
     if level <= 1:
@@ -254,6 +271,128 @@ def parse_structured_output(text: str):
             continue
 
     return None
+
+
+def parse_room_name(room_name: str) -> tuple[int, int]:
+    room_name = (room_name or "").strip().upper()
+    if not room_name:
+        raise ValueError("room name is required")
+
+    import re
+
+    match = re.fullmatch(r"([WE])(\d+)([NS])(\d+)", room_name)
+    if not match:
+        raise ValueError(f"invalid room name: {room_name}")
+
+    ew, x_raw, ns, y_raw = match.groups()
+    x_val = int(x_raw)
+    y_val = int(y_raw)
+
+    x = -x_val - 1 if ew == "W" else x_val
+    y = -y_val - 1 if ns == "N" else y_val
+    return x, y
+
+
+def format_room_name(x: int, y: int) -> str:
+    ew = "W" if x < 0 else "E"
+    ns = "N" if y < 0 else "S"
+    x_val = -x - 1 if x < 0 else x
+    y_val = -y - 1 if y < 0 else y
+    return f"{ew}{x_val}{ns}{y_val}"
+
+
+def room_axis_index(value: int) -> int:
+    return -value - 1 if value < 0 else value
+
+
+def get_dev_world_room_type(x: int, y: int) -> str:
+    lon = room_axis_index(x)
+    lat = room_axis_index(y)
+    room_mod_x = lon % DEV_WORLD_SECTOR_SPAN
+    room_mod_y = lat % DEV_WORLD_SECTOR_SPAN
+
+    if room_mod_x == 0 or room_mod_y == 0:
+        return "hall"
+    if room_mod_x == 5 and room_mod_y == 5:
+        return "center"
+    if 4 <= room_mod_x <= 6 and 4 <= room_mod_y <= 6:
+        return "sk"
+    return "normal"
+
+
+def build_dev_world_room_spec(room: str, x: int, y: int) -> dict[str, object]:
+    room_type = get_dev_world_room_type(x, y)
+    spec: dict[str, object] = {"room": room, "type": room_type}
+
+    if room_type == "hall":
+        spec.update(
+            {
+                "controller": False,
+                "sources": 0,
+                "mineral": False,
+                "terrainType": 1 + ((room_axis_index(x) + room_axis_index(y)) % 2),
+                "swampType": 0,
+            }
+        )
+    elif room_type == "center":
+        spec.update({"controller": False, "sources": 3})
+    elif room_type == "sk":
+        spec.update({"controller": False, "sources": 3, "keeperLairs": True})
+    else:
+        spec.update({"controller": True, "sources": 1 + ((room_axis_index(x) + room_axis_index(y)) % 2)})
+
+    return spec
+
+
+def build_dev_world_room_specs() -> list[dict[str, object]]:
+    total_rooms = DEV_WORLD_SECTOR_COUNT * DEV_WORLD_SECTOR_SPAN
+    min_x = -(total_rooms // 2)
+    max_x = min_x + total_rooms - 1
+    min_y = -(total_rooms // 2)
+    max_y = min_y + total_rooms - 1
+    inner_ring_center_x, inner_ring_center_y = parse_room_name(DEFAULT_DEV_HOME_ROOM)
+
+    specs: list[dict[str, object]] = []
+    for y in range(min_y, max_y + 1):
+        for x in range(min_x, max_x + 1):
+            room = format_room_name(x, y)
+            spec = build_dev_world_room_spec(room, x, y)
+
+            if (
+                abs(x - inner_ring_center_x) <= DEV_WORLD_INNER_RING_RADIUS
+                and abs(y - inner_ring_center_y) <= DEV_WORLD_INNER_RING_RADIUS
+            ):
+                terrain_type = DEV_WORLD_INNER_RING_TERRAIN_TYPES.get(room)
+                if terrain_type is not None:
+                    spec["terrainType"] = terrain_type
+
+            specs.append(spec)
+
+    return specs
+
+
+def build_generate_dev_world_command() -> str:
+    room_specs = build_dev_world_room_specs()
+    specs_json = json.dumps(room_specs, separators=(",", ":"))
+    return (
+        "Promise.resolve()"
+        f".then(() => {{ const specs = {specs_json};"
+        " return specs.reduce((promise, spec) => promise.then(() => "
+        "map.generateRoom(spec.room, {"
+        "controller: spec.controller,"
+        "sources: spec.sources,"
+        "terrainType: spec.terrainType,"
+        "swampType: spec.swampType,"
+        "keeperLairs: spec.keeperLairs,"
+        "mineral: spec.mineral"
+        "})"
+        ".then(() => map.openRoom(spec.room))"
+        "), Promise.resolve()); })"
+        ".then(() => map.updateTerrainData())"
+        + build_runtime_env_refresh_chain()
+        + f".then(() => print('generated dev world: {len(room_specs)} rooms around {DEV_WORLD_REFERENCE_ROOM}; default test room {DEFAULT_DEV_HOME_ROOM}'))"
+        ".catch(err => print(err && (err.stack || err.toString()) || 'unknown error'))"
+    )
 
 
 def api_request(url: str, payload: dict | None = None, token: str | None = None) -> dict:
@@ -633,6 +772,18 @@ def command_reset_world(args: argparse.Namespace) -> int:
 def command_repair_runtime_env(args: argparse.Namespace) -> int:
     output = run_cli(
         build_runtime_env_repair_command(),
+        server_root=args.server_root,
+        host=args.cli_host,
+        port=args.cli_port,
+    )
+    if output:
+        print(output)
+    return 0
+
+
+def command_generate_dev_world(args: argparse.Namespace) -> int:
+    output = run_cli(
+        build_generate_dev_world_command(),
         server_root=args.server_root,
         host=args.cli_host,
         port=args.cli_port,
@@ -1095,6 +1246,12 @@ def build_parser() -> argparse.ArgumentParser:
     reset_world = subparsers.add_parser("reset-world", help="wipe the private server world")
     reset_world.set_defaults(func=command_reset_world)
 
+    generate_dev_world = subparsers.add_parser(
+        "generate-dev-world",
+        help="build the default 4x4-sector Screeps-like dev world",
+    )
+    generate_dev_world.set_defaults(func=command_generate_dev_world)
+
     repair_runtime = subparsers.add_parser(
         "repair-runtime-env",
         help="refresh private-server map runtime env keys",
@@ -1138,7 +1295,7 @@ def build_parser() -> argparse.ArgumentParser:
         "set-controller-level",
         help="set a room controller to a target level for staged testing",
     )
-    set_controller.add_argument("--room", default="W5N5")
+    set_controller.add_argument("--room", default=DEFAULT_DEV_HOME_ROOM)
     set_controller.add_argument("--level", type=int, required=True)
     set_controller.add_argument("--progress", type=int)
     set_controller.set_defaults(func=command_set_controller_level)
@@ -1147,14 +1304,14 @@ def build_parser() -> argparse.ArgumentParser:
         "complete-owned-sites",
         help="instantly finish local-dev construction sites in a room",
     )
-    complete_sites.add_argument("--room", default="W5N5")
+    complete_sites.add_argument("--room", default=DEFAULT_DEV_HOME_ROOM)
     complete_sites.set_defaults(func=command_complete_owned_sites)
 
     fill_energy = subparsers.add_parser(
         "fill-room-energy",
         help="fill owned room structures with energy for faster testing",
     )
-    fill_energy.add_argument("--room", default="W5N5")
+    fill_energy.add_argument("--room", default=DEFAULT_DEV_HOME_ROOM)
     fill_energy.add_argument("--amount", type=int, default=300000)
     fill_energy.add_argument(
         "--types",
@@ -1164,7 +1321,7 @@ def build_parser() -> argparse.ArgumentParser:
     fill_energy.set_defaults(func=command_fill_room_energy)
 
     reseed = subparsers.add_parser("reseed-room", help="reset and regenerate a room")
-    reseed.add_argument("--room", default="W5N5")
+    reseed.add_argument("--room", default=DEFAULT_DEV_HOME_ROOM)
     reseed.add_argument("--sources", type=int, default=2)
     reseed.add_argument("--terrain-type", type=int)
     reseed.add_argument("--no-controller", action="store_true")
@@ -1175,7 +1332,7 @@ def build_parser() -> argparse.ArgumentParser:
     reseed.set_defaults(func=command_reseed_room)
 
     invader = subparsers.add_parser("create-invader", help="spawn a hostile invader in an owned room")
-    invader.add_argument("--room", default="W5N5")
+    invader.add_argument("--room", default=DEFAULT_DEV_HOME_ROOM)
     invader.add_argument("--x", type=int, default=10)
     invader.add_argument("--y", type=int, default=10)
     invader.add_argument("--size", choices=["small", "big"], default="small")

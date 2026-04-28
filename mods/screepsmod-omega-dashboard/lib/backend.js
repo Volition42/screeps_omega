@@ -16,6 +16,7 @@ const readFile = util.promisify(fs.readFile);
 const packageJson = require("../package.json");
 const adminUtilsPackageJson = requireFromServer("screepsmod-admin-utils/package.json");
 let lastHostCpuSample = null;
+const defaultTestRoom = process.env.SCREEPS_TEST_ROOM || "W3N3";
 
 module.exports = function registerOmegaDashboard(config) {
   config.backend.features = config.backend.features || [];
@@ -223,13 +224,13 @@ module.exports = function registerOmegaDashboard(config) {
           room = controllers[Math.floor(Math.random() * controllers.length)].room;
         }
         if (!room) {
-          const rooms = await db.rooms.find({ _id: { $regex: "^[EW]\\d*5[NS]\\d*5$" } });
+          const rooms = await db.rooms.find({ _id: defaultTestRoom });
           if (rooms.length) {
             room = rooms[Math.floor(Math.random() * rooms.length)]._id;
           }
         }
         if (!room) {
-          room = "W5N5";
+          room = defaultTestRoom;
         }
         res.json({ ok: 1, room: [room] });
       }),
@@ -287,14 +288,14 @@ module.exports = function registerOmegaDashboard(config) {
           maptoolUrl: joinUrl(serverPublicUrl, "/maptool/"),
           adminUrl: joinUrl(serverPublicUrl, "/omega-admin/"),
           hostCpu,
-          testRoom: process.env.SCREEPS_TEST_ROOM || "W5N5",
+          testRoom: defaultTestRoom,
         },
       });
     });
 
     app.post(["/omega-admin/api/:action", "/web/omega-admin/api/:action"], async (req, res) => {
       const body = await readJsonBody(req);
-      const room = String(body.room || process.env.SCREEPS_TEST_ROOM || "W5N5").trim();
+      const room = String(body.room || defaultTestRoom).trim();
       let result;
       let data = null;
 
