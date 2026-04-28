@@ -720,14 +720,14 @@ module.exports = {
 
     if (status === STATUS_BREACHING) {
       addIfNeeded("dismantler", 1, 20);
-      addIfNeeded("combat_healer", room.energyCapacityAvailable >= 800 ? 1 : 0, 10);
+      addIfNeeded("combat_healer", room.energyCapacityAvailable >= 300 ? 1 : 0, 35);
       addIfNeeded("assault", isParent ? 1 : 0, 0);
       return;
     }
 
     if (status === STATUS_CONTROLLER_ATTACK && isParent) {
       addIfNeeded("controller_attacker", 1, 30);
-      addIfNeeded("combat_healer", room.energyCapacityAvailable >= 800 ? 1 : 0, 5);
+      addIfNeeded("combat_healer", room.energyCapacityAvailable >= 300 ? 1 : 0, 35);
     }
   },
 
