@@ -64,6 +64,7 @@ const PHASE_BUILD_FIELDS = {
     { label: "factory", built: "factoryBuilt", needed: "factoryNeeded" },
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
+    { label: "ramp", built: "rampartsBuilt", needed: "rampartsNeeded" },
     { label: "mRoad", built: "mineralAccessRoadsBuilt", needed: "mineralAccessRoadsNeeded" },
   ],
   command: [
@@ -74,6 +75,7 @@ const PHASE_BUILD_FIELDS = {
     { label: "factory", built: "factoryBuilt", needed: "factoryNeeded" },
     { label: "links", built: "linksBuilt", needed: "linksNeeded" },
     { label: "labs", built: "labsBuilt", needed: "labsNeeded" },
+    { label: "ramp", built: "rampartsBuilt", needed: "rampartsNeeded" },
   ],
 };
 
@@ -132,6 +134,7 @@ const MISSING_SUMMARY = {
   powerSpawn: "power spawn missing",
   nuker: "nuker missing",
   mineralAccessRoad: "mineral access road pending",
+  ramparts: "defensive ramparts incomplete",
 };
 
 const NEXT_TASK_LABEL = {
@@ -163,6 +166,7 @@ const NEXT_TASK_LABEL = {
   powerSpawn: "place or finish the power spawn",
   nuker: "place or finish the nuker",
   mineralAccessRoad: "finish mineral access road",
+  ramparts: "place defensive ramparts",
 };
 
 function getQueue(room) {
@@ -283,6 +287,7 @@ function getPhaseCompletionMissing(phase, buildStatus) {
   if (phase === "fortification") {
     pushIfShort(buildStatus.spawnsBuilt, buildStatus.spawnsNeeded, "spawns", missing);
     pushIfShort(buildStatus.factoryBuilt, buildStatus.factoryNeeded, "factory", missing);
+    pushIfShort(buildStatus.rampartsBuilt, buildStatus.rampartsNeeded, "ramparts", missing);
     return uniqueLabels(missing);
   }
 
@@ -299,6 +304,7 @@ function getPhaseCompletionMissing(phase, buildStatus) {
       missing,
     );
     pushIfShort(buildStatus.nukerBuilt, buildStatus.nukerNeeded, "nuker", missing);
+    pushIfShort(buildStatus.rampartsBuilt, buildStatus.rampartsNeeded, "ramparts", missing);
   }
 
   return uniqueLabels(missing);
@@ -605,15 +611,19 @@ function getAlertSummary(room, state) {
   const threatLevel = threat ? threat.threatLevel || 0 : 0;
   const support = defense.support || null;
   const outgoingSupport = defense.outgoingSupport || [];
+  const recovery = defense.recovery || null;
 
   return {
     active: active,
+    recoveryActive: !!(recovery && recovery.active),
     hostiles: hostiles,
     threatScore: threatScore,
     threatLevel: threatLevel,
     defenders: roleCounts.defender || 0,
     requiredDefenders: defense.requiredDefenders || 0,
     responseMode: threat ? threat.responseMode || "idle" : "idle",
+    breachSeverity: threat ? threat.breachSeverity || "clear" : "clear",
+    towerEnergyState: threat ? threat.towerEnergyState || "empty" : "empty",
     towerCanHandle: !!(threat && threat.towerCanHandle),
     towerTarget: threat ? threat.towerTargetSummary || "none" : "none",
     towerFocusDamage: threat ? threat.towerFocusDamage || 0 : 0,
@@ -1044,9 +1054,10 @@ module.exports = {
       build: buildLines,
       defense: [
         `[OPS][${room.name}][DEFENSE]`,
-        `Alert ${alert.active ? "active" : "clear"} | SafeMode ${alert.safeMode}`,
+        `Alert ${alert.active ? "active" : alert.recoveryActive ? "recovery" : "clear"} | SafeMode ${alert.safeMode}`,
         `Hostiles ${alert.hostiles} | Threat ${alert.threatScore} | Level ${alert.threatLevel}`,
-        `Mode ${alert.responseMode} | Defenders ${alert.defenders}/${alert.requiredDefenders} | Towers ${alert.readyTowers}/${summaryState.structuresByType && summaryState.structuresByType[STRUCTURE_TOWER] ? summaryState.structuresByType[STRUCTURE_TOWER].length : 0}`,
+        `Mode ${alert.responseMode} | Breach ${alert.breachSeverity} | Towers ${alert.towerEnergyState}`,
+        `Defenders ${alert.defenders}/${alert.requiredDefenders} | Ready towers ${alert.readyTowers}/${summaryState.structuresByType && summaryState.structuresByType[STRUCTURE_TOWER] ? summaryState.structuresByType[STRUCTURE_TOWER].length : 0}`,
         `Support in ${alert.supportAssigned}/${alert.supportRequested} from ${alert.supportHelper} | out ${alert.outgoingSupport}`,
         `Target ${alert.towerTarget} | Focus ${alert.towerFocusDamage} | Hold ${alert.towerCanHandle ? "yes" : "no"}`,
       ],
@@ -1107,6 +1118,14 @@ module.exports = {
           `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Q ${spawn.nextQueued}`,
           `Safe ${alert.safeMode} | Next ${nextTask}`,
         ]
+      : alert.recoveryActive
+        ? [
+            `${room.name} | RECOVERY`,
+            `${progressLabel} | ETA ${etaLabel}`,
+            `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Q ${spawn.nextQueued}`,
+            `Towers ${alert.readyTowers} ready | Mode ${alert.responseMode} | Breach ${alert.breachSeverity}`,
+            `Recover core logistics | Next ${nextTask}`,
+          ]
       : [
           `${room.name} | ${String(summaryState.phase).toUpperCase()}`,
           `${progressLabel} | ETA ${etaLabel}`,

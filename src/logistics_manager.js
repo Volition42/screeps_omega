@@ -49,6 +49,8 @@ module.exports = {
       ],
       haulerMode: this.hasHostilePressure(room, state)
         ? "hostile"
+        : this.isRecoveryActive(state)
+          ? "recovery"
         : this.hasEmergencyTowerNeed(room, state)
           ? "tower_emergency"
           : "normal",
@@ -219,6 +221,10 @@ module.exports = {
     return !!(state && state.hostileCreeps && state.hostileCreeps.length > 0);
   },
 
+  isRecoveryActive(state) {
+    return !!(state && state.defense && state.defense.recovery && state.defense.recovery.active);
+  },
+
   hasEmergencyTowerNeed(room, state) {
     const towers =
       state && state.structuresByType
@@ -295,6 +301,15 @@ module.exports = {
         creep,
       );
       if (emergencyTower) return emergencyTower;
+    }
+
+    if (!hostilePressure && this.isRecoveryActive(state)) {
+      const recoveryTower = this.getLowTowerTarget(
+        room,
+        this.getTowerReserveThreshold(room, state),
+        creep,
+      );
+      if (recoveryTower) return recoveryTower;
     }
 
     const sourceLink = this.getSourceLinkDeliveryTarget(room, state, creep);

@@ -856,7 +856,44 @@ module.exports = {
   },
 
   getDefenseGoal(room, state) {
-    return { walls: 0, ramparts: 0 };
+    if (!room || !state) return { walls: 0, ramparts: 0 };
+    if (state.phase !== "fortification" && state.phase !== "command") {
+      return { walls: 0, ramparts: 0 };
+    }
+    if (!room.storage) return { walls: 0, ramparts: 0 };
+
+    var towersBuilt = this.countBuiltAndSites(room, state, STRUCTURE_TOWER);
+    if (towersBuilt < 2) return { walls: 0, ramparts: 0 };
+
+    var assets = {};
+    var total = 0;
+    var spawns = state.spawns || room.find(FIND_MY_SPAWNS);
+    var towers =
+      state.structuresByType && state.structuresByType[STRUCTURE_TOWER]
+        ? state.structuresByType[STRUCTURE_TOWER]
+        : room.find(FIND_MY_STRUCTURES, {
+            filter: function (structure) {
+              return structure.structureType === STRUCTURE_TOWER;
+            },
+          });
+
+    function addAsset(pos) {
+      if (!pos) return;
+      var key = pos.x + ":" + pos.y;
+      if (assets[key]) return;
+      assets[key] = true;
+      total++;
+    }
+
+    for (var i = 0; i < spawns.length; i++) {
+      addAsset(spawns[i].pos);
+    }
+    addAsset(room.storage.pos);
+    for (var j = 0; j < towers.length; j++) {
+      addAsset(towers[j].pos);
+    }
+
+    return { walls: 0, ramparts: total };
   },
 
   hasAction(plan, action) {

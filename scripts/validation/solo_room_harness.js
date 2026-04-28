@@ -1039,6 +1039,13 @@ function createCreep(name, role, x, y, options) {
         creep: this.name,
         action: "moveTo",
         targetId: target && target.id ? target.id : null,
+        targetRoom: target && target.pos
+          ? target.pos.roomName
+          : target && target.roomName
+            ? target.roomName
+            : null,
+        targetX: target && target.pos ? target.pos.x : target && target.x !== undefined ? target.x : null,
+        targetY: target && target.pos ? target.pos.y : target && target.y !== undefined ? target.y : null,
         range: options && typeof options.range === "number" ? options.range : null,
       });
       return OK;
@@ -3795,8 +3802,8 @@ function runDefensePlanLockScenario() {
     hostiles: [
       {
         name: "invader1",
-        x: 23,
-        y: 21,
+        x: 6,
+        y: 24,
         body: [
           { type: MOVE },
           { type: MOVE },
@@ -3916,6 +3923,598 @@ function runDefenseConflictCleanupScenario() {
     plan.body.includes(RANGED_ATTACK),
     `expected tower-support defender body to include ranged damage, got ${JSON.stringify(plan.body)}`,
   );
+}
+
+function runDefenseDismantlerThreatScenario() {
+  const baselineRoom = buildRoomScenario("W20N20", {
+    tick: 598,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 250 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "baseline_invader",
+        x: 24,
+        y: 27,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+        ],
+      },
+    ],
+  });
+  const baselineState = roomState.collect(baselineRoom);
+  const baselineThreat = baselineState.defense.homeThreat;
+
+  const dismantlerRoom = buildRoomScenario("W21N20", {
+    tick: 599,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 250 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "dismantler_invader",
+        x: 24,
+        y: 27,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: WORK },
+          { type: WORK },
+          { type: WORK },
+        ],
+      },
+    ],
+  });
+  const dismantlerState = roomState.collect(dismantlerRoom);
+  const dismantlerThreat = dismantlerState.defense.homeThreat;
+
+  assert(dismantlerThreat && dismantlerThreat.active, "expected dismantler intrusion to register as an active threat");
+  assert(
+    dismantlerThreat.threatScore > baselineThreat.threatScore,
+    `expected dismantlers to score above the baseline intruder, got ${dismantlerThreat.threatScore} <= ${baselineThreat.threatScore}`,
+  );
+  assert(
+    dismantlerThreat.breachSeverity === "core_breach",
+    `expected dismantler near storage to be treated as core breach, got ${dismantlerThreat.breachSeverity}`,
+  );
+  assert(
+    dismantlerThreat.desiredDefenders >= 1,
+    `expected dismantler breach to demand defenders, got ${dismantlerThreat.desiredDefenders}`,
+  );
+}
+
+function runDefenseLowTowerCoreBreachScenario() {
+  const room = buildRoomScenario("W22N20", {
+    tick: 600,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 50 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "breach_healer",
+        x: 24,
+        y: 26,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: HEAL },
+          { type: HEAL },
+        ],
+      },
+      {
+        name: "breach_melee",
+        x: 25,
+        y: 26,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+        ],
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const threat = state.defense.homeThreat;
+
+  assert(
+    threat.towerEnergyState === "low",
+    `expected low tower energy state, got ${threat.towerEnergyState}`,
+  );
+  assert(
+    threat.breachSeverity === "core_breach",
+    `expected core breach severity, got ${threat.breachSeverity}`,
+  );
+  assert(
+    threat.responseMode === "core_breach",
+    `expected core breach response mode, got ${threat.responseMode}`,
+  );
+  assert(
+    threat.desiredDefenders >= 1,
+    `expected low-tower core breach to demand defenders, got ${threat.desiredDefenders}`,
+  );
+}
+
+function runCivilianCoreBreachEvacuationScenario() {
+  const room = buildRoomScenario("W23N20", {
+    tick: 601,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      {
+        name: "worker1",
+        role: "worker",
+        x: 24,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 100 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "breach_worker_hunter",
+        x: 24,
+        y: 27,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: WORK },
+          { type: WORK },
+        ],
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  currentRuntime.creepActions.length = 0;
+  creepManager.run(room, state);
+
+  const worker = Game.creeps.worker1;
+  const move = currentRuntime.creepActions.find(function (action) {
+    return action.creep === worker.name && action.action === "moveTo";
+  });
+
+  assert(worker.memory.retreatMode === "evacuate", `expected evacuation retreat mode, got ${worker.memory.retreatMode}`);
+  assert(worker.memory.retreatRoom && worker.memory.retreatRoom !== room.name, "expected worker to pick an adjacent retreat room");
+  assert(move && move.targetRoom === worker.memory.retreatRoom, `expected evacuation move toward ${worker.memory.retreatRoom}, got ${JSON.stringify(move)}`);
+}
+
+function runCivilianCoreBreachFallbackScenario() {
+  const room = buildRoomScenario("VAL_BREACH_FALLBACK", {
+    tick: 602,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      {
+        name: "worker1",
+        role: "worker",
+        x: 24,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 100 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "fallback_hunter",
+        x: 24,
+        y: 27,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: WORK },
+          { type: WORK },
+        ],
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  currentRuntime.creepActions.length = 0;
+  creepManager.run(room, state);
+
+  const worker = Game.creeps.worker1;
+  assert(worker.memory.retreatMode === "safe_edge", `expected safe-edge fallback, got ${worker.memory.retreatMode}`);
+  assert(!worker.memory.retreatRoom, "expected nonstandard room fallback to avoid cross-room evacuation");
+  assert(worker.memory.retreatEdge, "expected fallback retreat edge to be stored");
+  assert(
+    worker.memory.retreatEdge.indexOf("25:25") === -1 &&
+      worker.memory.retreatEdge.indexOf("24:29") === -1 &&
+      worker.memory.retreatEdge.indexOf("20:20") === -1,
+    `expected fallback edge to avoid core anchors, got ${worker.memory.retreatEdge}`,
+  );
+}
+
+function runDefenseBurstQueueScenario() {
+  const room = buildRoomScenario("W24N20", {
+    tick: 603,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 50 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "burst_healer",
+        x: 24,
+        y: 26,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: HEAL },
+          { type: HEAL },
+          { type: HEAL },
+          { type: HEAL },
+        ],
+      },
+      {
+        name: "burst_attacker",
+        x: 25,
+        y: 26,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+        ],
+      },
+      {
+        name: "burst_attacker_2",
+        x: 26,
+        y: 26,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+          { type: ATTACK },
+        ],
+      },
+      {
+        name: "burst_dismantler",
+        x: 24,
+        y: 27,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: MOVE },
+          { type: WORK },
+          { type: WORK },
+          { type: WORK },
+          { type: WORK },
+          { type: WORK },
+          { type: WORK },
+        ],
+      },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const requests = spawnManager.getSpawnRequests(room, state).filter(function (request) {
+    return request.role === "defender";
+  });
+
+  assert(state.defense.homeThreat.desiredDefenders >= 2, `expected scenario to require multiple defenders, got ${state.defense.homeThreat.desiredDefenders}`);
+  assert(requests.length === 2, `expected burst queue to request two defenders, got ${requests.length}`);
+  assert(
+    requests.every(function (request) { return request.responseMode === "core_breach"; }),
+    `expected core breach requests, got ${JSON.stringify(requests)}`,
+  );
+}
+
+function runCrossRoomDefenseNoOvercommitScenario() {
+  const helper = buildRoomScenario("W25N20", {
+    tick: 604,
+    controllerLevel: 6,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+    ],
+  });
+  helper.controller.my = true;
+
+  createOwnedSupportTargetRoom("W24N20", {
+    controllerLevel: 5,
+    spawn: true,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    spawnBusy: false,
+    hostiles: [
+      {
+        name: "light_edge_invader",
+        x: 3,
+        y: 25,
+        body: [{ type: MOVE }, { type: ATTACK }],
+      },
+    ],
+  });
+
+  const requests = spawnManager.getSpawnRequests(helper, roomState.collect(helper)).filter(function (request) {
+    return request.role === "defender";
+  });
+
+  assert(requests.length === 0, `expected helper room to avoid unnecessary support, got ${JSON.stringify(requests)}`);
+}
+
+function runCrossRoomDefenseCoreBreachSupportScenario() {
+  const helper = buildRoomScenario("W27N20", {
+    tick: 605,
+    controllerLevel: 6,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+    ],
+  });
+  helper.controller.my = true;
+
+  const target = createOwnedSupportTargetRoom("W26N20", {
+    controllerLevel: 5,
+    spawn: false,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    hostiles: [
+      {
+        name: "remote_healer",
+        x: 25,
+        y: 25,
+        body: [{ type: MOVE }, { type: HEAL }, { type: HEAL }],
+      },
+      {
+        name: "remote_attacker",
+        x: 24,
+        y: 25,
+        body: [{ type: MOVE }, { type: MOVE }, { type: ATTACK }, { type: ATTACK }, { type: ATTACK }, { type: ATTACK }],
+      },
+      {
+        name: "remote_dismantler",
+        x: 25,
+        y: 24,
+        body: [{ type: MOVE }, { type: MOVE }, { type: WORK }, { type: WORK }, { type: WORK }, { type: WORK }],
+      },
+    ],
+  });
+  target.addStructure(
+    createStructure(STRUCTURE_STORAGE, 25, 26, {
+      roomName: target.name,
+      store: { energy: 50000 },
+      storeCapacity: 1000000,
+      hits: 10000,
+      hitsMax: 10000,
+    }),
+  );
+
+  const requests = spawnManager.getSpawnRequests(helper, roomState.collect(helper)).filter(function (request) {
+    return request.role === "defender";
+  });
+
+  assert(requests.length === 2, `expected severe core breach support to request two defenders, got ${JSON.stringify(requests)}`);
+  assert(
+    requests.every(function (request) { return request.targetRoom === target.name; }),
+    `expected both support defenders to target ${target.name}, got ${JSON.stringify(requests)}`,
+  );
+}
+
+function runDefenseRecoveryScenario() {
+  const room = buildRoomScenario("W28N20", {
+    tick: 606,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 100 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TOWER, x: 28, y: 24, options: { store: { energy: 150 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "recovery_dismantler",
+        x: 24,
+        y: 27,
+        body: [{ type: MOVE }, { type: MOVE }, { type: WORK }, { type: WORK }, { type: WORK }],
+      },
+    ],
+  });
+
+  let state = roomState.collect(room);
+  assert(state.defense.homeThreat.recoveryEligible, "expected severe breach to mark recovery eligibility");
+
+  room._hostileCreeps = [];
+  Game.time = 607;
+  state = roomState.collect(room);
+
+  assert(state.defense.recovery && state.defense.recovery.active, "expected room to enter recovery after the breach clears");
+  assert(state.logistics && state.logistics.haulerMode === "recovery", `expected recovery hauler mode, got ${state.logistics ? state.logistics.haulerMode : "none"}`);
+
+  const report = roomReporting.build(room, state, { updateProgress: false });
+  assert(report.alert.recoveryActive, "expected room reporting to expose recovery");
+  assert(
+    report.hudLines[0].indexOf("RECOVERY") !== -1,
+    `expected recovery HUD label, got ${JSON.stringify(report.hudLines)}`,
+  );
+
+  room.energyAvailable = room.energyCapacityAvailable;
+  state.structuresByType[STRUCTURE_TOWER][0].store.energy = 800;
+  state.structuresByType[STRUCTURE_TOWER][1].store.energy = 800;
+  room._structures.forEach(function (structure) {
+    if (structure.structureType === STRUCTURE_TOWER) {
+      structure.store.energy = 800;
+    }
+  });
+  Memory.rooms[room.name].spawnQueue = [];
+
+  Game.time = 623;
+  state = roomState.collect(room);
+
+  assert(
+    !state.defense.recovery.active,
+    "expected recovery to clear once energy and tower thresholds are restored",
+  );
+}
+
+function runPassiveDefenseRampartBaselineScenario() {
+  const room = buildRoomScenario("W29N20", {
+    tick: 624,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 150000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TOWER, x: 28, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_RAMPART, x: 25, y: 25, options: { hits: 10000, hitsMax: 10000 } },
+    ],
+  });
+
+  let state = roomState.collect(room);
+  state.phase = "fortification";
+  state.buildStatus = constructionStatus.getStatus(room, state);
+  const context = constructionManager.createPlanContext(room, state);
+  constructionManager.placeDefense(context);
+
+  const rampartSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_RAMPART;
+    },
+  });
+
+  assert(
+    state.buildStatus.rampartsNeeded === 4,
+    `expected rampart goal for spawn, storage, and 2 towers, got ${state.buildStatus.rampartsNeeded}`,
+  );
+  assert(
+    rampartSites.length === 3,
+    `expected only missing passive ramparts to be placed, got ${rampartSites.length}`,
+  );
+}
+
+function runPassiveDefenseEarlyRoomScenario() {
+  const room = buildRoomScenario("W30N20", {
+    tick: 625,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TOWER, x: 28, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  constructionManager.plan(room, state);
+
+  const rampartSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_RAMPART;
+    },
+  });
+
+  assert(rampartSites.length === 0, `expected pre-fortification room to skip passive defenses, got ${rampartSites.length}`);
 }
 
 function createOwnedSupportTargetRoom(name, options) {
@@ -6574,12 +7173,22 @@ function main() {
     ["defense_asset_perimeter", runDefenseAssetPerimeterScenario],
     ["defense_tower_only", runDefensePlanLockScenario],
     ["defense_spawn_escalation", runDefenseConflictCleanupScenario],
+    ["defense_dismantler_threat", runDefenseDismantlerThreatScenario],
+    ["defense_low_tower_core_breach", runDefenseLowTowerCoreBreachScenario],
+    ["defense_civilian_evacuation", runCivilianCoreBreachEvacuationScenario],
+    ["defense_civilian_fallback", runCivilianCoreBreachFallbackScenario],
+    ["defense_burst_queue", runDefenseBurstQueueScenario],
+    ["cross_room_defense_no_overcommit", runCrossRoomDefenseNoOvercommitScenario],
+    ["cross_room_defense_core_breach_support", runCrossRoomDefenseCoreBreachSupportScenario],
     ["cross_room_defense_support_request", runCrossRoomDefenseSupportRequestScenario],
     ["cross_room_defender_role", runCrossRoomDefenderRoleScenario],
+    ["defense_recovery", runDefenseRecoveryScenario],
     ["fortification", runFortificationScenario],
     ["rcl7_transition", runRcl7UpgradeTransitionScenario],
     ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],
     ["legacy_tower_fallback", runLegacyTowerFallbackScenario],
+    ["passive_defense_ramparts", runPassiveDefenseRampartBaselineScenario],
+    ["passive_defense_early_room", runPassiveDefenseEarlyRoomScenario],
     ["command", runCommandScenario],
     ["command_links", runCommandUtilityLinksScenario],
     ["multi_spawn_balance", runMultiSpawnBalancingScenario],

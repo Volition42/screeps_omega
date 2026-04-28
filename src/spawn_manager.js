@@ -41,6 +41,7 @@ module.exports = {
         threatLevel: request.threatLevel || null,
         threatScore: request.threatScore || null,
         responseMode: request.responseMode || null,
+        breachSeverity: request.breachSeverity || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
@@ -141,6 +142,7 @@ module.exports = {
         threatLevel: request.threatLevel || null,
         threatScore: request.threatScore || null,
         responseMode: request.responseMode || null,
+        breachSeverity: request.breachSeverity || null,
         sourceId: request.sourceId || null,
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
@@ -166,6 +168,7 @@ module.exports = {
             threatLevel: request.threatLevel || null,
             threatScore: request.threatScore || null,
             responseMode: request.responseMode || null,
+            breachSeverity: request.breachSeverity || null,
             sourceId: request.sourceId || null,
             targetId: request.targetId || null,
             targetRoom: request.targetRoom || null,
@@ -409,11 +412,17 @@ module.exports = {
     }
 
     this.addDefenseRequests(room, state, requests, reaction);
-    this.addExpansionRequests(room, state, requests);
-    this.addReservationRequests(room, state, requests);
+    if (!(state.defense && state.defense.recovery && state.defense.recovery.active)) {
+      this.addExpansionRequests(room, state, requests);
+      this.addReservationRequests(room, state, requests);
+    }
     this.addCoreEconomyRequests(room, state, requests, {
       includeRepairs: true,
     });
+
+    if (state.defense && state.defense.recovery && state.defense.recovery.active) {
+      this.prioritizeRecoveryRequests(requests);
+    }
 
     requests.sort(function (a, b) {
       return b.priority - a.priority;
@@ -640,6 +649,7 @@ module.exports = {
       );
       var queuedDefenders = this.countQueuedDefense(room, role, targetRoom);
       var plannedDefenders = 0;
+      var burstCap = this.getDefenseBurstCap(threat);
 
       if (
         activeLock &&
@@ -654,8 +664,14 @@ module.exports = {
         defenderIndex++
       ) {
         if (
-          plannedDefenders > 0 ||
-          !this.canQueueDefenseSpawn(defenseMemory, requestKey, cooldown)
+          plannedDefenders >= burstCap ||
+          (
+            !(
+              threat.breachSeverity === "core_breach" &&
+              plannedDefenders > 0
+            ) &&
+            !this.canQueueDefenseSpawn(defenseMemory, requestKey, cooldown)
+          )
         ) {
           break;
         }
@@ -666,6 +682,7 @@ module.exports = {
           threatLevel: threat.threatLevel || 1,
           threatScore: threat.threatScore || 0,
           responseMode: threat.responseMode || null,
+          breachSeverity: threat.breachSeverity || null,
           targetId: threat.towerTargetId || null,
           targetRoom: targetRoom,
           operation: threat.operation || null,
@@ -679,6 +696,52 @@ module.exports = {
           lastSeen: Game.time,
         };
       }
+    }
+  },
+
+  getDefenseBurstCap(threat) {
+    if (!threat) return 1;
+    if (threat.breachSeverity === "core_breach") return 2;
+    if (threat.breachSeverity === "interior_pressure") return 2;
+    return 1;
+  },
+
+  prioritizeRecoveryRequests(requests) {
+    for (var i = 0; i < requests.length; i++) {
+      var request = requests[i];
+      if (!request) continue;
+
+      if (request.role === "defender") {
+        request.priority = Math.max(request.priority || 0, 1100);
+        continue;
+      }
+
+      if (request.role === "miner") {
+        request.priority = Math.max(request.priority || 0, 130);
+        continue;
+      }
+
+      if (request.role === "hauler") {
+        request.priority = Math.max(request.priority || 0, 125);
+        continue;
+      }
+
+      if (request.role === "worker" || request.role === "jrworker") {
+        request.priority = Math.max(request.priority || 0, 120);
+        continue;
+      }
+
+      if (request.role === "repair") {
+        request.priority = Math.min(request.priority || 60, 45);
+        continue;
+      }
+
+      if (request.role === "upgrader") {
+        request.priority = Math.min(request.priority || 80, 40);
+        continue;
+      }
+
+      request.priority = Math.min(request.priority || 50, 35);
     }
   },
 

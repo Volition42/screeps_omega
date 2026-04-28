@@ -318,25 +318,57 @@ module.exports = {
   },
 
   runDefenseRetreat(creep, state) {
-    if (!state || !state.defense || !state.defense.hasThreats) return false;
     if (creep.memory.role === "defender") {
       return false;
     }
 
     const homeRoomName = creep.memory.homeRoom || creep.memory.room || state.roomName;
+    const homeThreat =
+      state && state.defense
+        ? defenseManager.getThreatByRoom(state.defense, homeRoomName) ||
+          state.defense.homeThreat ||
+          null
+        : null;
+
+    if ((!state || !state.defense || !state.defense.hasThreats) && !creep.memory.retreatRoom) {
+      this.clearDefenseRetreatMemory(creep);
+      return false;
+    }
+
     const currentThreat = defenseManager.getThreatByRoom(
       state.defense,
       creep.room.name,
     );
-    if (!currentThreat) return false;
+    if (!currentThreat) {
+      if (
+        creep.memory.retreatRoom &&
+        homeThreat &&
+        homeThreat.active &&
+        homeThreat.breachSeverity === "core_breach"
+      ) {
+        this.holdRetreatRoom(creep, homeRoomName);
+        return true;
+      }
 
-    this.retreatFromThreatRoom(creep, homeRoomName, currentThreat);
+      this.clearDefenseRetreatMemory(creep);
+      return false;
+    }
+
+    this.retreatFromThreatRoom(creep, homeRoomName, currentThreat, homeThreat);
     return true;
   },
 
-  retreatFromThreatRoom(creep, homeRoomName, threat) {
-    if (creep.room.name !== homeRoomName) {
-      this.moveToRoom(creep, homeRoomName);
+  retreatFromThreatRoom(creep, homeRoomName, threat, homeThreat) {
+    const breachSeverity = threat.breachSeverity || "edge_pressure";
+
+    if (
+      creep.room.name !== homeRoomName &&
+      creep.memory.retreatRoom &&
+      homeThreat &&
+      homeThreat.active &&
+      homeThreat.breachSeverity === "core_breach"
+    ) {
+      this.holdRetreatRoom(creep, homeRoomName);
       return;
     }
 
@@ -344,10 +376,40 @@ module.exports = {
     const closestHostile =
       hostiles.length > 0 ? creep.pos.findClosestByRange(hostiles) : null;
 
-    if (closestHostile && creep.pos.getRangeTo(closestHostile) <= 6) {
-      if (this.fleeFromHostiles(creep, hostiles)) {
+    if (breachSeverity === "edge_pressure") {
+      if (closestHostile && creep.pos.getRangeTo(closestHostile) <= 6) {
+        creep.memory.retreatMode = "edge_pressure";
+        if (this.fleeFromHostiles(creep, hostiles)) {
+          return;
+        }
+      } else {
+        this.clearDefenseRetreatMemory(creep);
         return;
       }
+
+      this.holdAtHome(creep, homeRoomName);
+      return;
+    }
+
+    if (breachSeverity === "interior_pressure") {
+      creep.memory.retreatMode = "safe_edge";
+      this.moveToSafeEdge(creep, hostiles);
+      return;
+    }
+
+    if (breachSeverity === "core_breach") {
+      const retreatRoom = this.getSafestRetreatRoom(creep, hostiles);
+      if (retreatRoom) {
+        creep.memory.retreatMode = "evacuate";
+        creep.memory.retreatRoom = retreatRoom;
+        this.moveToRoom(creep, retreatRoom);
+        return;
+      }
+
+      creep.memory.retreatMode = "safe_edge";
+      delete creep.memory.retreatRoom;
+      this.moveToSafeEdge(creep, hostiles);
+      return;
     }
 
     this.holdAtHome(creep, homeRoomName);
@@ -364,6 +426,106 @@ module.exports = {
     if (anchor && creep.pos.getRangeTo(anchor) > 4) {
       creep.moveTo(anchor, RETREAT_MOVE_OPTIONS);
     }
+  },
+
+  holdRetreatRoom(creep) {
+    creep.memory.retreatMode = "evacuate";
+    if (creep.pos.x !== 25 || creep.pos.y !== 25) {
+      creep.moveTo(new RoomPosition(25, 25, creep.room.name), RETREAT_MOVE_OPTIONS);
+    }
+  },
+
+  moveToSafeEdge(creep, hostiles) {
+    const fallback = this.getSafestEdgePosition(creep.room, hostiles);
+    if (!fallback) {
+      this.holdAtHome(creep, creep.memory.homeRoom || creep.memory.room || creep.room.name);
+      return;
+    }
+
+    creep.memory.retreatEdge = `${fallback.x}:${fallback.y}:${fallback.roomName}`;
+    creep.moveTo(fallback, RETREAT_MOVE_OPTIONS);
+  },
+
+  getSafestEdgePosition(room, hostiles) {
+    if (!room) return null;
+
+    const candidates = [];
+    for (let x = 2; x <= 47; x += 3) {
+      candidates.push(new RoomPosition(x, 2, room.name));
+      candidates.push(new RoomPosition(x, 47, room.name));
+    }
+    for (let y = 5; y <= 44; y += 3) {
+      candidates.push(new RoomPosition(2, y, room.name));
+      candidates.push(new RoomPosition(47, y, room.name));
+    }
+
+    let best = null;
+    let bestScore = -Infinity;
+    for (let i = 0; i < candidates.length; i++) {
+      const pos = candidates[i];
+      if (room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
+
+      let closestRange = 50;
+      for (let h = 0; h < hostiles.length; h++) {
+        closestRange = Math.min(closestRange, pos.getRangeTo(hostiles[h]));
+      }
+      const score = closestRange * 100 - Math.abs(25 - pos.x) - Math.abs(25 - pos.y);
+      if (score > bestScore) {
+        best = pos;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  },
+
+  getSafestRetreatRoom(creep, hostiles) {
+    const parsed = this.parseRoomName(creep.room.name);
+    if (!parsed) return null;
+
+    const edgeChoices = [
+      { roomName: this.composeRoomName(parsed.x, parsed.y - 1), positions: [new RoomPosition(25, 2, creep.room.name)] },
+      { roomName: this.composeRoomName(parsed.x, parsed.y + 1), positions: [new RoomPosition(25, 47, creep.room.name)] },
+      { roomName: this.composeRoomName(parsed.x - 1, parsed.y), positions: [new RoomPosition(2, 25, creep.room.name)] },
+      { roomName: this.composeRoomName(parsed.x + 1, parsed.y), positions: [new RoomPosition(47, 25, creep.room.name)] },
+    ];
+
+    let best = null;
+    let bestScore = -Infinity;
+    for (let i = 0; i < edgeChoices.length; i++) {
+      const choice = edgeChoices[i];
+      let score = 0;
+      for (let p = 0; p < choice.positions.length; p++) {
+        let minRange = 50;
+        for (let h = 0; h < hostiles.length; h++) {
+          minRange = Math.min(minRange, choice.positions[p].getRangeTo(hostiles[h]));
+        }
+        score += minRange;
+      }
+
+      if (score > bestScore) {
+        best = choice.roomName;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  },
+
+  parseRoomName(roomName) {
+    return defenseManager.parseRoomName(roomName);
+  },
+
+  composeRoomName(x, y) {
+    const horizontal = x < 0 ? `W${Math.abs(x + 1)}` : `E${x}`;
+    const vertical = y < 0 ? `N${Math.abs(y + 1)}` : `S${y}`;
+    return horizontal + vertical;
+  },
+
+  clearDefenseRetreatMemory(creep) {
+    delete creep.memory.retreatMode;
+    delete creep.memory.retreatRoom;
+    delete creep.memory.retreatEdge;
   },
 
   getSafeAnchor(room) {

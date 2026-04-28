@@ -163,7 +163,9 @@ module.exports = {
       case "defender":
         return this.finalizePlan(
           "defender",
-          request && request.responseMode === "tower_support"
+          request && request.responseMode === "core_breach"
+            ? "core_breach"
+            : request && request.responseMode === "tower_support"
             ? "tower_support"
             : "threat_reactive",
           this.getDefenderBody(
@@ -746,6 +748,24 @@ module.exports = {
   },
 
   getDefenderBody(energyCapacity, threatLevel, responseMode) {
+    if (responseMode === "core_breach" && energyCapacity >= 760) {
+      return [
+        TOUGH,
+        TOUGH,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ];
+    }
+
     var prefersTowerSupport =
       responseMode === "tower_support" || responseMode === "creep_only";
 

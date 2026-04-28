@@ -64,11 +64,18 @@ module.exports = {
         threatenedRooms: [],
         support: null,
         outgoingSupport: null,
+        recovery: {
+          active: false,
+          reason: null,
+          startedAt: null,
+          exitWhenReady: false,
+        },
       };
     }
 
     var homeThreat = this.getOwnedRoomThreat(room, state, reaction);
     var activeThreats = homeThreat.active ? [homeThreat] : [];
+    var recovery = this.updateRecoveryState(room, state, homeThreat, reaction);
     var support = this.getSupportSummary(room.name, reaction);
     if (
       support &&
@@ -87,6 +94,7 @@ module.exports = {
       threatenedRooms: activeThreats.length > 0 ? [room.name] : [],
       support: support,
       outgoingSupport: this.getOutgoingSupportSummary(room.name, reaction),
+      recovery: recovery,
     };
   },
 
@@ -103,10 +111,14 @@ module.exports = {
       RANGED_PART_SCORE: 1,
       HEAL_PART_SCORE: 2,
       CLAIM_PART_SCORE: 2,
+      WORK_PART_SCORE: 1,
+      DISMANTLE_ASSET_PART_SCORE: 2,
+      DISMANTLE_CORE_PART_SCORE: 3,
       INVADER_CORE_BASE_SCORE: 4,
       INVADER_CORE_LEVEL_SCORE: 2,
       INVADER_CORE_HITS_STEP: 100000,
       THREAT_MEMORY_TTL: 25,
+      RECOVERY_COOLDOWN_TICKS: 15,
       TOWER_BREAKTHROUGH_DAMAGE: 50,
       TOWER_SCORE_PER_ACTIVE_TOWER: 6,
       EDGE_BUFFER: 2,
@@ -147,9 +159,18 @@ module.exports = {
       }
 
       var role = targetThreat.responseRole || "defender";
+      var maxSupport = reaction.MAX_SUPPORT_DEFENDERS || 1;
+      if (
+        targetThreat.breachSeverity === "core_breach" &&
+        helperRoom &&
+        helperRoom.controller &&
+        helperRoom.controller.level >= 6
+      ) {
+        maxSupport = Math.max(maxSupport, 2);
+      }
       var coverage = this.countDefenseCoverage(targetRoom.name, role, reaction);
       var desiredSupport = Math.min(
-        reaction.MAX_SUPPORT_DEFENDERS || 1,
+        maxSupport,
         Math.max(0, (targetThreat.desiredDefenders || 0) - coverage),
       );
 
@@ -195,6 +216,28 @@ module.exports = {
       idleSpawns.length > 0 &&
       targetRoom.energyCapacityAvailable >= 300
     );
+    var localCanRespondQuickly = !!(
+      localCanSpawn &&
+      targetRoom.energyCapacityAvailable >= 430
+    );
+
+    if (targetThreat.responseMode === "tower_only") return false;
+
+    if (targetThreat.breachSeverity === "edge_pressure") {
+      return !localCanRespondQuickly;
+    }
+
+    if (targetThreat.breachSeverity === "interior_pressure") {
+      return !localCanRespondQuickly;
+    }
+
+    if (targetThreat.breachSeverity === "core_breach") {
+      return (
+        !localCanRespondQuickly ||
+        targetThreat.towerEnergyState !== "ready" ||
+        (targetThreat.readyTowerCount || 0) <= 0
+      );
+    }
 
     if (!localCanSpawn) return true;
 
@@ -216,6 +259,10 @@ module.exports = {
     if (!_.some(spawns, function (spawn) { return !spawn.spawning; })) return false;
 
     if (state && state.defense && state.defense.hasThreats) return false;
+    if (state && state.defense && state.defense.recovery && state.defense.recovery.active) {
+      return false;
+    }
+    if (this.getStoredRecoveryState(room).active) return false;
 
     var hostiles = utils.getDefenseIntruders(
       room,
@@ -432,6 +479,7 @@ module.exports = {
       hostileReservation: false,
       desiredDefenders: this.getDesiredDefenderCount(activeDefense, reaction),
       reaction: reaction,
+      threatScore: activeDefense.threatScore,
       responseRole: "defender",
       spawnCooldown: reaction.HOME_SPAWN_COOLDOWN,
       visible: true,
@@ -442,6 +490,9 @@ module.exports = {
       activeTowerCount: activeDefense.activeTowerCount,
       readyTowerCount: activeDefense.readyTowerCount,
       responseMode: activeDefense.responseMode,
+      breachSeverity: activeDefense.breachSeverity,
+      towerEnergyState: activeDefense.towerEnergyState,
+      recoveryEligible: activeDefense.recoveryEligible,
       hostileCombatPower: activeDefense.hostileCombatPower,
       hostileHealingPower: activeDefense.hostileHealingPower,
     });
@@ -452,7 +503,10 @@ module.exports = {
       return 0;
     }
 
-    if (activeDefense.towerCanHandle) {
+    if (
+      activeDefense.towerCanHandle &&
+      activeDefense.breachSeverity !== "core_breach"
+    ) {
       return 0;
     }
 
@@ -499,12 +553,13 @@ module.exports = {
         (reaction.RANGED_PART_SCORE || 1);
       score += getActiveBodyparts(hostile, HEAL) * (reaction.HEAL_PART_SCORE || 2);
       score += getActiveBodyparts(hostile, CLAIM) * (reaction.CLAIM_PART_SCORE || 2);
+      score += getActiveBodyparts(hostile, WORK) * (reaction.WORK_PART_SCORE || 1);
     }
 
     return Math.max(score, hostiles.length);
   },
 
-  getHostileThreatValue(hostile, reaction) {
+  getHostileThreatValue(hostile, reaction, protectedRange, coreRange) {
     if (!hostile) return 0;
 
     if (hostile.structureType === STRUCTURE_INVADER_CORE) {
@@ -519,7 +574,7 @@ module.exports = {
       );
     }
 
-    return (
+    var score = (
       (reaction.HOSTILE_CREEP_BASE_SCORE || 1) +
       getActiveBodyparts(hostile, ATTACK) * (reaction.ATTACK_PART_SCORE || 1) +
       getActiveBodyparts(hostile, RANGED_ATTACK) *
@@ -527,6 +582,19 @@ module.exports = {
       getActiveBodyparts(hostile, HEAL) * (reaction.HEAL_PART_SCORE || 2) +
       getActiveBodyparts(hostile, CLAIM) * (reaction.CLAIM_PART_SCORE || 2)
     );
+
+    var workParts = getActiveBodyparts(hostile, WORK);
+    if (workParts > 0) {
+      if (coreRange <= 6) {
+        score += workParts * (reaction.DISMANTLE_CORE_PART_SCORE || 3);
+      } else if (protectedRange <= 8) {
+        score += workParts * (reaction.DISMANTLE_ASSET_PART_SCORE || 2);
+      } else {
+        score += workParts * (reaction.WORK_PART_SCORE || 1);
+      }
+    }
+
+    return score;
   },
 
   getActiveDefenseProfile(room, state, hostiles, reaction) {
@@ -542,14 +610,27 @@ module.exports = {
       reaction,
     );
     var focusProfile = targetProfiles.length > 0 ? targetProfiles[0] : null;
-    var threatScore = this.getThreatScore(hostiles, reaction);
-    var hostileCombatPower = this.getHostileCombatPower(hostiles);
+    var threatScore = targetProfiles.reduce(function (total, profile) {
+      return total + (profile.dangerScore || 0);
+    }, 0);
+    if (hostiles && hostiles.length > 0) {
+      threatScore = Math.max(threatScore, hostiles.length);
+    }
+    var hostileCombatPower = this.getHostileCombatPower(targetProfiles);
     var hostileHealingPower = this.getHostileHealingPower(hostiles);
     var dangerousTargets = _.filter(targetProfiles, function (profile) {
       return profile.dangerScore > 0;
     });
     var activeTowerCount = towers.length;
     var readyTowerCount = readyTowers.length;
+    var towerEnergyState = this.getTowerEnergyState(
+      towers,
+      readyTowers,
+    );
+    var breachSeverity = this.getBreachSeverity(
+      targetProfiles,
+      reaction,
+    );
     var towerCanHandle = !!(
       focusProfile &&
       readyTowerCount > 0 &&
@@ -563,11 +644,13 @@ module.exports = {
     var responseMode = "idle";
 
     if (hostiles && hostiles.length > 0) {
-      responseMode = towerCanHandle
-        ? "tower_only"
-        : readyTowerCount > 0
-          ? "tower_support"
-          : "creep_only";
+      responseMode = breachSeverity === "core_breach"
+        ? "core_breach"
+        : towerCanHandle
+          ? "tower_only"
+          : readyTowerCount > 0
+            ? "tower_support"
+            : "creep_only";
     }
 
     return {
@@ -579,6 +662,9 @@ module.exports = {
       towerFocusDamage: focusProfile ? Math.max(0, Math.round(focusProfile.netFocusDamage)) : 0,
       towerCanHandle: towerCanHandle,
       responseMode: responseMode,
+      breachSeverity: breachSeverity,
+      towerEnergyState: towerEnergyState,
+      recoveryEligible: breachSeverity === "interior_pressure" || breachSeverity === "core_breach",
       hostileCombatPower: hostileCombatPower,
       hostileHealingPower: hostileHealingPower,
       threatScore: threatScore,
@@ -590,6 +676,7 @@ module.exports = {
     if (!hostiles || hostiles.length === 0) return [];
 
     var protectedPositions = this.getProtectedPositions(room, state, towers);
+    var coreProtectedPositions = this.getCoreProtectedPositions(room, state, towers);
     var defenders =
       state && state.roleMap && state.roleMap.defender
         ? state.roleMap.defender
@@ -600,7 +687,6 @@ module.exports = {
       var hostile = hostiles[i];
       if (!hostile || !hostile.pos) continue;
 
-      var dangerScore = this.getHostileThreatValue(hostile, reaction);
       var healing = this.getHostileHealingAtTarget(hostile, hostiles);
       var towerDamage = this.getTowerDamageAtPos(hostile.pos, towers);
       var defenderSupport = this.getFriendlyDefenseDamageAtTarget(hostile, defenders);
@@ -608,16 +694,28 @@ module.exports = {
         hostile.pos,
         protectedPositions,
       );
+      var coreRange = this.getNearestProtectedRange(
+        hostile.pos,
+        coreProtectedPositions,
+      );
       var isEdgeTarget = this.isEdgeTarget(hostile.pos, reaction.EDGE_BUFFER || 2);
       var healParts = getActiveBodyparts(hostile, HEAL);
       var claimParts = getActiveBodyparts(hostile, CLAIM);
+      var workParts = getActiveBodyparts(hostile, WORK);
+      var dangerScore = this.getHostileThreatValue(
+        hostile,
+        reaction,
+        protectedRange,
+        coreRange,
+      );
       var netFocusDamage = towerDamage + defenderSupport - healing;
       var score =
         dangerScore * 25 +
         Math.max(0, 20 - Math.min(20, protectedRange)) * 12 +
         Math.max(0, netFocusDamage) +
         (healParts > 0 ? 120 : 0) +
-        (claimParts > 0 ? 90 : 0);
+        (claimParts > 0 ? 90 : 0) +
+        (workParts > 0 && coreRange <= 6 ? 160 : 0);
 
       if (netFocusDamage >= (reaction.TOWER_BREAKTHROUGH_DAMAGE || 50)) {
         score += 180;
@@ -639,6 +737,7 @@ module.exports = {
         defenderSupport: defenderSupport,
         netFocusDamage: netFocusDamage,
         protectedRange: protectedRange,
+        coreRange: coreRange,
         isEdgeTarget: isEdgeTarget,
       });
     }
@@ -680,6 +779,26 @@ module.exports = {
     if (room.storage) pushPos(room.storage.pos);
     if (state && state.hubContainer) pushPos(state.hubContainer.pos);
     if (state && state.controllerContainer) pushPos(state.controllerContainer.pos);
+
+    return positions;
+  },
+
+  getCoreProtectedPositions(room, state, towers) {
+    var positions = [];
+    var pushPos = function (pos) {
+      if (!pos) return;
+      positions.push(pos);
+    };
+    var spawns = state && state.spawns ? state.spawns : room.find(FIND_MY_SPAWNS);
+
+    for (var i = 0; i < spawns.length; i++) {
+      pushPos(spawns[i].pos);
+    }
+    for (var j = 0; j < towers.length; j++) {
+      pushPos(towers[j].pos);
+    }
+
+    if (room.storage) pushPos(room.storage.pos);
 
     return positions;
   },
@@ -798,7 +917,8 @@ module.exports = {
     var power = 0;
 
     for (var i = 0; i < hostiles.length; i++) {
-      var hostile = hostiles[i];
+      var profile = hostiles[i];
+      var hostile = profile && profile.hostile ? profile.hostile : profile;
       if (!hostile) continue;
 
       if (hostile.structureType === STRUCTURE_INVADER_CORE) {
@@ -809,9 +929,22 @@ module.exports = {
       power += getActiveBodyparts(hostile, ATTACK) * ATTACK_POWER_VALUE;
       power += getActiveBodyparts(hostile, RANGED_ATTACK) * RANGED_ATTACK_POWER_VALUE;
       power += getActiveBodyparts(hostile, CLAIM) * 40;
+      power += this.getDismantlePower(
+        hostile,
+        profile && typeof profile.protectedRange === "number" ? profile.protectedRange : 50,
+        profile && typeof profile.coreRange === "number" ? profile.coreRange : 50,
+      );
     }
 
     return power;
+  },
+
+  getDismantlePower(hostile, protectedRange, coreRange) {
+    var workParts = getActiveBodyparts(hostile, WORK);
+    if (workParts <= 0) return 0;
+    if (coreRange <= 6) return workParts * 30;
+    if (protectedRange <= 8) return workParts * 20;
+    return workParts * 10;
   },
 
   getHostileHealingPower(hostiles) {
@@ -854,7 +987,10 @@ module.exports = {
   createThreatDescriptor(options) {
     var hostiles = options.hostiles || [];
     var hostileCount = hostiles.length;
-    var threatScore = this.getThreatScore(hostiles, options.reaction || {});
+    var threatScore =
+      typeof options.threatScore === "number"
+        ? options.threatScore
+        : this.getThreatScore(hostiles, options.reaction || {});
     var threatLevel = 1;
 
     if (threatScore >= 12) threatLevel = 3;
@@ -883,9 +1019,188 @@ module.exports = {
       activeTowerCount: options.activeTowerCount || 0,
       readyTowerCount: options.readyTowerCount || 0,
       responseMode: options.responseMode || "idle",
+      breachSeverity: options.breachSeverity || "clear",
+      towerEnergyState: options.towerEnergyState || "empty",
+      recoveryEligible: !!options.recoveryEligible,
       hostileCombatPower: options.hostileCombatPower || 0,
       hostileHealingPower: options.hostileHealingPower || 0,
     };
+  },
+
+  getTowerEnergyState(towers, readyTowers) {
+    if (!towers || towers.length === 0) return "empty";
+
+    var reserveThreshold =
+      config.LOGISTICS && typeof config.LOGISTICS.towerReserveThreshold === "number"
+        ? config.LOGISTICS.towerReserveThreshold
+        : 700;
+    var reserveReady = _.filter(towers, function (tower) {
+      return getStoredEnergy(tower) >= reserveThreshold;
+    }).length;
+
+    if (
+      readyTowers &&
+      readyTowers.length > 0 &&
+      reserveReady >= Math.ceil(towers.length / 2)
+    ) {
+      return "ready";
+    }
+
+    return readyTowers && readyTowers.length > 0 ? "low" : "empty";
+  },
+
+  getBreachSeverity(targetProfiles) {
+    if (!targetProfiles || targetProfiles.length === 0) return "clear";
+
+    for (var i = 0; i < targetProfiles.length; i++) {
+      var profile = targetProfiles[i];
+      var hostile = profile.hostile;
+      if (!hostile) continue;
+
+      if (
+        profile.coreRange <= 4 ||
+        (getActiveBodyparts(hostile, WORK) > 0 && profile.coreRange <= 6)
+      ) {
+        return "core_breach";
+      }
+    }
+
+    for (var j = 0; j < targetProfiles.length; j++) {
+      if (
+        !targetProfiles[j].isEdgeTarget &&
+        targetProfiles[j].protectedRange <= 8
+      ) {
+        return "interior_pressure";
+      }
+    }
+
+    return "edge_pressure";
+  },
+
+  getRoomDefenseMemory(room) {
+    if (!Memory.rooms) Memory.rooms = {};
+    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+    if (!Memory.rooms[room.name].defense) Memory.rooms[room.name].defense = {};
+    return Memory.rooms[room.name].defense;
+  },
+
+  getStoredRecoveryState(room) {
+    var memory = this.getRoomDefenseMemory(room);
+    var recovery = memory.recovery || {};
+    return {
+      active: !!recovery.active,
+      reason: recovery.reason || null,
+      startedAt: recovery.startedAt || null,
+      exitWhenReady: !!recovery.exitWhenReady,
+    };
+  },
+
+  updateRecoveryState(room, state, homeThreat, reaction) {
+    var memory = this.getRoomDefenseMemory(room);
+    if (!memory.recovery) {
+      memory.recovery = {
+        active: false,
+        eligible: false,
+        reason: null,
+        startedAt: null,
+        exitWhenReady: false,
+        lastThreatSeen: null,
+      };
+    }
+
+    var recovery = memory.recovery;
+    var severeThreat = !!(
+      homeThreat &&
+      homeThreat.active &&
+      (
+        homeThreat.breachSeverity === "interior_pressure" ||
+        homeThreat.breachSeverity === "core_breach"
+      )
+    );
+
+    if (homeThreat && homeThreat.active) {
+      recovery.lastThreatSeen = Game.time;
+      if (severeThreat || homeThreat.recoveryEligible) {
+        recovery.eligible = true;
+      }
+      recovery.active = false;
+      recovery.reason = null;
+      recovery.startedAt = null;
+      recovery.exitWhenReady = false;
+    } else if (recovery.eligible) {
+      if (!recovery.active) {
+        recovery.active = true;
+        recovery.reason = "post_attack";
+        recovery.startedAt = Game.time;
+        recovery.exitWhenReady = true;
+      }
+
+      if (this.shouldExitRecovery(room, state, recovery, reaction)) {
+        recovery.active = false;
+        recovery.eligible = false;
+        recovery.reason = null;
+        recovery.startedAt = null;
+        recovery.exitWhenReady = false;
+      }
+    }
+
+    return {
+      active: !!recovery.active,
+      reason: recovery.reason || null,
+      startedAt: recovery.startedAt || null,
+      exitWhenReady: !!recovery.exitWhenReady,
+    };
+  },
+
+  shouldExitRecovery(room, state, recovery, reaction) {
+    var cooldown =
+      reaction && typeof reaction.RECOVERY_COOLDOWN_TICKS === "number"
+        ? reaction.RECOVERY_COOLDOWN_TICKS
+        : 15;
+    var lastThreatSeen =
+      typeof recovery.lastThreatSeen === "number" ? recovery.lastThreatSeen : Game.time;
+    if (Game.time - lastThreatSeen < cooldown) return false;
+    if (room.energyAvailable !== room.energyCapacityAvailable) return false;
+    if (this.hasQueuedDefenseRequests(room.name)) return false;
+
+    var towers = this.getTowers(room, state);
+    if (towers.length <= 0) return true;
+
+    var emergencyThreshold =
+      config.LOGISTICS && typeof config.LOGISTICS.towerEmergencyThreshold === "number"
+        ? config.LOGISTICS.towerEmergencyThreshold
+        : 400;
+    var reserveThreshold =
+      config.LOGISTICS && typeof config.LOGISTICS.towerReserveThreshold === "number"
+        ? config.LOGISTICS.towerReserveThreshold
+        : 700;
+    var emergencyReady = _.some(towers, function (tower) {
+      return getStoredEnergy(tower) >= emergencyThreshold;
+    });
+    if (!emergencyReady) return false;
+
+    var reserveReady = _.filter(towers, function (tower) {
+      return getStoredEnergy(tower) >= reserveThreshold;
+    }).length;
+    return reserveReady >= Math.ceil(towers.length / 2);
+  },
+
+  hasQueuedDefenseRequests(roomName) {
+    var queue =
+      Memory.rooms &&
+      Memory.rooms[roomName] &&
+      Memory.rooms[roomName].spawnQueue
+        ? Memory.rooms[roomName].spawnQueue
+        : [];
+
+    for (var i = 0; i < queue.length; i++) {
+      var item = queue[i];
+      if (!item || item.role !== "defender") continue;
+      var targetRoom = item.targetRoom || item.homeRoom || roomName;
+      if (targetRoom === roomName) return true;
+    }
+
+    return false;
   },
 
   getThreatByRoom(defenseState, roomName) {

@@ -2784,7 +2784,46 @@ module.exports = {
   },
 
   placeDefense(context) {
-    return;
+    if (!context || !context.room || !context.state || !context.buildStatus) return;
+    if ((context.buildStatus.rampartsNeeded || 0) <= (context.buildStatus.rampartsBuilt || 0)) {
+      return;
+    }
+
+    var positions = [];
+    var seen = {};
+
+    function pushPos(pos) {
+      if (!pos) return;
+      var key = pos.x + ":" + pos.y;
+      if (seen[key]) return;
+      seen[key] = true;
+      positions.push(pos);
+    }
+
+    var spawns = context.state.spawns || context.room.find(FIND_MY_SPAWNS);
+    for (var i = 0; i < spawns.length; i++) {
+      pushPos(spawns[i].pos);
+    }
+    if (context.room.storage) {
+      pushPos(context.room.storage.pos);
+    }
+
+    var towers =
+      context.state.structuresByType && context.state.structuresByType[STRUCTURE_TOWER]
+        ? context.state.structuresByType[STRUCTURE_TOWER]
+        : context.room.find(FIND_MY_STRUCTURES, {
+            filter: function (structure) {
+              return structure.structureType === STRUCTURE_TOWER;
+            },
+          });
+    for (var j = 0; j < towers.length; j++) {
+      pushPos(towers[j].pos);
+    }
+
+    for (var p = 0; p < positions.length; p++) {
+      if (this.isSiteCapReached(context)) break;
+      this.tryPlaceStructureSite(context, positions[p], STRUCTURE_RAMPART);
+    }
   },
 
   pruneOffPlanDefenseStructures(context, plan) {
