@@ -10,6 +10,7 @@ const controllerSigner = require("controller_signer");
 const directiveManager = require("directive_manager");
 const hud = require("hud");
 const statsManager = require("stats_manager");
+const attackManager = require("attack_manager");
 
 module.exports = {
   run(room, profiler) {
@@ -38,15 +39,17 @@ module.exports = {
     utils.setRoomRuntimeState(room, state);
     this.captureLiveSnapshot(room, state, runtimeMode);
 
-    runStep(
-      "construction",
-      constructionManager.plan,
-      constructionManager,
-      room,
-      state,
-      detailCpu ? profiler : null,
-      detailCpu ? roomLabel : null,
-    );
+    if (!attackManager.isRoomInAttackMode(room.name)) {
+      runStep(
+        "construction",
+        constructionManager.plan,
+        constructionManager,
+        room,
+        state,
+        detailCpu ? profiler : null,
+        detailCpu ? roomLabel : null,
+      );
+    }
     runStep("links", linkManager.run, linkManager, room, state);
     runStep("towers", towerManager.run, towerManager, room, state);
     if (

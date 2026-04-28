@@ -19,6 +19,7 @@ const constructionStatus = require("construction_status");
 const defenseManager = require("defense_manager");
 const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
+const attackManager = require("attack_manager");
 const reservePolicy = require("economy_reserve_policy");
 const utils = require("utils");
 
@@ -46,6 +47,7 @@ module.exports = {
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
         operation: request.operation || null,
+        attackStatus: request.attackStatus || null,
         defenseType: request.defenseType || null,
         homeRoom: request.homeRoom || null,
         bodyProfile: plan.profile || null,
@@ -147,6 +149,7 @@ module.exports = {
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
         operation: request.operation || null,
+        attackStatus: request.attackStatus || null,
         defenseType: request.defenseType || null,
         bodyProfile: bodyPlan.profile || null,
         bodyCost: bodyPlan.cost || null,
@@ -173,6 +176,7 @@ module.exports = {
             targetId: request.targetId || null,
             targetRoom: request.targetRoom || null,
             operation: request.operation || null,
+            attackStatus: request.attackStatus || null,
             defenseType: request.defenseType || null,
             bodyProfile: fallbackPlan.profile || null,
             bodyCost: fallbackPlan.cost || null,
@@ -364,6 +368,15 @@ module.exports = {
 
     if (state.phase === "foundation") {
       this.addDefenseRequests(room, state, requests, reaction);
+      this.addAttackRequests(room, state, requests);
+
+      if (attackManager.isRoomInAttackMode(room.name)) {
+        this.addAttackCoreEconomyRequests(room, state, requests);
+        requests.sort(function (a, b) {
+          return b.priority - a.priority;
+        });
+        return requests;
+      }
 
       if (!this.areSourceContainersReady(state)) {
         if (this.getReadySourceContainerCount(state) > 0) {
@@ -412,6 +425,16 @@ module.exports = {
     }
 
     this.addDefenseRequests(room, state, requests, reaction);
+    this.addAttackRequests(room, state, requests);
+
+    if (attackManager.isRoomInAttackMode(room.name)) {
+      this.addAttackCoreEconomyRequests(room, state, requests);
+      requests.sort(function (a, b) {
+        return b.priority - a.priority;
+      });
+      return requests;
+    }
+
     if (!(state.defense && state.defense.recovery && state.defense.recovery.active)) {
       this.addExpansionRequests(room, state, requests);
       this.addReservationRequests(room, state, requests);
@@ -447,6 +470,66 @@ module.exports = {
 
     for (let i = 0; i < reservationRequests.length; i++) {
       requests.push(reservationRequests[i]);
+    }
+  },
+
+  addAttackRequests(room, state, requests) {
+    const attackRequests = attackManager.getAttackSpawnRequests(room, state);
+
+    for (let i = 0; i < attackRequests.length; i++) {
+      requests.push(attackRequests[i]);
+    }
+  },
+
+  addAttackCoreEconomyRequests(room, state, requests) {
+    var sources = state.sources || [];
+    var sourceContainersBySourceId = state.sourceContainersBySourceId || {};
+
+    for (var i = 0; i < sources.length; i++) {
+      var source = sources[i];
+      var sourceContainer = sourceContainersBySourceId[source.id];
+      if (!sourceContainer) continue;
+
+      var existingMiners = this.getRoleSourceCount(state, "miner", source.id);
+      var queuedMiners = this.countQueuedForSource(room, "miner", source.id);
+
+      for (
+        var minerIndex = existingMiners + queuedMiners;
+        minerIndex < config.CREEPS.minersPerSource;
+        minerIndex++
+      ) {
+        requests.push({
+          role: "miner",
+          priority: 130,
+          sourceId: source.id,
+        });
+      }
+    }
+
+    this.addHaulerRequests(room, state, requests, {
+      priority: 125,
+    });
+
+    this.addAttackMinimalRepairRequests(room, state, requests);
+  },
+
+  addAttackMinimalRepairRequests(room, state, requests) {
+    var desiredRepairs = this.getDesiredAttackRepairs(room, state);
+    if (desiredRepairs <= 0) return;
+
+    var roleCounts = state.roleCounts || {};
+    var currentRepairs = roleCounts.repair || 0;
+    var queuedRepairs = this.countQueued(room, "repair");
+
+    while (
+      currentRepairs +
+        queuedRepairs +
+        requests.filter(function (r) {
+          return r.role === "repair";
+        }).length <
+      desiredRepairs
+    ) {
+      requests.push({ role: "repair", priority: 55 });
     }
   },
 
@@ -1094,6 +1177,19 @@ module.exports = {
     }
 
     return Math.ceil(Math.min(8, targetWork) / workPerCreep);
+  },
+
+  getDesiredAttackRepairs(room, state) {
+    if (state.phase === "foundation") return 0;
+
+    var groups = utils.getRepairTargetGroups(room);
+    var needsCriticalRepair = !!(
+      groups.criticalContainers.length > 0 ||
+      groups.importantStructures.length > 0
+    );
+
+    if (!needsCriticalRepair) return 0;
+    return 1;
   },
 
   getReadySourceContainerCount(state) {

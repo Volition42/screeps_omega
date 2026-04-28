@@ -4,6 +4,7 @@ const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
 const reservationFocus = require("reservation_focus");
 const expansionFocus = require("expansion_focus");
+const attackManager = require("attack_manager");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -282,6 +283,21 @@ function getConsoleCommandHelp() {
       example: "ops.expansions()",
     },
     {
+      command: "ops.attack(targetRoom, [postAction], [parentRoom], [allies])",
+      description: 'Start or update a manual attack plan. postAction defaults to "expand"; use "expand", "reserve", or "none".',
+      example: 'ops.attack("W5N6", "expand", "W5N5", ["W4N6"])',
+    },
+    {
+      command: "ops.attacks()",
+      description: "Show active attack plans.",
+      example: "ops.attacks()",
+    },
+    {
+      command: "ops.cancelAttack(targetRoom)",
+      description: "Cancel an active attack plan.",
+      example: 'ops.cancelAttack("W5N6")',
+    },
+    {
       command: "ops.cancelExpansion(targetRoom)",
       description: "Cancel an active expansion plan.",
       example: 'ops.cancelExpansion("W5N6")',
@@ -544,6 +560,15 @@ module.exports = {
       },
       expansions: function () {
         return module.exports.expansions();
+      },
+      attack: function (targetRoom, postAction, parentRoom, allies) {
+        return module.exports.attack(targetRoom, postAction, parentRoom, allies);
+      },
+      attacks: function () {
+        return module.exports.attacks();
+      },
+      cancelAttack: function (targetRoom) {
+        return module.exports.cancelAttack(targetRoom);
       },
       cancelExpansion: function (targetRoom) {
         return module.exports.cancelExpansion(targetRoom);
@@ -823,6 +848,61 @@ module.exports = {
     const lines = empireManager.getExpansionLines();
     printBlock(lines);
     return lines;
+  },
+
+  attack(targetRoom, postActionOrOptions, parentRoom, allies) {
+    let options = {};
+
+    if (
+      postActionOrOptions &&
+      typeof postActionOrOptions === "object" &&
+      !Array.isArray(postActionOrOptions)
+    ) {
+      options = {
+        postAction: postActionOrOptions.postAction,
+        parentRoom: postActionOrOptions.parentRoom,
+        allies: postActionOrOptions.allies,
+      };
+    } else {
+      const possiblePostAction = attackManager.normalizePostAction(postActionOrOptions);
+
+      if (
+        typeof postActionOrOptions !== "undefined" &&
+        possiblePostAction === null &&
+        (typeof parentRoom === "undefined" || Array.isArray(parentRoom))
+      ) {
+        options = {
+          postAction: undefined,
+          parentRoom: postActionOrOptions,
+          allies: parentRoom,
+        };
+      } else {
+        options = {
+          postAction: postActionOrOptions,
+          parentRoom: parentRoom,
+          allies: allies,
+        };
+      }
+    }
+
+    const result = attackManager.createAttack(targetRoom, options);
+    printLine(`[OPS] ${result.message}`);
+    if (result.ok) {
+      printBlock(attackManager.getAttacksLines());
+    }
+    return result;
+  },
+
+  attacks() {
+    const lines = attackManager.getAttacksLines();
+    printBlock(lines);
+    return lines;
+  },
+
+  cancelAttack(targetRoom) {
+    const result = attackManager.cancelAttack(targetRoom);
+    printLine(`[OPS] ${result.message}`);
+    return result;
   },
 
   cancelExpansion(targetRoom) {

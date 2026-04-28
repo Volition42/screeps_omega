@@ -140,6 +140,24 @@ module.exports = {
 
   /*
   Developer Notes:
+  Attack Operations
+
+  Attack operations are manual ops commands. Participating rooms temporarily
+  switch into hard-war support while the attack is active: defend locally,
+  keep spawn/tower energy moving, and spawn offensive creeps before normal
+  colony progress.
+  */
+  ATTACK: {
+    ENABLED: true,
+    MIN_PARENT_RCL: 4,
+    SUPPORT_DISTANCE: 2,
+    ATTACK_PRIORITY: 980,
+    ATTACKER_REPLACE_TTL: 120,
+    CONTROLLER_ATTACKER_REPLACE_TTL: 180,
+  },
+
+  /*
+  Developer Notes:
   Construction System Controls
 
   Roadmap intent by phase:

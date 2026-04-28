@@ -26,8 +26,13 @@ const roleReserver = require("role_reserver");
 const roleRemoteWorker = require("role_remoteworker");
 const roleRemoteMiner = require("role_remoteminer");
 const roleRemoteHauler = require("role_remotehauler");
+const roleDismantler = require("role_dismantler");
+const roleAssault = require("role_assault");
+const roleCombatHealer = require("role_combat_healer");
+const roleControllerAttacker = require("role_controller_attacker");
 const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
+const attackManager = require("attack_manager");
 const statsManager = require("stats_manager");
 const utils = require("utils");
 
@@ -177,6 +182,30 @@ module.exports = {
             creep,
           );
           break;
+
+        case "dismantler":
+          runRole("dismantler", roleDismantler.run.bind(roleDismantler), creep);
+          break;
+
+        case "assault":
+          runRole("assault", roleAssault.run.bind(roleAssault), creep);
+          break;
+
+        case "combat_healer":
+          runRole(
+            "combat_healer",
+            roleCombatHealer.run.bind(roleCombatHealer),
+            creep,
+          );
+          break;
+
+        case "controller_attacker":
+          runRole(
+            "controller_attacker",
+            roleControllerAttacker.run.bind(roleControllerAttacker),
+            creep,
+          );
+          break;
       }
     }
   },
@@ -195,6 +224,10 @@ module.exports = {
   getRoleCpuPriority(role) {
     switch (role) {
       case "defender":
+      case "dismantler":
+      case "assault":
+      case "combat_healer":
+      case "controller_attacker":
         return 0;
       case "hauler":
       case "remotehauler":
@@ -231,6 +264,10 @@ module.exports = {
     const role = creep.memory.role;
     if (
       role === "defender" ||
+      role === "dismantler" ||
+      role === "assault" ||
+      role === "combat_healer" ||
+      role === "controller_attacker" ||
       role === "claimer" ||
       role === "reserver" ||
       role === "pioneer"
@@ -312,6 +349,10 @@ module.exports = {
       operation === "reservation_defense_support"
     ) {
       return !reservationManager.getActiveReservation(targetRoom);
+    }
+
+    if (operation === "attack") {
+      return !attackManager.getActiveAttack(targetRoom);
     }
 
     return false;

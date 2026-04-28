@@ -11,6 +11,7 @@ Purpose:
 const config = require("config");
 const opsState = require("ops_state");
 const reservationManager = require("reservation_manager");
+const attackManager = require("attack_manager");
 const roomReporting = require("room_reporting");
 
 module.exports = {
@@ -48,12 +49,39 @@ module.exports = {
     }
   },
 
+  runAttackRooms() {
+    if (!opsState.getHudEnabled()) return;
+
+    const entries = attackManager.getVisibleAttackRooms();
+    for (let i = 0; i < entries.length; i++) {
+      const room = entries[i].room;
+      const report = attackManager.getAttackRoomHudReport(room);
+      if (!report) continue;
+
+      if (this.isRoomSummaryEnabled()) {
+        this.drawPanel(room, report.hudLines, report);
+        this.drawAttackMarkers(room, report);
+      }
+
+      if (this.isCreepLabelsEnabled() && this.shouldDrawCreepLabels()) {
+        this.drawCreepLabels(room, {
+          creeps: room.find(FIND_MY_CREEPS),
+          homeCreeps: [],
+        });
+      }
+    }
+  },
+
   drawSummary(room, state) {
     const report = this.getSummaryReport(room, state);
     this.drawPanel(room, report.hudLines, report);
+    this.drawAttackMarkers(room, report);
   },
 
   getSummaryReport(room, state) {
+    const attackReport = attackManager.getOwnedRoomHudReport(room, state);
+    if (attackReport) return attackReport;
+
     const cache = this.getHudCache(room);
     const interval = this.getRoomSummaryInterval();
     const phase = state && state.phase ? state.phase : null;
@@ -180,6 +208,9 @@ module.exports = {
     if (line.indexOf("Focus") === 0) return "#a7f3d0";
     if (line.indexOf("Expansion") === 0) return "#a7f3d0";
     if (line.indexOf("Reserved") === 0) return "#a7f3d0";
+    if (line.indexOf("Attack") === 0) return "#ff8fab";
+    if (line.indexOf("Target") === 0) return "#ffb3c6";
+    if (line.indexOf("Economy") === 0) return "#ffd166";
     if (line.indexOf("Mineral") === 0) return "#ffd166";
     if (line.indexOf("Safe") === 0) return "#ffd166";
     if (line.indexOf("Build") === 0) return "#caffbf";
@@ -249,6 +280,14 @@ module.exports = {
         return "Pi";
       case "remoteworker":
         return "RW";
+      case "dismantler":
+        return "Di";
+      case "assault":
+        return "A";
+      case "combat_healer":
+        return "He";
+      case "controller_attacker":
+        return "CA";
       default:
         return "?";
     }
@@ -286,8 +325,62 @@ module.exports = {
         return "#4cc9f0";
       case "remoteworker":
         return "#48cae4";
+      case "dismantler":
+        return "#ff595e";
+      case "assault":
+        return "#ff006e";
+      case "combat_healer":
+        return "#f15bb5";
+      case "controller_attacker":
+        return "#ffbe0b";
       default:
         return "#e0fbff";
     }
+  },
+
+  drawAttackMarkers(room, report) {
+    if (!report || !report.attack || !report.attack.plan) return;
+
+    const plan = report.attack.plan;
+    if (plan.targetRoom !== room.name) return;
+
+    const controller = room.controller || null;
+    const target = attackManager.getPrimaryTarget(room);
+    if (controller) {
+      room.visual.rect(controller.pos.x - 0.45, controller.pos.y - 0.45, 0.9, 0.9, {
+        fill: "#ffbe0b",
+        opacity: 0.12,
+        stroke: "#ffbe0b",
+        strokeWidth: 0.08,
+      });
+      room.visual.text("CTRL", controller.pos.x, controller.pos.y - 0.95, {
+        align: "center",
+        color: "#ffbe0b",
+        font: 0.42,
+        opacity: 0.9,
+      });
+    }
+
+    if (target && target.pos && (!controller || !target.pos.isEqualTo(controller.pos))) {
+      room.visual.rect(target.pos.x - 0.42, target.pos.y - 0.42, 0.84, 0.84, {
+        fill: "#ff006e",
+        opacity: 0.12,
+        stroke: "#ff006e",
+        strokeWidth: 0.08,
+      });
+      room.visual.text("TGT", target.pos.x, target.pos.y - 0.9, {
+        align: "center",
+        color: "#ff8fab",
+        font: 0.42,
+        opacity: 0.9,
+      });
+    }
+
+    room.visual.text(`Rally ${plan.parentRoom || "?"}`, 25, 24.25, {
+      align: "center",
+      color: "#ffb3c6",
+      font: 0.45,
+      opacity: 0.75,
+    });
   },
 };

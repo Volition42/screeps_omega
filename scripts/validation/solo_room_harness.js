@@ -1480,6 +1480,7 @@ const constructionRoadmap = require("construction_roadmap");
 const roomReporting = require("room_reporting");
 const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
+const attackManager = require("attack_manager");
 const ops = require("ops");
 const creepManager = require("creep_manager");
 const hud = require("hud");
@@ -7126,6 +7127,91 @@ function runSpawnBodyMissingEnergyCapacityScenario() {
   );
 }
 
+function runAttackOpsScenario() {
+  const parent = buildRoomScenario("W5N5", {
+    tick: 910,
+    controllerLevel: 4,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "miner_attack_test", role: "miner", x: 15, y: 25 },
+      { name: "hauler_attack_test", role: "hauler", x: 25, y: 25 },
+    ],
+  });
+  parent.controller.my = true;
+  parent.controller.owner = { username: "tester" };
+  Game.gcl = { level: 2, progress: 0, progressTotal: 1000 };
+
+  const target = new FakeRoom("W5N6", new FakeTerrain());
+  target.setController(
+    createController(20, 20, {
+      roomName: "W5N6",
+      level: 3,
+      owner: { username: "enemy" },
+    }),
+  );
+  target.addStructure(
+    createStructure(STRUCTURE_TOWER, 22, 20, {
+      roomName: "W5N6",
+      my: false,
+      hits: 3000,
+      hitsMax: 3000,
+      store: { energy: 1000 },
+      storeCapacityResource: { energy: 1000 },
+    }),
+  );
+
+  const result = ops.attack("W5N6");
+  assert(result.ok, `expected attack plan creation, got ${result.message}`);
+  assert(result.plan.postAction === "expand", `expected default expand postAction, got ${result.plan.postAction}`);
+  assert(result.plan.parentRoom === parent.name, `expected parent ${parent.name}, got ${result.plan.parentRoom}`);
+
+  const requests = spawnManager.getSpawnRequests(parent, roomState.collect(parent));
+  const roles = requests.map((request) => request.role);
+  assert(roles.indexOf("dismantler") !== -1, `expected attack to request dismantler, got ${roles.join(",")}`);
+  assert(roles.indexOf("upgrader") === -1, `attack hard-war mode should suppress upgraders, got ${roles.join(",")}`);
+  assert(roles.indexOf("worker") === -1, `attack hard-war mode should suppress workers, got ${roles.join(",")}`);
+  assert(attackManager.isRoomInAttackMode(parent.name), "parent should enter attack mode after offensive request");
+}
+
+function runAttackPostActionFallbackScenario() {
+  const parent = buildRoomScenario("W6N5", {
+    tick: 915,
+    controllerLevel: 4,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    backboneRoads: true,
+    creeps: [],
+  });
+  parent.controller.my = true;
+  parent.controller.owner = { username: "tester" };
+  Game.gcl = { level: 1, progress: 0, progressTotal: 1000 };
+
+  const target = new FakeRoom("W6N6", new FakeTerrain());
+  target.setController(
+    createController(20, 20, {
+      roomName: "W6N6",
+      level: 0,
+    }),
+  );
+
+  const result = ops.attack("W6N6", {
+    parentRoom: parent.name,
+  });
+  assert(result.ok, `expected neutral attack plan creation, got ${result.message}`);
+
+  attackManager.run();
+  const reservation = reservationManager.getActiveReservation("W6N6");
+  assert(reservation, "expand postAction should fall back to reservation when GCL is full");
+  assert(reservation.focus === "hold", `expected reserve hold fallback, got ${reservation.focus}`);
+  assert(!attackManager.getActiveAttack("W6N6"), "attack should complete after post-neutral reservation fallback");
+}
+
 function main() {
   const scenarios = [
     ["bootstrap", runBootstrapScenario],
@@ -7223,6 +7309,8 @@ function main() {
     ["hud_config_controls", runHudConfigControlsScenario],
     ["cpu_soft_limit", runCpuSoftLimitScenario],
     ["cpu_room_scale", runCpuRoomScaleScenario],
+    ["attack_ops", runAttackOpsScenario],
+    ["attack_post_action_fallback", runAttackPostActionFallbackScenario],
     ["spawn_body_validation", runSpawnBodyValidationScenario],
     ["spawn_body_missing_energy_capacity", runSpawnBodyMissingEnergyCapacityScenario],
   ];

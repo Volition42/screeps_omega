@@ -89,8 +89,21 @@ module.exports = {
         body = [ATTACK, MOVE];
         break;
 
+      case "dismantler":
+        body = [WORK, MOVE];
+        break;
+
+      case "assault":
+        body = [ATTACK, MOVE];
+        break;
+
+      case "combat_healer":
+        body = [HEAL, MOVE];
+        break;
+
       case "claimer":
       case "reserver":
+      case "controller_attacker":
         body = [CLAIM, MOVE];
         break;
 
@@ -174,6 +187,18 @@ module.exports = {
             request && request.responseMode ? request.responseMode : null,
           ),
         );
+
+      case "dismantler":
+        return this.planDismantlerBody(energyCapacity);
+
+      case "assault":
+        return this.planAssaultBody(energyCapacity);
+
+      case "combat_healer":
+        return this.planCombatHealerBody(energyCapacity);
+
+      case "controller_attacker":
+        return this.planControllerAttackerBody(energyCapacity);
 
       default:
         return this.finalizePlan("fallback", "default", [WORK, CARRY, MOVE]);
@@ -517,6 +542,146 @@ module.exports = {
       "reserved_room_builder",
       this.buildEconomicBody(counts),
     );
+  },
+
+  planDismantlerBody(energyCapacity) {
+    if (energyCapacity >= 1200) {
+      return this.finalizePlan("dismantler", "heavy_breach", [
+        TOUGH,
+        TOUGH,
+        TOUGH,
+        TOUGH,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    if (energyCapacity >= 720) {
+      return this.finalizePlan("dismantler", "breach", [
+        TOUGH,
+        TOUGH,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    if (energyCapacity >= 500) {
+      return this.finalizePlan("dismantler", "light_breach", [
+        WORK,
+        WORK,
+        WORK,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    return this.finalizePlan("dismantler", "minimal_breach", [
+      WORK,
+      WORK,
+      MOVE,
+      MOVE,
+    ]);
+  },
+
+  planAssaultBody(energyCapacity) {
+    if (energyCapacity >= 780) {
+      return this.finalizePlan("assault", "mixed_assault", [
+        TOUGH,
+        TOUGH,
+        RANGED_ATTACK,
+        RANGED_ATTACK,
+        ATTACK,
+        ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    if (energyCapacity >= 430) {
+      return this.finalizePlan("assault", "light_assault", [
+        RANGED_ATTACK,
+        ATTACK,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    return this.finalizePlan("assault", "minimal_assault", [
+      ATTACK,
+      MOVE,
+      MOVE,
+    ]);
+  },
+
+  planCombatHealerBody(energyCapacity) {
+    if (energyCapacity >= 1200) {
+      return this.finalizePlan("combat_healer", "heavy_heal", [
+        HEAL,
+        HEAL,
+        HEAL,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    if (energyCapacity >= 600) {
+      return this.finalizePlan("combat_healer", "heal_pair", [
+        HEAL,
+        HEAL,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    return this.finalizePlan("combat_healer", "single_heal", [
+      HEAL,
+      MOVE,
+    ]);
+  },
+
+  planControllerAttackerBody(energyCapacity) {
+    if (energyCapacity >= 1300) {
+      return this.finalizePlan("controller_attacker", "fast_downgrade", [
+        CLAIM,
+        CLAIM,
+        MOVE,
+        MOVE,
+      ]);
+    }
+
+    return this.finalizePlan("controller_attacker", "downgrade", [
+      CLAIM,
+      MOVE,
+    ]);
   },
 
   getInfrastructure(room, state) {

@@ -17,6 +17,7 @@ const roomReporting = require("room_reporting");
 const config = require("config");
 const defenseManager = require("defense_manager");
 const reservationManager = require("reservation_manager");
+const attackManager = require("attack_manager");
 const expansionFocus = require("expansion_focus");
 const roomProgress = require("room_progress");
 const utils = require("utils");
@@ -1454,7 +1455,8 @@ module.exports = {
 
     const expansionRows = getEmpireExpansionRows(roomReports.length);
     const reservationRows = reservationManager.getEmpireChildRows();
-    const childRows = expansionRows.concat(reservationRows);
+    const attackRows = attackManager.getEmpireChildRows();
+    const childRows = expansionRows.concat(reservationRows).concat(attackRows);
     const childRowsByParent = {};
     const renderedChildRows = {};
 
@@ -1487,6 +1489,9 @@ module.exports = {
       lines.push(
         `Expansions: ${expansionSummary.active} active | claim ${expansionSummary.claiming} | boot ${expansionSummary.bootstrapping} | blocked ${expansionSummary.blocked}`,
       );
+    }
+    if (attackRows.length > 0) {
+      lines.push(`Attacks: ${attackRows.length} active`);
     }
 
     if (roomReports.length > 0) {
