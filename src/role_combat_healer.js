@@ -52,7 +52,11 @@ module.exports = {
       if (candidate.memory.operation !== "attack") continue;
       if (candidate.memory.targetRoom !== targetRoom) continue;
       if (candidate.name === creep.name) continue;
-      if (candidate.hits < candidate.hitsMax || candidate.room.name === creep.room.name) {
+      if (
+        candidate.hits < candidate.hitsMax ||
+        candidate.memory.waitingForHealer ||
+        candidate.room.name === creep.room.name
+      ) {
         candidates.push(candidate);
       }
     }
@@ -61,6 +65,8 @@ module.exports = {
     candidates.sort(function (a, b) {
       const aInjured = a.hitsMax - a.hits;
       const bInjured = b.hitsMax - b.hits;
+      if (a.memory.waitingForHealer && !b.memory.waitingForHealer) return -1;
+      if (!a.memory.waitingForHealer && b.memory.waitingForHealer) return 1;
       if (aInjured !== bInjured) return bInjured - aInjured;
       if (a.room.name === creep.room.name && b.room.name !== creep.room.name) return -1;
       if (a.room.name !== creep.room.name && b.room.name === creep.room.name) return 1;
