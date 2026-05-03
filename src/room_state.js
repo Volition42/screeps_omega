@@ -500,7 +500,15 @@ module.exports = {
       return false;
     }
 
-    if (!this.hasDevelopingEconomyBackbone(state, desiredTotalHaulers)) {
+    var hasDevelopingBackbone =
+      this.hasDevelopingEconomyBackbone(state, desiredTotalHaulers);
+    var hasOperationalBackbone =
+      room.controller &&
+      room.controller.level >= 3 &&
+      buildStatus.foundationComplete &&
+      this.hasOperationalFoundationBackbone(state, desiredTotalHaulers);
+
+    if (!hasDevelopingBackbone && !hasOperationalBackbone) {
       return false;
     }
 
@@ -532,6 +540,33 @@ module.exports = {
 
     if (laborers <= 0) return false;
     if (totalEconomyCreeps <= 0) return false;
+    if (state.energyAvailable < minimumEnergy && totalEconomyCreeps <= 1) {
+      return false;
+    }
+
+    return true;
+  },
+
+  hasOperationalFoundationBackbone(state, desiredTotalHaulers) {
+    var roleCounts = state.roleCounts || {};
+    var sources = state.sources || [];
+    var minimumHaulers = Math.max(
+      1,
+      Math.min(desiredTotalHaulers, sources.length || 1),
+    );
+    var minersNeeded = sources.length * config.CREEPS.minersPerSource;
+    var totalEconomyCreeps =
+      (roleCounts.worker || 0) +
+      (roleCounts.jrworker || 0) +
+      (roleCounts.miner || 0) +
+      (roleCounts.hauler || 0) +
+      (roleCounts.upgrader || 0);
+    var minimumEnergy = Math.min(300, state.energyCapacityAvailable || 300);
+
+    if (totalEconomyCreeps <= 0) return false;
+    if ((roleCounts.miner || 0) < minersNeeded) return false;
+    if ((roleCounts.hauler || 0) < minimumHaulers) return false;
+    if ((roleCounts.upgrader || 0) < 1) return false;
     if (state.energyAvailable < minimumEnergy && totalEconomyCreeps <= 1) {
       return false;
     }

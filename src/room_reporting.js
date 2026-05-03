@@ -112,6 +112,7 @@ const MISSING_SUMMARY = {
   rcl7: "waiting on RCL7",
   rcl8: "waiting on RCL8",
   economyBackbone: "economy backbone not stable",
+  buildLabor: "worker needed for sites",
   labor: "worker labor thin",
   upgrader: "upgrader missing",
   miners: "miners below target",
@@ -144,6 +145,7 @@ const NEXT_TASK_LABEL = {
   rcl7: "push controller to RCL7",
   rcl8: "push controller to RCL8",
   economyBackbone: "stabilize the early economy backbone",
+  buildLabor: "spawn build labor",
   labor: "restore worker labor coverage",
   upgrader: "restore upgrader coverage",
   miners: "restore miner coverage",
@@ -353,7 +355,13 @@ function getAdvanceMissing(room, state, desiredTotalHaulers) {
 
   if (phase === "foundation") {
     if (!roomState.hasDevelopingEconomyBackbone(state, desiredTotalHaulers)) {
-      missing.push("economyBackbone");
+      const roleCounts = state.roleCounts || {};
+      const buildLabor = (roleCounts.worker || 0) + (roleCounts.jrworker || 0);
+      if ((buildStatus.sites || 0) > 0 && buildLabor <= 0) {
+        missing.push("buildLabor");
+      } else {
+        missing.push("economyBackbone");
+      }
     }
     return uniqueLabels(missing);
   }
@@ -616,6 +624,7 @@ function getAlertSummary(room, state) {
   return {
     active: active,
     recoveryActive: !!(recovery && recovery.active),
+    recoveryBlockers: recovery && recovery.blockers ? recovery.blockers.slice() : [],
     hostiles: hostiles,
     threatScore: threatScore,
     threatLevel: threatLevel,
@@ -932,6 +941,15 @@ function formatUpgradeReserveLine(room, state) {
   return `Upgrade held | Store ${storageEnergy}/${minimumEnergy} | Downgrade ${ticksToDowngrade !== null ? ticksToDowngrade : "--"}`;
 }
 
+function formatBuildIntentLine(state) {
+  const sites = state && state.buildStatus ? state.buildStatus.sites || 0 : 0;
+  if (sites <= 0) return null;
+
+  const roleCounts = state.roleCounts || {};
+  const buildLabor = (roleCounts.worker || 0) + (roleCounts.jrworker || 0);
+  return `Build mode active | Sites ${sites} | Labor ${buildLabor}`;
+}
+
 function normalizeSection(section) {
   if (!section) return "overview";
 
@@ -990,6 +1008,7 @@ module.exports = {
     const mineralLine = formatMineralMiningLine(mineralMining);
     const mineralHudLine = formatMineralHudLine(mineralMining);
     const upgradeReserveLine = formatUpgradeReserveLine(room, summaryState);
+    const buildIntentLine = formatBuildIntentLine(summaryState);
     const storagePlanningLine = formatStoragePlanningLine(buildStatus);
     const infrastructure = summaryState.infrastructure || {};
     const roleCounts = summaryState.roleCounts || {};
@@ -1004,7 +1023,7 @@ module.exports = {
       `[OPS][${room.name}][OVERVIEW]`,
       `Phase ${summaryState.phase} | ${progressLabel} | ETA ${etaLabel}`,
       `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Spawn ${spawn.spawnLabel} | Queue ${spawn.nextQueued}`,
-      `Alert ${alert.active ? `active ${alert.hostiles}` : "clear"} | Sites ${buildStatus.sites || 0} | CPU ${cpu.pressure}`,
+      `Alert ${alert.active ? `active ${alert.hostiles}` : alert.recoveryActive ? "recovery" : "clear"} | Sites ${buildStatus.sites || 0} | CPU ${cpu.pressure}`,
     ];
     if (mineralLine) {
       overviewLines.push(mineralLine);
@@ -1048,7 +1067,7 @@ module.exports = {
         `[OPS][${room.name}][ECONOMY]`,
         `Stage ${infrastructure.economyStage || "unknown"} | Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Storage ${getStorageEnergy(room)}`,
         `Hub ${getContainerEnergy(summaryState.hubContainer)} | Ctrl ${getContainerEnergy(summaryState.controllerContainer)} | Upgrade ${progress && progress.rate > 0 ? progress.rate.toFixed(2) : "0.00"}/t`,
-        upgradeReserveLine || `Upgrade mode ${room.controller && room.controller.level >= 8 ? "maintenance" : "active"}`,
+        upgradeReserveLine || buildIntentLine || `Upgrade mode ${room.controller && room.controller.level >= 8 ? "maintenance" : "active"}`,
         `Spawn ${spawn.spawnLabel} | Queue ${spawn.queueSize} | Hauler ${summaryState.logistics ? summaryState.logistics.haulerMode : "normal"}`,
       ],
       build: buildLines,
@@ -1060,6 +1079,9 @@ module.exports = {
         `Defenders ${alert.defenders}/${alert.requiredDefenders} | Ready towers ${alert.readyTowers}/${summaryState.structuresByType && summaryState.structuresByType[STRUCTURE_TOWER] ? summaryState.structuresByType[STRUCTURE_TOWER].length : 0}`,
         `Support in ${alert.supportAssigned}/${alert.supportRequested} from ${alert.supportHelper} | out ${alert.outgoingSupport}`,
         `Target ${alert.towerTarget} | Focus ${alert.towerFocusDamage} | Hold ${alert.towerCanHandle ? "yes" : "no"}`,
+        alert.recoveryBlockers.length > 0
+          ? `Recovery blocked ${alert.recoveryBlockers.join(", ")}`
+          : `Recovery ${alert.recoveryActive ? "ready to clear" : "inactive"}`,
       ],
       creeps: [
         `[OPS][${room.name}][CREEPS]`,

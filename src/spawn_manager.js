@@ -589,6 +589,19 @@ module.exports = {
     var desiredWorkers = this.getDesiredWorkers(room, state);
     var currentWorkers = roleCounts.worker || 0;
     var queuedWorkers = this.countQueued(room, "worker");
+    var sites = state && state.sites ? state.sites.length : 0;
+    var buildLabor =
+      (roleCounts.worker || 0) +
+      (roleCounts.jrworker || 0) +
+      queuedWorkers +
+      this.countQueued(room, "jrworker") +
+      requests.filter(function (r) {
+        return r.role === "worker" || r.role === "jrworker";
+      }).length;
+
+    if (sites > 0 && buildLabor <= 0) {
+      desiredWorkers = Math.max(1, desiredWorkers);
+    }
 
     while (
       currentWorkers +
@@ -598,7 +611,10 @@ module.exports = {
         }).length <
       desiredWorkers
     ) {
-      requests.push({ role: "worker", priority: 90 });
+      requests.push({
+        role: "worker",
+        priority: sites > 0 && buildLabor <= 0 && state.phase === "foundation" ? 98 : 90,
+      });
     }
 
     var desiredUpgraders = this.getDesiredUpgraders(room, state);
@@ -989,9 +1005,18 @@ module.exports = {
       config.UPGRADING && config.UPGRADING.RCL8_TARGET_WORK_CAPS
         ? config.UPGRADING.RCL8_TARGET_WORK_CAPS
         : [];
+    var buildSiteUpgraderCap = null;
 
     if (reservePolicy.shouldHoldRcl8Upgrading(room, state)) {
       return 0;
+    }
+
+    if (
+      sites > 0 &&
+      (state.phase === "foundation" || state.phase === "development")
+    ) {
+      buildSiteUpgraderCap = this.getBuildSiteUpgraderTargetWork(room, state);
+      targetWork = Math.min(targetWork, buildSiteUpgraderCap);
     }
 
     if (
@@ -1022,6 +1047,10 @@ module.exports = {
             targetWork - 1,
           )
         : Math.max(2, targetWork - 2);
+    }
+
+    if (buildSiteUpgraderCap !== null) {
+      targetWork = Math.min(targetWork, buildSiteUpgraderCap);
     }
 
     if (
@@ -1255,6 +1284,21 @@ module.exports = {
       typeof config.EARLY_GROWTH.DEVELOPMENT_UPGRADER_MIN_TARGET_WORK === "number"
       ? Math.max(1, config.EARLY_GROWTH.DEVELOPMENT_UPGRADER_MIN_TARGET_WORK)
       : 3;
+  },
+
+  getBuildSiteUpgraderTargetWork(room, state) {
+    var controller = room && room.controller ? room.controller : null;
+    var ticksToDowngrade =
+      controller && typeof controller.ticksToDowngrade === "number"
+        ? controller.ticksToDowngrade
+        : Infinity;
+    if (ticksToDowngrade < 5000) return 2;
+
+    var roleCounts = state && state.roleCounts ? state.roleCounts : {};
+    var laborers = (roleCounts.worker || 0) + (roleCounts.jrworker || 0);
+    if (laborers <= 0) return 1;
+
+    return 1;
   },
 
   getFoundationUpgraderTargetWork(room) {

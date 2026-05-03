@@ -4447,6 +4447,108 @@ function runDefenseRecoveryScenario() {
   );
 }
 
+function runRecoveryBuildIntentScenario() {
+  const room = buildRoomScenario("W43N6", {
+    tick: 700,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1050,
+    energyCapacityAvailable: 1100,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraSites: [
+      { type: STRUCTURE_EXTENSION, x: 23, y: 27 },
+      { type: STRUCTURE_EXTENSION, x: 24, y: 27 },
+      { type: STRUCTURE_ROAD, x: 25, y: 27 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 117511 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    creeps: [
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24, memory: { sourceId: "source1" } },
+      { name: "hauler2", role: "hauler", x: 26, y: 24, memory: { sourceId: "source2" } },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+      { name: "upgrader2", role: "upgrader", x: 23, y: 24 },
+    ],
+  });
+
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: {
+        active: true,
+        eligible: true,
+        reason: "post_attack",
+        startedAt: 680,
+        exitWhenReady: true,
+        lastThreatSeen: 680,
+      },
+    },
+    spawnQueue: [],
+  };
+
+  const state = roomState.collect(room);
+  assert(
+    !state.defense.recovery.active,
+    "expected recovery to clear with healthy towers and small spawn energy deficit",
+  );
+  assert(state.phase !== "foundation", `expected operational RCL6 room to leave foundation, got ${state.phase}`);
+
+  const requests = spawnManager.getSpawnRequests(room, state);
+  assert(
+    requests.some((request) => request.role === "worker"),
+    `expected build backlog with zero labor to request a worker, got ${requests.map((request) => request.role).join(",")}`,
+  );
+  assert(
+    spawnManager.getDesiredUpgraders(room, state) < 2,
+    `expected build backlog to reduce upgrader demand below current pressure, got ${spawnManager.getDesiredUpgraders(room, state)}`,
+  );
+
+  const report = roomReporting.build(room, state, { updateProgress: false });
+  assert(
+    report.sections.economy.some(function (line) {
+      return line.indexOf("Build mode active") !== -1;
+    }),
+    `expected economy report to show build intent, got ${JSON.stringify(report.sections.economy)}`,
+  );
+}
+
+function runConstructionSiteWorkerFloorScenario() {
+  const room = buildRoomScenario("VAL_BUILD_WORKER_FLOOR", {
+    tick: 701,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraSites: [
+      { type: STRUCTURE_EXTENSION, x: 23, y: 27 },
+    ],
+    creeps: [
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24, memory: { sourceId: "source1" } },
+      { name: "hauler2", role: "hauler", x: 26, y: 24, memory: { sourceId: "source2" } },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+  });
+
+  const state = roomState.collect(room);
+  const requests = spawnManager.getSpawnRequests(room, state);
+
+  assert(
+    requests.some((request) => request.role === "worker"),
+    `expected construction site backlog with zero labor to request worker, got ${requests.map((request) => request.role).join(",")}`,
+  );
+}
+
 function runPassiveDefenseRampartBaselineScenario() {
   const room = buildRoomScenario("W29N20", {
     tick: 624,
@@ -7312,6 +7414,8 @@ function main() {
     ["cross_room_defense_support_request", runCrossRoomDefenseSupportRequestScenario],
     ["cross_room_defender_role", runCrossRoomDefenderRoleScenario],
     ["defense_recovery", runDefenseRecoveryScenario],
+    ["recovery_build_intent", runRecoveryBuildIntentScenario],
+    ["construction_site_worker_floor", runConstructionSiteWorkerFloorScenario],
     ["fortification", runFortificationScenario],
     ["rcl7_transition", runRcl7UpgradeTransitionScenario],
     ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],

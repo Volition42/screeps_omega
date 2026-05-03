@@ -1149,22 +1149,42 @@ module.exports = {
       reason: recovery.reason || null,
       startedAt: recovery.startedAt || null,
       exitWhenReady: !!recovery.exitWhenReady,
+      blockers: this.getRecoveryExitStatus(room, state, recovery, reaction).blockers,
     };
   },
 
   shouldExitRecovery(room, state, recovery, reaction) {
+    return this.getRecoveryExitStatus(room, state, recovery, reaction).ready;
+  },
+
+  getRecoveryExitStatus(room, state, recovery, reaction) {
+    var blockers = [];
     var cooldown =
       reaction && typeof reaction.RECOVERY_COOLDOWN_TICKS === "number"
         ? reaction.RECOVERY_COOLDOWN_TICKS
         : 15;
     var lastThreatSeen =
       typeof recovery.lastThreatSeen === "number" ? recovery.lastThreatSeen : Game.time;
-    if (Game.time - lastThreatSeen < cooldown) return false;
-    if (room.energyAvailable !== room.energyCapacityAvailable) return false;
-    if (this.hasQueuedDefenseRequests(room.name)) return false;
+    var elapsed = Game.time - lastThreatSeen;
+    if (elapsed < cooldown) {
+      blockers.push("cooldown " + elapsed + "/" + cooldown);
+    }
+    if (!this.isRecoveryEnergyReady(room)) {
+      blockers.push("energy " + room.energyAvailable + "/" + room.energyCapacityAvailable);
+    }
+
+    var defenseQueue = this.countQueuedDefenseRequests(room.name);
+    if (defenseQueue > 0) {
+      blockers.push("defense queue " + defenseQueue);
+    }
 
     var towers = this.getTowers(room, state);
-    if (towers.length <= 0) return true;
+    if (towers.length <= 0) {
+      return {
+        ready: blockers.length === 0,
+        blockers: blockers,
+      };
+    }
 
     var emergencyThreshold =
       config.LOGISTICS && typeof config.LOGISTICS.towerEmergencyThreshold === "number"
@@ -1174,33 +1194,67 @@ module.exports = {
       config.LOGISTICS && typeof config.LOGISTICS.towerReserveThreshold === "number"
         ? config.LOGISTICS.towerReserveThreshold
         : 700;
+    var bestTowerEnergy = 0;
+    for (var i = 0; i < towers.length; i++) {
+      bestTowerEnergy = Math.max(bestTowerEnergy, getStoredEnergy(towers[i]));
+    }
     var emergencyReady = _.some(towers, function (tower) {
       return getStoredEnergy(tower) >= emergencyThreshold;
     });
-    if (!emergencyReady) return false;
+    if (!emergencyReady) {
+      blockers.push("tower emergency " + bestTowerEnergy + "/" + emergencyThreshold);
+    }
 
     var reserveReady = _.filter(towers, function (tower) {
       return getStoredEnergy(tower) >= reserveThreshold;
     }).length;
-    return reserveReady >= Math.ceil(towers.length / 2);
+    var reserveNeeded = Math.ceil(towers.length / 2);
+    if (reserveReady < reserveNeeded) {
+      blockers.push("tower reserve " + reserveReady + "/" + reserveNeeded);
+    }
+
+    return {
+      ready: blockers.length === 0,
+      blockers: blockers,
+    };
+  },
+
+  isRecoveryEnergyReady(room) {
+    var capacity = room.energyCapacityAvailable || 0;
+    if (capacity <= 0) return true;
+    if (room.energyAvailable >= capacity) return true;
+
+    var deficit = capacity - (room.energyAvailable || 0);
+    var tolerance =
+      config.DEFENSE &&
+      typeof config.DEFENSE.recoveryExitEnergyDeficitTolerance === "number"
+        ? config.DEFENSE.recoveryExitEnergyDeficitTolerance
+        : 50;
+
+    return deficit <= tolerance || room.energyAvailable >= capacity * 0.95;
   },
 
   hasQueuedDefenseRequests(roomName) {
+    return this.countQueuedDefenseRequests(roomName) > 0;
+  },
+
+  countQueuedDefenseRequests(roomName) {
     var queue =
       Memory.rooms &&
       Memory.rooms[roomName] &&
       Memory.rooms[roomName].spawnQueue
         ? Memory.rooms[roomName].spawnQueue
         : [];
+    var count = 0;
 
     for (var i = 0; i < queue.length; i++) {
       var item = queue[i];
       if (!item || item.role !== "defender") continue;
       var targetRoom = item.targetRoom || item.homeRoom || roomName;
-      if (targetRoom === roomName) return true;
+      if (targetRoom === roomName) count++;
     }
 
-    return false;
+    return count;
   },
 
   getThreatByRoom(defenseState, roomName) {
