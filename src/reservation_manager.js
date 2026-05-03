@@ -19,6 +19,7 @@ const config = require("config");
 const utils = require("utils");
 const defenseManager = require("defense_manager");
 const reservationFocus = require("reservation_focus");
+const invasionLog = require("invasion_log");
 
 function ensureEmpireMemory() {
   if (!Memory.empire) Memory.empire = {};
@@ -1358,6 +1359,7 @@ module.exports = {
     }
 
     const threat = getRemoteThreat(room);
+    invasionLog.recordRemote(plan.targetRoom, "reservation", threat);
     plan.intel = {
       visibleAt: Game.time,
       sourceCount: sources.length,

@@ -1482,6 +1482,7 @@ const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const ops = require("ops");
+const invasionLog = require("invasion_log");
 const creepManager = require("creep_manager");
 const hud = require("hud");
 const advancedStructureManager = require("advanced_structure_manager");
@@ -4629,6 +4630,176 @@ function runSpawnRequestAgeTrackingScenario() {
   assert(requests[0].waitAge === 0, `expected changed target to reset age, got ${requests[0].waitAge}`);
 }
 
+function runInvasionLogOwnedScenario() {
+  const room = buildRoomScenario("VAL_INVASION_HOME", {
+    tick: 840,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1800,
+    energyCapacityAvailable: 1800,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 80000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "logInvader1",
+        username: "Invader",
+        x: 6,
+        y: 24,
+        body: [
+          { type: MOVE },
+          { type: MOVE },
+          { type: ATTACK },
+          { type: HEAL },
+        ],
+      },
+    ],
+  });
+
+  let state = roomState.collect(room);
+  let active = invasionLog.recordOwned(room, state);
+  assert(active, "expected owned-room invasion log to open");
+  assert(active.sc === "home", `expected home scope, got ${active.sc}`);
+  assert(active.s === 840, `expected start tick 840, got ${active.s}`);
+  assert(active.h === 1, `expected max hostile count 1, got ${active.h}`);
+  assert(active.ms > 0, `expected threat score to be recorded, got ${active.ms}`);
+  assert(active.o.indexOf("Invader") !== -1, `expected Invader owner, got ${JSON.stringify(active.o)}`);
+  assert(active.m && active.m !== "idle", `expected response mode, got ${active.m}`);
+
+  Game.time = 842;
+  room._hostileCreeps = [];
+  state = roomState.collect(room);
+  invasionLog.recordOwned(room, state);
+
+  const roomLog = Memory.empire.invasionLog.rooms[room.name];
+  assert(roomLog && !roomLog.active, "expected owned-room invasion log to close");
+  assert(roomLog.entries.length === 1, `expected one closed entry, got ${roomLog.entries.length}`);
+  const entry = roomLog.entries[0];
+  assert(entry.e === 842, `expected end tick 842, got ${entry.e}`);
+  assert(entry.st === "cleared", `expected cleared status, got ${entry.st}`);
+  assert(entry.b, "expected breach severity to be stored");
+}
+
+function runInvasionLogRemoteScenario() {
+  resetRuntime(850);
+  const threat = {
+    active: true,
+    scope: "reservation",
+    hostiles: [
+      { owner: { username: "Invader" } },
+      { owner: { username: "Source Keeper" } },
+    ],
+    hostileCount: 2,
+    threatScore: 9,
+    threatLevel: 2,
+    responseMode: "tower_support",
+    breachSeverity: "edge_pressure",
+    towerCanHandle: false,
+    desiredDefenders: 1,
+    towerTargetSummary: "healer 24,25",
+  };
+
+  let active = invasionLog.recordRemote("VAL_REMOTE_LOG", "reservation", threat);
+  assert(active && active.sc === "reservation", `expected reservation active log, got ${JSON.stringify(active)}`);
+  assert(active.h === 2, `expected two remote hostiles, got ${active.h}`);
+  assert(active.o.indexOf("Invader") !== -1 && active.o.indexOf("Source Keeper") !== -1, `expected remote owners, got ${JSON.stringify(active.o)}`);
+
+  Game.time = 851;
+  invasionLog.recordRemote("VAL_REMOTE_LOG", "reservation", null);
+  let roomLog = Memory.empire.invasionLog.rooms.VAL_REMOTE_LOG;
+  assert(roomLog && roomLog.entries.length === 1, "expected visible clear to close remote invasion");
+  assert(roomLog.entries[0].st === "cleared", `expected cleared remote status, got ${roomLog.entries[0].st}`);
+
+  Game.time = 860;
+  active = invasionLog.recordRemote("VAL_REMOTE_STALE", "expansion", Object.assign({}, threat, {
+    scope: "expansion",
+    hostileCount: 1,
+    hostiles: [{ owner: { username: "Invader" } }],
+  }));
+  assert(active && active.sc === "expansion", "expected expansion active log");
+
+  Game.time = 886;
+  invasionLog.closeStaleRemotes(25);
+  roomLog = Memory.empire.invasionLog.rooms.VAL_REMOTE_STALE;
+  assert(roomLog && !roomLog.active, "expected stale remote log to close");
+  assert(roomLog.entries.length === 1, `expected one stale entry, got ${roomLog.entries.length}`);
+  assert(roomLog.entries[0].st === "stale", `expected stale status, got ${roomLog.entries[0].st}`);
+}
+
+function runInvasionLogOpsScenario() {
+  resetRuntime(900);
+  invasionLog.recordThreat("VAL_LOG_A", "home", {
+    active: true,
+    hostiles: [{ owner: { username: "Invader" } }],
+    hostileCount: 1,
+    threatScore: 4,
+    threatLevel: 1,
+    responseMode: "tower_only",
+    breachSeverity: "edge_pressure",
+    towerCanHandle: true,
+    desiredDefenders: 0,
+    towerTargetSummary: "melee 10,10",
+  });
+  Game.time = 905;
+  invasionLog.closeRoom("VAL_LOG_A", "cleared", "home");
+
+  ops.registerGlobals();
+  const originalLog = console.log;
+  const lines = [];
+  console.log = function (line) {
+    lines.push(String(line));
+  };
+  try {
+    global.ops.log();
+    global.ops.log("VAL_LOG_A");
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert(lines.some(function (line) { return line.indexOf("[OPS][INVASIONS] stored 1") !== -1; }), `expected invasion header, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line.indexOf("VAL_LOG_A 900-905") !== -1; }), `expected room log row, got ${lines.join(" / ")}`);
+  assert(lines.every(function (line) { return line.length <= 85; }), `expected ops.log lines within 85 chars, got ${lines.filter(function (line) { return line.length > 85; }).join(" / ")}`);
+  assert(lines.every(function (line) { return line.indexOf("...") === -1; }), `expected no ellipsis truncation, got ${lines.join(" / ")}`);
+
+  let result = global.ops.logClear("VAL_LOG_A");
+  assert(result.ok && result.clearedRooms === 1 && result.clearedEntries === 1, `expected one room clear, got ${JSON.stringify(result)}`);
+
+  invasionLog.recordThreat("VAL_LOG_B", "home", {
+    active: true,
+    hostiles: [{ owner: { username: "Invader" } }],
+    hostileCount: 1,
+    threatScore: 4,
+    threatLevel: 1,
+  });
+  result = global.ops.logClear();
+  assert(result.ok && result.clearedRooms === 1 && result.clearedEntries === 1, `expected all clear, got ${JSON.stringify(result)}`);
+}
+
+function runInvasionLogCapScenario() {
+  resetRuntime(930);
+  for (let i = 0; i < 25; i++) {
+    Game.time = 930 + i * 2;
+    invasionLog.recordThreat("VAL_LOG_CAP", "home", {
+      active: true,
+      hostiles: [{ owner: { username: "Invader" } }],
+      hostileCount: 1,
+      threatScore: 4,
+      threatLevel: 1,
+    });
+    Game.time += 1;
+    invasionLog.closeRoom("VAL_LOG_CAP", "cleared", "home");
+  }
+
+  const roomLog = Memory.empire.invasionLog.rooms.VAL_LOG_CAP;
+  assert(roomLog.entries.length === invasionLog.getPerRoomCap(), `expected cap ${invasionLog.getPerRoomCap()}, got ${roomLog.entries.length}`);
+  assert(roomLog.entries[0].s === 940, `expected oldest retained start tick 940, got ${roomLog.entries[0].s}`);
+}
+
 function runPassiveDefenseRampartBaselineScenario() {
   const room = buildRoomScenario("W29N20", {
     tick: 624,
@@ -7498,6 +7669,10 @@ function main() {
     ["construction_site_worker_floor", runConstructionSiteWorkerFloorScenario],
     ["spawn_energy_fallback", runSpawnEnergyFallbackScenario],
     ["spawn_request_age_tracking", runSpawnRequestAgeTrackingScenario],
+    ["invasion_log_owned", runInvasionLogOwnedScenario],
+    ["invasion_log_remote", runInvasionLogRemoteScenario],
+    ["invasion_log_ops", runInvasionLogOpsScenario],
+    ["invasion_log_cap", runInvasionLogCapScenario],
     ["fortification", runFortificationScenario],
     ["rcl7_transition", runRcl7UpgradeTransitionScenario],
     ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],

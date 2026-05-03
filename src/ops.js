@@ -5,6 +5,7 @@ const reservationManager = require("reservation_manager");
 const reservationFocus = require("reservation_focus");
 const expansionFocus = require("expansion_focus");
 const attackManager = require("attack_manager");
+const invasionLog = require("invasion_log");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -250,6 +251,16 @@ function getConsoleCommandHelp() {
       command: "ops.empire()",
       description: "Show empire summary and owned-room overview.",
       example: "ops.empire()",
+    },
+    {
+      command: "ops.log([roomName], [limit])",
+      description: "Show compact invasion history. Defaults to newest 20 entries across all rooms.",
+      example: 'ops.log("W43N6")',
+    },
+    {
+      command: "ops.logClear([roomName])",
+      description: "Clear invasion history for one room, or all rooms when omitted.",
+      example: 'ops.logClear("W43N6")',
     },
     {
       command: "ops.roomRole([roomName], [role])",
@@ -543,6 +554,12 @@ module.exports = {
       empire: function () {
         return module.exports.empire();
       },
+      log: function (arg1, arg2) {
+        return module.exports.log(arg1, arg2);
+      },
+      logClear: function (roomName) {
+        return module.exports.logClear(roomName);
+      },
       tickRate: function (sampleTicks) {
         return module.exports.tickRate(sampleTicks);
       },
@@ -690,6 +707,44 @@ module.exports = {
     printBlock(report.lines);
 
     return report;
+  },
+
+  log(arg1, arg2) {
+    let roomName = null;
+    let limit = 20;
+
+    if (typeof arg1 === "number") {
+      limit = arg1;
+    } else if (typeof arg1 === "string") {
+      const trimmed = arg1.trim();
+      if (/^\d+$/.test(trimmed)) {
+        limit = Number(trimmed);
+      } else if (trimmed.length > 0) {
+        roomName = trimmed;
+      }
+    }
+
+    if (typeof arg2 === "number") {
+      limit = arg2;
+    } else if (typeof arg2 === "string" && /^\d+$/.test(arg2.trim())) {
+      limit = Number(arg2.trim());
+    }
+
+    const lines = invasionLog.formatLines(roomName, limit, 85);
+    printBlock(lines);
+    return lines;
+  },
+
+  logClear(roomName) {
+    const normalized =
+      typeof roomName === "string" && roomName.trim().length > 0
+        ? roomName.trim()
+        : "all";
+    const result = invasionLog.clear(normalized);
+    printLine(
+      `[OPS] Invasion log cleared rooms=${result.clearedRooms} entries=${result.clearedEntries}.`,
+    );
+    return result;
   },
 
   tickRate(sampleTicks) {

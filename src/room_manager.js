@@ -11,6 +11,7 @@ const directiveManager = require("directive_manager");
 const hud = require("hud");
 const statsManager = require("stats_manager");
 const attackManager = require("attack_manager");
+const invasionLog = require("invasion_log");
 
 module.exports = {
   run(room, profiler) {
@@ -38,6 +39,8 @@ module.exports = {
     );
     utils.setRoomRuntimeState(room, state);
     this.captureLiveSnapshot(room, state, runtimeMode);
+    invasionLog.recordOwned(room, state);
+    invasionLog.closeStaleRemotes();
 
     if (!attackManager.isRoomInAttackMode(room.name)) {
       runStep(

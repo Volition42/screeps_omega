@@ -21,6 +21,7 @@ const attackManager = require("attack_manager");
 const expansionFocus = require("expansion_focus");
 const roomProgress = require("room_progress");
 const utils = require("utils");
+const invasionLog = require("invasion_log");
 
 function ensureEmpireMemory() {
   if (!Memory.empire) Memory.empire = {};
@@ -1061,6 +1062,7 @@ module.exports = {
     if (!room) return;
 
     const threat = getVisibleExpansionThreat(room);
+    invasionLog.recordRemote(plan.targetRoom, "expansion", threat);
     plan.intel.visibleAt = Game.time;
     plan.intel.hostileCount = threat ? threat.hostileCount || 0 : 0;
     plan.intel.threatSeenAt = threat ? Game.time : null;
