@@ -45,6 +45,7 @@ module.exports = {
     // Miners are always one per source.
     minersPerSource: 1,
     mineralMinersPerRoom: 1,
+    spawnEnergyFallbackTicks: 10,
 
     // Developer note:
     // Optional per-source overrides.

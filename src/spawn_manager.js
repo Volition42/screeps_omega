@@ -28,17 +28,26 @@ module.exports = {
     var spawns = state.spawns || [];
     if (spawns.length <= 0) return;
 
-    var requests = this.getSpawnRequests(room, state);
-
     if (!Memory.rooms) Memory.rooms = {};
     if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
 
+    Memory.rooms[room.name].spawnQueue = [];
+
+    var requests = this.trackSpawnRequestAges(
+      room,
+      this.getSpawnRequests(room, state),
+    );
+
+    var self = this;
     Memory.rooms[room.name].spawnQueue = _.map(requests, function (request) {
-      var plan = bodies.plan(request.role, room, request, state);
+      var plan = self.getSpawnBodyPlan(room, state, request);
 
       return {
         role: request.role,
         priority: request.priority,
+        requestKey: request.requestKey || null,
+        firstSeen: request.firstSeen || null,
+        waitAge: request.waitAge || 0,
         threatLevel: request.threatLevel || null,
         threatScore: request.threatScore || null,
         responseMode: request.responseMode || null,
@@ -52,6 +61,10 @@ module.exports = {
         homeRoom: request.homeRoom || null,
         bodyProfile: plan.profile || null,
         bodyCost: plan.cost || null,
+        energyAvailable: room.energyAvailable,
+        energyCapacity: room.energyCapacityAvailable,
+        energyLimit: plan.energyLimit || null,
+        energyFallback: !!plan.energyFallback,
       };
     });
 
@@ -224,7 +237,7 @@ module.exports = {
   },
 
   getValidatedBodyPlan(room, state, request) {
-    var bodyPlan = bodies.plan(request.role, room, request, state);
+    var bodyPlan = this.getSpawnBodyPlan(room, state, request);
     var validation = bodies.validateBody(bodyPlan && bodyPlan.body);
 
     if (validation.valid) {
@@ -246,6 +259,97 @@ module.exports = {
 
     bodyPlan.validationError = validation.reason;
     return bodyPlan;
+  },
+
+  getSpawnBodyPlan(room, state, request) {
+    var plannedRequest = request;
+
+    if (this.shouldUseAvailableEnergyFallback(room, request)) {
+      plannedRequest = Object.assign({}, request, {
+        energyLimit: room.energyAvailable,
+      });
+    }
+
+    var plan = bodies.plan(plannedRequest.role, room, plannedRequest, state);
+
+    if (plannedRequest !== request) {
+      plan = Object.assign({}, plan, {
+        energyLimit: plannedRequest.energyLimit,
+        energyFallback: true,
+      });
+    }
+
+    return plan;
+  },
+
+  shouldUseAvailableEnergyFallback(room, request) {
+    if (!room || !request) return false;
+    if (!this.isEnergyFallbackRole(request.role)) return false;
+    if (room.energyAvailable >= room.energyCapacityAvailable) return false;
+    if ((room.energyAvailable || 0) < 300) return false;
+
+    return (request.waitAge || 0) >= this.getEnergyFallbackWaitTicks();
+  },
+
+  isEnergyFallbackRole(role) {
+    return (
+      role === "worker" ||
+      role === "upgrader" ||
+      role === "repair" ||
+      role === "miner" ||
+      role === "hauler"
+    );
+  },
+
+  getEnergyFallbackWaitTicks() {
+    return config.CREEPS &&
+      typeof config.CREEPS.spawnEnergyFallbackTicks === "number"
+      ? Math.max(0, config.CREEPS.spawnEnergyFallbackTicks)
+      : 10;
+  },
+
+  trackSpawnRequestAges(room, requests) {
+    if (!Memory.rooms) Memory.rooms = {};
+    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+
+    var memory = Memory.rooms[room.name];
+    var previous = memory.spawnRequestAges || {};
+    var next = {};
+    var normalizedRequests = requests || [];
+
+    for (var i = 0; i < normalizedRequests.length; i++) {
+      var request = normalizedRequests[i];
+      var key = this.getSpawnRequestKey(request);
+      var record = previous[key] || {};
+      var firstSeen =
+        typeof record.firstSeen === "number" ? record.firstSeen : Game.time;
+
+      request.requestKey = key;
+      request.firstSeen = firstSeen;
+      request.waitAge = Math.max(0, Game.time - firstSeen);
+      next[key] = {
+        firstSeen: firstSeen,
+      };
+    }
+
+    memory.spawnRequestAges = next;
+
+    return normalizedRequests;
+  },
+
+  getSpawnRequestKey(request) {
+    var parts = [
+      request.role || "unknown",
+      request.sourceId || "",
+      request.targetId || "",
+      request.targetRoom || "",
+      request.operation || "",
+      request.attackStatus || "",
+      request.defenseType || "",
+      request.homeRoom || "",
+    ];
+
+    return parts.join("|");
   },
 
   getEmergencyRetryPlan(room, request, currentPlan) {

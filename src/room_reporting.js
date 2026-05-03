@@ -600,9 +600,32 @@ function getSpawnSummary(room, state) {
   return {
     queue: queue,
     queueSize: queue.length,
-    nextQueued: queue.length > 0 ? queue[0].role : "none",
+    nextQueued: formatQueuedSpawn(queue.length > 0 ? queue[0] : null),
     spawnLabel: spawnLabel,
   };
+}
+
+function formatQueuedSpawn(request) {
+  if (!request) return "none";
+
+  const age = typeof request.waitAge === "number" ? `${request.waitAge}t` : null;
+  const energyAvailable = typeof request.energyAvailable === "number"
+    ? request.energyAvailable
+    : null;
+  const energyCapacity = typeof request.energyCapacity === "number"
+    ? request.energyCapacity
+    : null;
+  const cost = typeof request.bodyCost === "number"
+    ? `cost ${request.bodyCost}${energyAvailable !== null ? `/${energyAvailable}` : ""}${energyCapacity !== null ? ` cap ${energyCapacity}` : ""}${request.energyFallback ? "*" : ""}`
+    : null;
+  const details = [];
+
+  if (age) details.push(age);
+  if (cost) details.push(cost);
+
+  return details.length > 0
+    ? `${request.role} ${details.join(" ")}`
+    : request.role;
 }
 
 function getAlertSummary(room, state) {

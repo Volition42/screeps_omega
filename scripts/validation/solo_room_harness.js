@@ -2019,7 +2019,6 @@ function runStorageCapScenario() {
       },
     ],
   });
-
   let state = roomState.collect(room);
   let target = logisticsManager.getHaulerDeliveryTarget(
     room,
@@ -4410,7 +4409,6 @@ function runDefenseRecoveryScenario() {
       },
     ],
   });
-
   let state = roomState.collect(room);
   assert(state.defense.homeThreat.recoveryEligible, "expected severe breach to mark recovery eligibility");
 
@@ -4547,6 +4545,88 @@ function runConstructionSiteWorkerFloorScenario() {
     requests.some((request) => request.role === "worker"),
     `expected construction site backlog with zero labor to request worker, got ${requests.map((request) => request.role).join(",")}`,
   );
+}
+
+function runSpawnEnergyFallbackScenario() {
+  const room = buildRoomScenario("VAL_SPAWN_ENERGY_FALLBACK", {
+    tick: 800,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1050,
+    energyCapacityAvailable: 1100,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraSites: [
+      { type: STRUCTURE_EXTENSION, x: 23, y: 27 },
+      { type: STRUCTURE_EXTENSION, x: 24, y: 27 },
+      { type: STRUCTURE_ROAD, x: 25, y: 27 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 122620 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 800 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    creeps: [
+      { name: "miner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "miner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "hauler1", role: "hauler", x: 25, y: 24, memory: { sourceId: "source1" } },
+      { name: "hauler2", role: "hauler", x: 26, y: 24, memory: { sourceId: "source2" } },
+      { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
+    ],
+  });
+  const sources = room.find(FIND_SOURCES);
+  Game.creeps.miner1.memory.sourceId = sources[0].id;
+  Game.creeps.hauler1.memory.sourceId = sources[0].id;
+  Game.creeps.miner2.memory.sourceId = sources[1].id;
+  Game.creeps.hauler2.memory.sourceId = sources[1].id;
+
+  let state = roomState.collect(room);
+  spawnManager.run(room, state);
+
+  let queue = Memory.rooms[room.name].spawnQueue || [];
+  assert(queue.length > 0 && queue[0].role === "worker", `expected worker queue, got ${JSON.stringify(queue)}`);
+  assert(queue[0].waitAge === 0, `expected fresh request age 0, got ${queue[0].waitAge}`);
+  assert(queue[0].bodyCost === 1100, `expected initial capacity worker cost 1100, got ${queue[0].bodyCost}`);
+  assert(currentRuntime.spawnEvents.length === 0, "expected unaffordable capacity worker to wait before fallback window");
+
+  Game.time = 810;
+  room.energyAvailable = 1050;
+  state = roomState.collect(room);
+  spawnManager.run(room, state);
+
+  queue = Memory.rooms[room.name].spawnQueue || [];
+  assert(queue.length > 0 && queue[0].energyFallback, `expected aged worker queue to use energy fallback, got ${JSON.stringify(queue[0])}`);
+  assert(queue[0].waitAge === 10, `expected request age 10, got ${queue[0].waitAge}`);
+  assert(queue[0].bodyCost <= 1050, `expected fallback worker to fit current energy, got ${queue[0].bodyCost}`);
+  assert(currentRuntime.spawnEvents.length === 1, `expected fallback worker to spawn, got ${currentRuntime.spawnEvents.length}`);
+  assert(currentRuntime.spawnEvents[0].role === "worker", `expected spawned worker, got ${currentRuntime.spawnEvents[0].role}`);
+}
+
+function runSpawnRequestAgeTrackingScenario() {
+  const room = buildRoomScenario("VAL_SPAWN_REQUEST_AGE", {
+    tick: 820,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+  });
+
+  let requests = spawnManager.trackSpawnRequestAges(room, [
+    { role: "worker", priority: 90, targetId: "site-a" },
+  ]);
+  assert(requests[0].waitAge === 0, `expected initial request age 0, got ${requests[0].waitAge}`);
+
+  Game.time = 825;
+  requests = spawnManager.trackSpawnRequestAges(room, [
+    { role: "worker", priority: 90, targetId: "site-a" },
+  ]);
+  assert(requests[0].waitAge === 5, `expected equivalent request age 5, got ${requests[0].waitAge}`);
+
+  requests = spawnManager.trackSpawnRequestAges(room, [
+    { role: "worker", priority: 90, targetId: "site-b" },
+  ]);
+  assert(requests[0].waitAge === 0, `expected changed target to reset age, got ${requests[0].waitAge}`);
 }
 
 function runPassiveDefenseRampartBaselineScenario() {
@@ -7416,6 +7496,8 @@ function main() {
     ["defense_recovery", runDefenseRecoveryScenario],
     ["recovery_build_intent", runRecoveryBuildIntentScenario],
     ["construction_site_worker_floor", runConstructionSiteWorkerFloorScenario],
+    ["spawn_energy_fallback", runSpawnEnergyFallbackScenario],
+    ["spawn_request_age_tracking", runSpawnRequestAgeTrackingScenario],
     ["fortification", runFortificationScenario],
     ["rcl7_transition", runRcl7UpgradeTransitionScenario],
     ["rcl8_mineral_catchup", runRcl8MineralCatchupScenario],

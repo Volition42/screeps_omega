@@ -122,7 +122,7 @@ module.exports = {
   },
 
   plan(role, room, request, state) {
-    const energyCapacity = this.getEnergyCapacity(room);
+    const energyCapacity = this.getEnergyCapacity(room, request);
     const infrastructure = this.getInfrastructure(room, state);
     const threatLevel =
       request && typeof request.threatLevel === "number"
@@ -843,7 +843,14 @@ module.exports = {
     return count;
   },
 
-  getEnergyCapacity(room) {
+  getEnergyCapacity(room, request) {
+    const energyLimit = request && typeof request.energyLimit === "number"
+      ? request.energyLimit
+      : null;
+    if (energyLimit !== null && Number.isFinite(energyLimit) && energyLimit > 0) {
+      return Math.max(300, Math.floor(energyLimit));
+    }
+
     const capacity = room && typeof room.energyCapacityAvailable === "number"
       ? room.energyCapacityAvailable
       : null;
