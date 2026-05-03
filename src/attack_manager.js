@@ -10,7 +10,6 @@ Purpose:
 */
 
 const config = require("config");
-const reservationFocus = require("reservation_focus");
 const reservationManager = require("reservation_manager");
 
 const POST_EXPAND = "expand";
@@ -595,7 +594,6 @@ module.exports = {
         const result = empireManager.createExpansion(
           plan.targetRoom,
           plan.parentRoom,
-          "full",
         );
         if (result && result.ok) {
           plan.completed = true;
@@ -621,7 +619,6 @@ module.exports = {
     const result = reservationManager.createReservation(
       plan.targetRoom,
       plan.parentRoom,
-      reservationFocus.HOLD,
     );
     if (result && result.ok) {
       plan.completed = true;

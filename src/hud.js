@@ -205,7 +205,6 @@ module.exports = {
     if (isHeader) return "#e0fbff";
     if (line.indexOf("RCL ") === 0) return "#bde0fe";
     if (line.indexOf("Hostiles") === 0) return "#ffadad";
-    if (line.indexOf("Focus") === 0) return "#a7f3d0";
     if (line.indexOf("Expansion") === 0) return "#a7f3d0";
     if (line.indexOf("Reserved") === 0) return "#a7f3d0";
     if (line.indexOf("Attack") === 0) return "#ff8fab";

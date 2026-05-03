@@ -2,8 +2,6 @@ const opsState = require("ops_state");
 const roomReporting = require("room_reporting");
 const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
-const reservationFocus = require("reservation_focus");
-const expansionFocus = require("expansion_focus");
 const attackManager = require("attack_manager");
 const invasionLog = require("invasion_log");
 
@@ -75,10 +73,6 @@ function parseToggleMode(mode, currentEnabled) {
 
 function getModeLabel(enabled) {
   return enabled ? "ON" : "OFF";
-}
-
-function isKnownFocus(value) {
-  return !!(expansionFocus.normalize(value) || reservationFocus.normalize(value));
 }
 
 function printLine(line) {
@@ -263,25 +257,20 @@ function getConsoleCommandHelp() {
       example: 'ops.logClear("W43N6")',
     },
     {
-      command: "ops.roomRole([roomName], [role])",
-      description: "Show or set room focus. Owned rooms use full, mineral, or energy; reserved rooms use full or hold.",
-      example: 'ops.roomRole("W5N5", "energy")',
-    },
-    {
       command: "ops.tickRate([sampleTicks|status|cancel])",
       description:
         "Sample wall-clock ms per tick over a short window and auto-print the result.",
       example: "ops.tickRate(5)",
     },
     {
-      command: "ops.expand(targetRoom, [focus], [parentRoom])",
-      description: 'Start or update a manual expansion plan. Focus is "full", "mineral", or "energy".',
-      example: 'ops.expand("W5N6", "mineral", "W5N5")',
+      command: "ops.expand(targetRoom, [parentRoom])",
+      description: "Start or update a manual expansion plan.",
+      example: 'ops.expand("W5N6", "W5N5")',
     },
     {
-      command: "ops.reserve(targetRoom, [focus], [parentRoom])",
-      description: 'Start or update a reserved-room plan. Focus is "full" or "hold".',
-      example: 'ops.reserve("W5N6", "hold", "W5N5")',
+      command: "ops.reserve(targetRoom, [parentRoom])",
+      description: "Start or update a reserved-room plan.",
+      example: 'ops.reserve("W5N6", "W5N5")',
     },
     {
       command: "ops.reserved([parentRoom])",
@@ -386,145 +375,6 @@ function parseRoomCommandArgs(arg1, arg2) {
   };
 }
 
-function parseRoomRoleArgs(arg1, arg2) {
-  if (typeof arg1 === "undefined" && typeof arg2 === "undefined") {
-    return {
-      roomName: null,
-      role: null,
-    };
-  }
-
-  if (typeof arg2 === "undefined" && isKnownFocus(arg1)) {
-    return {
-      roomName: null,
-      role: arg1,
-    };
-  }
-
-  return {
-    roomName: arg1 || null,
-    role: typeof arg2 === "undefined" ? null : arg2,
-  };
-}
-
-function getRoomRoleTarget(roomName) {
-  const normalized = roomName ? String(roomName).trim() : null;
-  if (normalized) return normalized;
-
-  return opsState.getCurrentRoomName();
-}
-
-function getRoomRoleStatus(roomName) {
-  const targetRoom = getRoomRoleTarget(roomName);
-  if (!targetRoom) {
-    return {
-      ok: false,
-      message: "roomRole: room is required because no current room is selected.",
-    };
-  }
-
-  const reservation = reservationManager.getActiveReservation(targetRoom);
-  if (reservation) {
-    return {
-      ok: true,
-      room: targetRoom,
-      type: "reservation",
-      role: reservation.focus,
-      allowed: reservationFocus.VALUES,
-      message: `Room ${targetRoom} reservation focus is ${reservation.focus}. Allowed: ${reservationFocus.VALUES.join(", ")}.`,
-    };
-  }
-
-  const expansion = empireManager.getActiveExpansion(targetRoom);
-  if (expansion) {
-    return {
-      ok: true,
-      room: targetRoom,
-      type: "expansion",
-      role: expansion.focus,
-      allowed: expansionFocus.VALUES,
-      message: `Room ${targetRoom} expansion focus is ${expansion.focus}. Allowed: ${expansionFocus.VALUES.join(", ")}.`,
-    };
-  }
-
-  const room = Game.rooms[targetRoom];
-  if (!room || !room.controller || !room.controller.my) {
-    return {
-      ok: false,
-      message: `roomRole: ${targetRoom} is not an owned room or active reservation.`,
-    };
-  }
-
-  const focus = expansionFocus.getStoredRoomFocus(targetRoom);
-  return {
-    ok: true,
-    room: targetRoom,
-    type: "owned",
-    role: focus,
-    allowed: expansionFocus.VALUES,
-    message: `Room ${targetRoom} focus is ${focus}. Allowed: ${expansionFocus.VALUES.join(", ")}.`,
-  };
-}
-
-function setRoomRole(roomName, role) {
-  const targetRoom = getRoomRoleTarget(roomName);
-  if (!targetRoom) {
-    return {
-      ok: false,
-      message: "roomRole: room is required because no current room is selected.",
-    };
-  }
-
-  if (reservationManager.getActiveReservation(targetRoom)) {
-    const focus = reservationFocus.normalize(role);
-    if (!focus) {
-      return {
-        ok: false,
-        message: `roomRole: reserved rooms use ${reservationFocus.VALUES.join(" or ")}.`,
-      };
-    }
-
-    return reservationManager.setReservationFocus(targetRoom, focus);
-  }
-
-  if (empireManager.getActiveExpansion(targetRoom)) {
-    const focus = expansionFocus.normalize(role);
-    if (!focus) {
-      return {
-        ok: false,
-        message: `roomRole: expansion rooms use ${expansionFocus.VALUES.join(" or ")}.`,
-      };
-    }
-
-    return empireManager.setExpansionFocus(targetRoom, focus);
-  }
-
-  const room = Game.rooms[targetRoom];
-  if (!room || !room.controller || !room.controller.my) {
-    return {
-      ok: false,
-      message: `roomRole: ${targetRoom} is not an owned room or active reservation.`,
-    };
-  }
-
-  const focus = expansionFocus.normalize(role);
-  if (!focus) {
-    return {
-      ok: false,
-      message: `roomRole: owned rooms use ${expansionFocus.VALUES.join(" or ")}.`,
-    };
-  }
-
-  expansionFocus.setRoomFocus(targetRoom, focus);
-  return {
-    ok: true,
-    room: targetRoom,
-    type: "owned",
-    role: focus,
-    message: `Room ${targetRoom} focus set to ${focus}.`,
-  };
-}
-
 module.exports = {
   registerGlobals() {
     processTickRateProbe();
@@ -545,9 +395,6 @@ module.exports = {
       room: function (arg1, arg2) {
         return module.exports.room(arg1, arg2);
       },
-      roomRole: function (arg1, arg2) {
-        return module.exports.roomRole(arg1, arg2);
-      },
       rooms: function () {
         return module.exports.rooms();
       },
@@ -566,11 +413,11 @@ module.exports = {
       tickSpeed: function (sampleTicks) {
         return module.exports.tickRate(sampleTicks);
       },
-      expand: function (targetRoom, focus, parentRoom) {
-        return module.exports.expand(targetRoom, focus, parentRoom);
+      expand: function (targetRoom, parentRoom) {
+        return module.exports.expand(targetRoom, parentRoom);
       },
-      reserve: function (targetRoom, focus, parentRoom) {
-        return module.exports.reserve(targetRoom, focus, parentRoom);
+      reserve: function (targetRoom, parentRoom) {
+        return module.exports.reserve(targetRoom, parentRoom);
       },
       reserved: function (parentRoom) {
         return module.exports.reserved(parentRoom);
@@ -665,16 +512,6 @@ module.exports = {
       nextTask: report.nextTask,
       lines: lines,
     };
-  },
-
-  roomRole(arg1, arg2) {
-    const parsed = parseRoomRoleArgs(arg1, arg2);
-    const result = parsed.role
-      ? setRoomRole(parsed.roomName, parsed.role)
-      : getRoomRoleStatus(parsed.roomName);
-
-    printLine(`[OPS] ${result.message}`);
-    return result;
   },
 
   rooms() {
@@ -787,32 +624,14 @@ module.exports = {
     );
   },
 
-  expand(targetRoom, focusOrParentRoom, parentRoom) {
-    let resolvedFocus = expansionFocus.DEFAULT;
-    let resolvedParent = parentRoom || null;
-
-    if (typeof focusOrParentRoom !== "undefined" && focusOrParentRoom !== null) {
-      const possibleFocus = expansionFocus.normalize(focusOrParentRoom);
-      if (possibleFocus) {
-        resolvedFocus = possibleFocus;
-      } else if (!resolvedParent) {
-        resolvedParent = focusOrParentRoom;
-      } else {
-        const message = `expand: invalid focus "${focusOrParentRoom}". Use ${expansionFocus.VALUES.join(" or ")}.`;
-        printLine(`[OPS] ${message}`);
-        return {
-          ok: false,
-          message: message,
-        };
-      }
-    }
+  expand(targetRoom, parentRoom) {
+    const resolvedParent = parentRoom || null;
 
     const reservation = reservationManager.getActiveReservation(targetRoom);
     const takeoverParent = resolvedParent || (reservation ? reservation.parentRoom : null);
     const result = empireManager.createExpansion(
       targetRoom,
       takeoverParent,
-      resolvedFocus,
     );
     printLine(`[OPS] ${result.message}`);
 
@@ -830,25 +649,8 @@ module.exports = {
     return result;
   },
 
-  reserve(targetRoom, focusOrParentRoom, parentRoom) {
-    let resolvedFocus = reservationFocus.DEFAULT;
+  reserve(targetRoom, parentRoom) {
     let resolvedParent = parentRoom || null;
-
-    if (typeof focusOrParentRoom !== "undefined" && focusOrParentRoom !== null) {
-      const possibleFocus = reservationFocus.normalize(focusOrParentRoom);
-      if (possibleFocus) {
-        resolvedFocus = possibleFocus;
-      } else if (!resolvedParent) {
-        resolvedParent = focusOrParentRoom;
-      } else {
-        const message = `reserve: invalid focus "${focusOrParentRoom}". Use ${reservationFocus.VALUES.join(" or ")}.`;
-        printLine(`[OPS] ${message}`);
-        return {
-          ok: false,
-          message: message,
-        };
-      }
-    }
 
     const expansion = empireManager.getActiveExpansion(targetRoom);
     if (!resolvedParent && expansion && expansion.parentRoom) {
@@ -875,7 +677,6 @@ module.exports = {
     const result = reservationManager.createReservation(
       targetRoom,
       resolvedParent,
-      resolvedFocus,
     );
     printLine(`[OPS] ${result.message}`);
 

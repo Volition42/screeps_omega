@@ -16,7 +16,6 @@ Important Notes:
 const config = require("config");
 const roadmap = require("construction_roadmap");
 const stamps = require("stamp_library");
-const expansionFocus = require("expansion_focus");
 
 var cachedTick = null;
 var cachedStatusByRoomPhase = {};
@@ -50,7 +49,6 @@ module.exports = {
       typeof Memory.rooms[roomName].construction.futurePlan.tick === "number"
         ? Memory.rooms[roomName].construction.futurePlan.tick
         : 0;
-    var focusName = expansionFocus.getFocusForRoom(roomName);
     var cacheKey =
       roomName +
       ":" +
@@ -64,17 +62,12 @@ module.exports = {
       ":" +
       creepCount +
       ":" +
-      focusName +
-      ":" +
       futurePlanTick;
     if (cachedStatusByRoomPhase[cacheKey]) {
       return cachedStatusByRoomPhase[cacheKey];
     }
 
-    var plan = expansionFocus.applyToPlan(
-      roadmap.getPlan(state.phase, room.controller.level),
-      focusName,
-    );
+    var plan = roadmap.getPlan(state.phase, room.controller.level);
     var goals = plan.goals || {};
     var anchor = stamps.getAnchorOrigin(room, state);
     var futurePlan = this.getFuturePlan(room);

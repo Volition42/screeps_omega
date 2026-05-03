@@ -1,6 +1,5 @@
 const config = require("config");
 const constructionStatus = require("construction_status");
-const expansionFocus = require("expansion_focus");
 const reservePolicy = require("economy_reserve_policy");
 const roadmap = require("construction_roadmap");
 const roomProgress = require("room_progress");
@@ -568,13 +567,12 @@ function getExpansionPlanForRoom(roomName) {
 function formatHudFocusLine(room, plan) {
   const expansionPlan = getExpansionPlanForRoom(room.name);
   if (expansionPlan) {
-    const focus = expansionFocus.normalize(expansionPlan.focus) || expansionFocus.DEFAULT;
     return expansionPlan.parentRoom
-      ? `Expansion ${focus} | Parent ${expansionPlan.parentRoom}`
-      : `Focus ${focus} | Independent`;
+      ? `Expansion | Parent ${expansionPlan.parentRoom}`
+      : "Expansion | Independent";
   }
 
-  return `Focus ${expansionFocus.getEffectiveFocusForRoom(room.name)} | Plan ${plan.focus}`;
+  return `Plan ${plan.focus}`;
 }
 
 function getContainerEnergy(container) {
