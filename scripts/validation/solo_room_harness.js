@@ -760,6 +760,41 @@ function createStructure(structureType, x, y, options) {
     };
   }
 
+  if (structureType === STRUCTURE_TERMINAL) {
+    structure.send = function (resourceType, amount, destinationRoomName, description) {
+      const destination = currentRuntime.rooms[destinationRoomName] || null;
+      const destinationTerminal = destination ? destination.terminal : null;
+      const sendAmount = amount || 0;
+      const energyCost = Game.map.calcTransactionCost(
+        sendAmount,
+        this.pos.roomName,
+        destinationRoomName,
+      );
+
+      if (!destinationTerminal || !destinationTerminal.store) return ERR_INVALID_TARGET;
+      if (this.cooldown > 0) return ERR_TIRED;
+      if ((this.store[resourceType] || 0) < sendAmount) return ERR_NOT_ENOUGH_RESOURCES;
+      if ((this.store[RESOURCE_ENERGY] || 0) < energyCost) return ERR_NOT_ENOUGH_RESOURCES;
+      if (destinationTerminal.store.getFreeCapacity(resourceType) < sendAmount) return ERR_FULL;
+
+      this.store[resourceType] = (this.store[resourceType] || 0) - sendAmount;
+      this.store[RESOURCE_ENERGY] = (this.store[RESOURCE_ENERGY] || 0) - energyCost;
+      destinationTerminal.store[resourceType] =
+        (destinationTerminal.store[resourceType] || 0) + sendAmount;
+      this.cooldown = 10;
+      currentRuntime.terminalSends = currentRuntime.terminalSends || [];
+      currentRuntime.terminalSends.push({
+        from: this.pos.roomName,
+        to: destinationRoomName,
+        resourceType: resourceType,
+        amount: sendAmount,
+        description: description || null,
+        energyCost: energyCost,
+      });
+      return OK;
+    };
+  }
+
   if (structureType === STRUCTURE_TOWER) {
     structure.attack = function (target) {
       currentRuntime.towerActions.push({
@@ -1070,6 +1105,7 @@ function resetRuntime(tick) {
     rooms: {},
     objectsById: {},
     spawnEvents: [],
+    terminalSends: [],
     towerActions: [],
     creepActions: [],
     visuals: [],
@@ -1086,6 +1122,23 @@ function resetRuntime(tick) {
     map: {
       getRoomTerrain(roomName) {
         return currentRuntime.rooms[roomName].getTerrain();
+      },
+      getRoomLinearDistance(roomA, roomB) {
+        const parse = function (roomName) {
+          const match = /^([WE])(\d+)([NS])(\d+)$/.exec(roomName || "");
+          if (!match) return null;
+          return {
+            x: (match[1] === "W" ? -1 : 1) * (parseInt(match[2], 10) + (match[1] === "W" ? 1 : 0)),
+            y: (match[3] === "N" ? -1 : 1) * (parseInt(match[4], 10) + (match[3] === "N" ? 1 : 0)),
+          };
+        };
+        const a = parse(roomA);
+        const b = parse(roomB);
+        if (!a || !b) return roomA === roomB ? 0 : 50;
+        return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+      },
+      calcTransactionCost(amount, roomA, roomB) {
+        return roomA === roomB ? 0 : Math.ceil(amount * 0.1);
       },
     },
     cpu: {
@@ -1492,6 +1545,7 @@ const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
 const roleWorker = require("role_worker");
 const roleJrWorker = require("role_jrworker");
+const roleUpgrader = require("role_upgrader");
 const roleClaimer = require("role_claimer");
 const rolePioneer = require("role_pioneer");
 const roleReserver = require("role_reserver");
@@ -5916,6 +5970,242 @@ function runLabTightReplanScenario() {
   });
 }
 
+function addOwnedStorageAndTerminal(room, terminalStore) {
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  if (!room.storage) {
+    room.addStructure(
+      createStructure(STRUCTURE_STORAGE, 24, 27, {
+        roomName: room.name,
+        store: { energy: 200000 },
+        storeCapacity: 1000000,
+        hits: 10000,
+        hitsMax: 10000,
+      }),
+    );
+  }
+  if (!room.terminal) {
+    room.addStructure(
+      createStructure(STRUCTURE_TERMINAL, 25, 32, {
+        roomName: room.name,
+        store: terminalStore || { energy: 10000 },
+        storeCapacity: 300000,
+        hits: 3000,
+        hitsMax: 3000,
+        cooldown: 0,
+      }),
+    );
+  }
+}
+
+function buildEmpireMineralRooms(options) {
+  const settings = options || {};
+  const donor = buildRoomScenario("VAL_MINERAL_DONOR", {
+    tick: settings.tick || 1000,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+  addOwnedStorageAndTerminal(donor, settings.donorStore || { energy: 10000, U: 1500 });
+
+  const target = createOwnedSupportTargetRoom("VAL_MINERAL_TARGET", {
+    controllerLevel: 8,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+  });
+  addOwnedStorageAndTerminal(target, settings.targetStore || { energy: 10000, H: 500 });
+
+  Memory.rooms[target.name] = Memory.rooms[target.name] || {};
+  Memory.rooms[target.name].advancedOps = {
+    summary: {
+      labStatus: "missing_reagents",
+      labGoal: "UH",
+      labProduct: "UH",
+      labNeed: 1000,
+      labReason: "missing_reagents",
+    },
+  };
+
+  return { donor: donor, target: target };
+}
+
+function runEmpireMineralTransferScenario() {
+  const rooms = buildEmpireMineralRooms({ tick: 1000 });
+  empireManager.record([rooms.donor, rooms.target], {});
+
+  assert(currentRuntime.terminalSends.length === 1, `expected one terminal send, got ${currentRuntime.terminalSends.length}`);
+  const send = currentRuntime.terminalSends[0];
+  assert(send.from === rooms.donor.name && send.to === rooms.target.name, `expected donor -> target send, got ${JSON.stringify(send)}`);
+  assert(send.resourceType === "U", `expected U send, got ${send.resourceType}`);
+  assert(send.amount === 500, `expected missing reagent batch of 500, got ${send.amount}`);
+  assert(rooms.target.terminal.store.U === 500, `expected target terminal to receive U, got ${rooms.target.terminal.store.U || 0}`);
+}
+
+function runEmpireMineralBlockedScenario() {
+  const rooms = buildEmpireMineralRooms({
+    tick: 1000,
+    donorStore: { energy: 10000, U: 500 },
+  });
+  empireManager.record([rooms.donor, rooms.target], {});
+
+  assert(currentRuntime.terminalSends.length === 0, `expected no terminal sends when sender reserve blocks, got ${currentRuntime.terminalSends.length}`);
+  assert(
+    Memory.empire.minerals.status === "pending",
+    `expected pending mineral status, got ${Memory.empire.minerals.status}`,
+  );
+}
+
+function runEmpireMineralOneTransferScenario() {
+  const rooms = buildEmpireMineralRooms({ tick: 1000 });
+  const secondTarget = createOwnedSupportTargetRoom("VAL_MINERAL_TARGET_B", {
+    controllerLevel: 8,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+  });
+  addOwnedStorageAndTerminal(secondTarget, { energy: 10000, H: 500 });
+  Memory.rooms[secondTarget.name] = {
+    advancedOps: {
+      summary: {
+        labStatus: "missing_reagents",
+        labGoal: "UH",
+        labProduct: "UH",
+        labNeed: 1000,
+        labReason: "missing_reagents",
+      },
+    },
+  };
+
+  empireManager.record([rooms.donor, rooms.target, secondTarget], {});
+
+  assert(currentRuntime.terminalSends.length === 1, `expected one transfer per tick, got ${currentRuntime.terminalSends.length}`);
+}
+
+function buildEmpireSupportRooms(options) {
+  const settings = options || {};
+  const donor = buildRoomScenario("VAL_SUPPORT_DONOR", {
+    tick: settings.tick || 1100,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    creeps: [
+      { name: "supportDonorWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  donor.controller.my = true;
+  satisfyDevelopmentRequirements(donor);
+  donor.storage.store.energy = settings.donorStorageEnergy || 200000;
+
+  const target = createOwnedSupportTargetRoom("VAL_SUPPORT_TARGET", {
+    controllerLevel: settings.targetControllerLevel || 5,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+  });
+  if (settings.buildSite !== false) {
+    target.createConstructionSite(24, 26, STRUCTURE_EXTENSION);
+  }
+  if (settings.downgradeTicks !== undefined) {
+    target.controller.ticksToDowngrade = settings.downgradeTicks;
+  }
+
+  return { donor: donor, target: target };
+}
+
+function runEmpireSupportWorkerScenario() {
+  const rooms = buildEmpireSupportRooms({});
+  const donorState = roomState.collect(rooms.donor);
+  const targetState = roomState.collect(rooms.target);
+  empireManager.record([rooms.donor, rooms.target], {
+    [rooms.donor.name]: donorState,
+    [rooms.target.name]: targetState,
+  });
+
+  const requests = spawnManager.getSpawnRequests(rooms.donor, donorState);
+  const support = requests.find(function (request) {
+    return request.operation === "empire_support" && request.role === "worker";
+  });
+
+  assert(support, `expected worker support request, got ${JSON.stringify(requests)}`);
+  assert(support.targetRoom === rooms.target.name, `expected target room assignment, got ${support.targetRoom}`);
+}
+
+function runEmpireSupportUpgraderScenario() {
+  const rooms = buildEmpireSupportRooms({ buildSite: false, downgradeTicks: 5000 });
+  const donorState = roomState.collect(rooms.donor);
+  const targetState = roomState.collect(rooms.target);
+  empireManager.record([rooms.donor, rooms.target], {
+    [rooms.donor.name]: donorState,
+    [rooms.target.name]: targetState,
+  });
+
+  const requests = spawnManager.getSpawnRequests(rooms.donor, donorState);
+  const support = requests.find(function (request) {
+    return request.operation === "empire_support" && request.role === "upgrader";
+  });
+
+  assert(support, `expected upgrader support request, got ${JSON.stringify(requests)}`);
+  assert(support.targetRoom === rooms.target.name, `expected target room assignment, got ${support.targetRoom}`);
+}
+
+function runEmpireSupportDonorBlockedScenario() {
+  const rooms = buildEmpireSupportRooms({});
+  const donorState = roomState.collect(rooms.donor);
+  const targetState = roomState.collect(rooms.target);
+  Memory.rooms[rooms.donor.name] = Memory.rooms[rooms.donor.name] || {};
+  Memory.rooms[rooms.donor.name].spawnQueue = [{ role: "miner", priority: 100 }];
+  empireManager.record([rooms.donor, rooms.target], {
+    [rooms.donor.name]: donorState,
+    [rooms.target.name]: targetState,
+  });
+
+  const requests = empireManager.getEmpireSupportSpawnRequests(rooms.donor, donorState);
+  assert(requests.length === 0, `expected donor local backlog to block support, got ${JSON.stringify(requests)}`);
+}
+
+function runEmpireSupportTravelScenario() {
+  const rooms = buildEmpireSupportRooms({ buildSite: false });
+  const worker = createCreep("supportWorker", "worker", 1, 1, {
+    roomName: rooms.donor.name,
+    memory: {
+      role: "worker",
+      room: rooms.donor.name,
+      homeRoom: rooms.donor.name,
+      targetRoom: rooms.target.name,
+      operation: "empire_support",
+      supportRole: "worker",
+    },
+  });
+  roleWorker.run(worker);
+
+  const move = currentRuntime.creepActions.find(function (action) {
+    return action.creep === "supportWorker" && action.action === "moveTo";
+  });
+  assert(move && move.targetRoom === rooms.target.name, `expected support worker to travel to target room, got ${JSON.stringify(currentRuntime.creepActions)}`);
+
+  const upgrader = createCreep("supportUpgrader", "upgrader", 1, 2, {
+    roomName: rooms.donor.name,
+    memory: {
+      role: "upgrader",
+      room: rooms.donor.name,
+      homeRoom: rooms.donor.name,
+      targetRoom: rooms.target.name,
+      operation: "empire_support",
+      supportRole: "upgrader",
+    },
+  });
+  roleUpgrader.run(upgrader);
+
+  const upgraderMove = currentRuntime.creepActions.find(function (action) {
+    return action.creep === "supportUpgrader" && action.action === "moveTo";
+  });
+  assert(upgraderMove && upgraderMove.targetRoom === rooms.target.name, `expected support upgrader to travel to target room, got ${JSON.stringify(currentRuntime.creepActions)}`);
+}
+
 function runEmpireAwarenessScenario() {
   const roomA = buildRoomScenario("VAL_EMPIRE_A", {
     tick: 850,
@@ -7845,6 +8135,13 @@ function main() {
     ["lab_switch_after_target_met", runLabSwitchAfterTargetMetScenario],
     ["lab_targets_met", runLabTargetsMetScenario],
     ["lab_tight_replan", runLabTightReplanScenario],
+    ["empire_mineral_transfer", runEmpireMineralTransferScenario],
+    ["empire_mineral_blocked", runEmpireMineralBlockedScenario],
+    ["empire_mineral_one_transfer", runEmpireMineralOneTransferScenario],
+    ["empire_support_worker", runEmpireSupportWorkerScenario],
+    ["empire_support_upgrader", runEmpireSupportUpgraderScenario],
+    ["empire_support_donor_blocked", runEmpireSupportDonorBlockedScenario],
+    ["empire_support_travel", runEmpireSupportTravelScenario],
     ["empire_awareness", runEmpireAwarenessScenario],
     ["expansion_claim_request", runExpansionClaimRequestScenario],
     ["expansion_full_construction", runExpansionFullConstructionScenario],

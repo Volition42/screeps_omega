@@ -1071,10 +1071,23 @@ module.exports = {
     }
     buildLines.push(`Next ${nextTask}`);
 
+    const pendingImport =
+      Memory.empire &&
+      Memory.empire.minerals &&
+      Memory.empire.minerals.pendingByRoom
+        ? Memory.empire.minerals.pendingByRoom[room.name] || null
+        : null;
+    const labGoalLine = `LabGoal ${advanced.labGoal || "none"} need ${
+      advanced.labNeed || 0
+    } ${advanced.labReason || ""}${
+      pendingImport
+        ? ` import ${pendingImport.resourceType} ${pendingImport.missing || 0}`
+        : ""
+    }`.trim();
     const advancedLines = [
       `[OPS][${room.name}][ADVANCED]`,
       `Labs ${String(advanced.labStatus || "inactive")} ${advanced.labProduct || ""}`.trim(),
-      `LabGoal ${advanced.labGoal || "none"} need ${advanced.labNeed || 0} ${advanced.labReason || ""}`.trim(),
+      labGoalLine,
       `Factory ${String(advanced.factoryStatus || "inactive")} ${advanced.factoryProduct || ""}`.trim(),
       `PowerSpawn ${String(advanced.powerSpawnStatus || "inactive")} | Nuker ${String(advanced.nukerStatus || "inactive")}`,
     ];

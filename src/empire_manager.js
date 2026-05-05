@@ -21,6 +21,7 @@ const attackManager = require("attack_manager");
 const roomProgress = require("room_progress");
 const utils = require("utils");
 const invasionLog = require("invasion_log");
+const advancedStructureManager = require("advanced_structure_manager");
 
 function ensureEmpireMemory() {
   if (!Memory.empire) Memory.empire = {};
@@ -36,6 +37,12 @@ function ensureEmpireMemory() {
   }
   if (!Memory.empire.reservation.plans) {
     Memory.empire.reservation.plans = {};
+  }
+  if (!Memory.empire.minerals) {
+    Memory.empire.minerals = {};
+  }
+  if (!Memory.empire.support) {
+    Memory.empire.support = {};
   }
 
   return Memory.empire;
@@ -852,6 +859,102 @@ function pruneExpansionQueue(targetRoomName) {
   return removed;
 }
 
+function getEmpireAdvancedConfig() {
+  return config.ADVANCED && config.ADVANCED.EMPIRE
+    ? config.ADVANCED.EMPIRE
+    : {};
+}
+
+function getStoreAmount(structure, resourceType) {
+  if (!structure || !structure.store || !resourceType) return 0;
+  if (typeof structure.store.getUsedCapacity === "function") {
+    const used = structure.store.getUsedCapacity(resourceType);
+    if (typeof used === "number" && used > 0) return used;
+  }
+  return structure.store[resourceType] || 0;
+}
+
+function getTerminalFreeCapacity(terminal, resourceType) {
+  if (!terminal || !terminal.store) return 0;
+  if (typeof terminal.store.getFreeCapacity === "function") {
+    return terminal.store.getFreeCapacity(resourceType);
+  }
+  return 0;
+}
+
+function getTransactionCost(amount, fromRoom, toRoom) {
+  if (
+    Game.map &&
+    typeof Game.map.calcTransactionCost === "function"
+  ) {
+    return Game.map.calcTransactionCost(amount, fromRoom, toRoom);
+  }
+
+  const distance =
+    Game.map && typeof Game.map.getRoomLinearDistance === "function"
+      ? Game.map.getRoomLinearDistance(fromRoom, toRoom)
+      : 1;
+  return Math.ceil(amount * Math.max(1, distance) * 0.1);
+}
+
+function getReactionForProduct(product) {
+  return product
+    ? advancedStructureManager.getReactionInputsForProduct(product)
+    : null;
+}
+
+function getLabDemandForRoom(room, state) {
+  const summary =
+    state && state.advancedOps
+      ? state.advancedOps
+      : Memory.rooms &&
+        Memory.rooms[room.name] &&
+        Memory.rooms[room.name].advancedOps
+        ? Memory.rooms[room.name].advancedOps.summary
+        : null;
+  if (!summary || !summary.labGoal) return null;
+
+  const product = summary.labProduct || summary.labGoal;
+  const reaction = getReactionForProduct(product);
+  if (!reaction) return null;
+
+  const terminal = room.terminal || null;
+  const storage = room.storage || null;
+  const labs =
+    state && state.structuresByType
+      ? state.structuresByType[STRUCTURE_LAB] || []
+      : [];
+  const reagents = [reaction.reagentA, reaction.reagentB];
+  let best = null;
+
+  for (let i = 0; i < reagents.length; i++) {
+    const resourceType = reagents[i];
+    let localAmount =
+      getStoreAmount(terminal, resourceType) + getStoreAmount(storage, resourceType);
+    for (let labIndex = 0; labIndex < labs.length; labIndex++) {
+      localAmount += getStoreAmount(labs[labIndex], resourceType);
+    }
+    const missing = Math.max(0, advancedStructureManager.getLabInputTarget() - localAmount);
+    if (missing <= 0) continue;
+    if (!best || missing > best.missing) {
+      best = {
+        roomName: room.name,
+        resourceType: resourceType,
+        missing: missing,
+        goal: summary.labGoal,
+        product: product,
+        reason: summary.labReason || null,
+      };
+    }
+  }
+
+  return best;
+}
+
+function getSupportSettings() {
+  return getEmpireAdvancedConfig();
+}
+
 module.exports = {
   collectOwnedRooms() {
     const ownedRooms = [];
@@ -948,8 +1051,312 @@ module.exports = {
     memory.rooms = roomSnapshots;
     memory.expansion.summary = this.getExpansionSummary(rooms.length);
     memory.reservation.summary = reservationManager.getReservationSummary();
+    memory.support = this.buildSupportSummary(rooms, states);
+    this.runMineralBalancing(rooms, states, memory);
 
     return memory;
+  },
+
+  runMineralBalancing(ownedRooms, roomStates, empireMemory) {
+    const settings = getEmpireAdvancedConfig();
+    const mineralMemory = empireMemory.minerals || {};
+
+    if (settings.MINERAL_BALANCING_ENABLED === false) {
+      mineralMemory.status = "disabled";
+      empireMemory.minerals = mineralMemory;
+      return mineralMemory;
+    }
+
+    const interval =
+      typeof settings.RUN_INTERVAL === "number" ? Math.max(1, settings.RUN_INTERVAL) : 5;
+    if (Game.time % interval !== 0) {
+      mineralMemory.status = "waiting";
+      empireMemory.minerals = mineralMemory;
+      return mineralMemory;
+    }
+
+    const rooms = ownedRooms || [];
+    const states = roomStates || {};
+    const demands = [];
+    const pendingByRoom = {};
+    const transferBatch =
+      typeof settings.TRANSFER_BATCH === "number" ? settings.TRANSFER_BATCH : 500;
+    const minReserve =
+      typeof settings.MIN_SENDER_RESERVE === "number" ? settings.MIN_SENDER_RESERVE : 500;
+    const minEnergy =
+      typeof settings.MIN_TERMINAL_ENERGY === "number" ? settings.MIN_TERMINAL_ENERGY : 5000;
+    const maxEnergyRatio =
+      typeof settings.MAX_TRANSFER_ENERGY_RATIO === "number"
+        ? settings.MAX_TRANSFER_ENERGY_RATIO
+        : 0.25;
+    const maxTransfers =
+      typeof settings.MAX_TRANSFERS_PER_TICK === "number"
+        ? Math.max(0, settings.MAX_TRANSFERS_PER_TICK)
+        : 1;
+    let transfers = 0;
+    let lastTransfer = null;
+
+    for (let i = 0; i < rooms.length; i++) {
+      const room = rooms[i];
+      if (!room.terminal || room.terminal.cooldown > 0) continue;
+      if (getTerminalFreeCapacity(room.terminal) <= 0) continue;
+
+      const demand = getLabDemandForRoom(room, states[room.name] || null);
+      if (!demand) continue;
+      demands.push(demand);
+      pendingByRoom[room.name] = {
+        resourceType: demand.resourceType,
+        missing: demand.missing,
+        goal: demand.goal,
+        product: demand.product,
+      };
+    }
+
+    for (let demandIndex = 0; demandIndex < demands.length; demandIndex++) {
+      if (transfers >= maxTransfers) break;
+
+      const demand = demands[demandIndex];
+      const receiver = Game.rooms[demand.roomName] || null;
+      if (!receiver || !receiver.terminal) continue;
+
+      const receiverFree = getTerminalFreeCapacity(receiver.terminal, demand.resourceType);
+      if (receiverFree <= 0) continue;
+
+      const sender = this.findMineralSender(
+        rooms,
+        demand,
+        minReserve,
+        minEnergy,
+        maxEnergyRatio,
+        receiverFree,
+      );
+      if (!sender) continue;
+
+      const amount = Math.min(transferBatch, demand.missing, sender.available, receiverFree);
+      if (amount <= 0) continue;
+
+      const result = sender.terminal.send(
+        demand.resourceType,
+        amount,
+        receiver.name,
+        "empire_lab_import",
+      );
+
+      if (result === OK) {
+        transfers++;
+        lastTransfer = {
+          tick: Game.time,
+          from: sender.room.name,
+          to: receiver.name,
+          resourceType: demand.resourceType,
+          amount: amount,
+          goal: demand.goal,
+          product: demand.product,
+          energyCost: sender.energyCost,
+        };
+      }
+    }
+
+    mineralMemory.tick = Game.time;
+    mineralMemory.status = transfers > 0 ? "sent" : demands.length > 0 ? "pending" : "idle";
+    mineralMemory.pendingByRoom = pendingByRoom;
+    if (lastTransfer) mineralMemory.lastTransfer = lastTransfer;
+    empireMemory.minerals = mineralMemory;
+    return mineralMemory;
+  },
+
+  findMineralSender(rooms, demand, minReserve, minEnergy, maxEnergyRatio, receiverFree) {
+    let best = null;
+
+    for (let i = 0; i < rooms.length; i++) {
+      const room = rooms[i];
+      if (!room || room.name === demand.roomName || !room.terminal) continue;
+      if (room.terminal.cooldown > 0) continue;
+
+      const terminal = room.terminal;
+      const stored = getStoreAmount(terminal, demand.resourceType);
+      const available = Math.min(stored - minReserve, receiverFree);
+      if (available <= 0) continue;
+
+      const terminalEnergy = getStoreAmount(terminal, RESOURCE_ENERGY);
+      if (terminalEnergy < minEnergy) continue;
+
+      const amount = Math.min(
+        typeof getEmpireAdvancedConfig().TRANSFER_BATCH === "number"
+          ? getEmpireAdvancedConfig().TRANSFER_BATCH
+          : 500,
+        demand.missing,
+        available,
+      );
+      const energyCost = getTransactionCost(amount, room.name, demand.roomName);
+      if (energyCost > terminalEnergy - minEnergy) continue;
+      if (energyCost > terminalEnergy * maxEnergyRatio) continue;
+
+      const score = available - energyCost;
+      if (!best || score > best.score) {
+        best = {
+          room: room,
+          terminal: terminal,
+          available: available,
+          energyCost: energyCost,
+          score: score,
+        };
+      }
+    }
+
+    return best;
+  },
+
+  buildSupportSummary(ownedRooms, roomStates) {
+    const requestsByDonor = {};
+    const rooms = ownedRooms || [];
+    const states = roomStates || {};
+
+    for (let i = 0; i < rooms.length; i++) {
+      const donor = rooms[i];
+      const donorState = states[donor.name] || null;
+      if (!this.canProvideEmpireSupport(donor, donorState)) continue;
+
+      for (let j = 0; j < rooms.length; j++) {
+        const target = rooms[j];
+        if (target.name === donor.name) continue;
+
+        const targetState = states[target.name] || null;
+        const request = this.getSupportNeedForTarget(target, targetState, donor.name);
+        if (!request) continue;
+        if (!requestsByDonor[donor.name]) requestsByDonor[donor.name] = [];
+        requestsByDonor[donor.name].push(request);
+      }
+    }
+
+    return {
+      tick: Game.time,
+      requestsByDonor: requestsByDonor,
+    };
+  },
+
+  getEmpireSupportSpawnRequests(room, state) {
+    const settings = getSupportSettings();
+    if (settings.SUPPORT_ENABLED === false) return [];
+
+    const memory = ensureEmpireMemory();
+    if (!memory.support || !memory.support.requestsByDonor) {
+      memory.support = this.buildSupportSummary(this.collectOwnedRooms(), {});
+    }
+
+    return (memory.support.requestsByDonor[room.name] || []).filter(function (request) {
+      return !!request;
+    });
+  },
+
+  canProvideEmpireSupport(room, state) {
+    const settings = getSupportSettings();
+    if (settings.SUPPORT_ENABLED === false) return false;
+    if (!room || !room.controller || !room.controller.my) return false;
+    if (room.controller.level < (settings.SUPPORT_MIN_DONOR_RCL || 6)) return false;
+    if (!room.storage || (room.storage.store[RESOURCE_ENERGY] || 0) < (settings.SUPPORT_MIN_DONOR_STORAGE_ENERGY || 50000)) {
+      return false;
+    }
+    if (state && state.hostileCreeps && state.hostileCreeps.length > 0) return false;
+
+    const queue = getQueue(room.name);
+    for (let i = 0; i < queue.length; i++) {
+      if ((queue[i].priority || 0) >= 90 && queue[i].operation !== "empire_support") {
+        return false;
+      }
+    }
+
+    return true;
+  },
+
+  getSupportNeedForTarget(targetRoom, targetState, donorRoomName) {
+    const settings = getSupportSettings();
+    if (!targetRoom || !targetRoom.controller || !targetRoom.controller.my) return null;
+    if (!targetState) return null;
+    if (targetState.hostileCreeps && targetState.hostileCreeps.length > 0) return null;
+
+    const maxPerRole = settings.SUPPORT_MAX_PER_TARGET_ROLE || 1;
+    const sites = targetState.sites ? targetState.sites.length : 0;
+    const roleCounts = targetState.roleCounts || {};
+    const workerCoverage =
+      (roleCounts.worker || 0) +
+      (roleCounts.jrworker || 0) +
+      this.countEmpireSupport("worker", targetRoom.name, donorRoomName);
+    const upgraderCoverage =
+      (roleCounts.upgrader || 0) +
+      this.countEmpireSupport("upgrader", targetRoom.name, donorRoomName);
+
+    if (
+      sites > 0 &&
+      workerCoverage < Math.max(1, Math.min(maxPerRole, sites))
+    ) {
+      return {
+        role: "worker",
+        priority: settings.SUPPORT_WORKER_PRIORITY || 65,
+        operation: "empire_support",
+        supportRole: "worker",
+        homeRoom: donorRoomName,
+        targetRoom: targetRoom.name,
+      };
+    }
+
+    const downgradeTicks =
+      targetRoom.controller && typeof targetRoom.controller.ticksToDowngrade === "number"
+        ? targetRoom.controller.ticksToDowngrade
+        : Infinity;
+    const controllerPressure =
+      downgradeTicks <= (settings.SUPPORT_CONTROLLER_DOWNGRADE_TICKS || 8000) ||
+      (
+        targetRoom.controller.level < 8 &&
+        getQueue(targetRoom.name).length > 0 &&
+        (roleCounts.upgrader || 0) <= 0
+      );
+
+    if (controllerPressure && upgraderCoverage < maxPerRole) {
+      return {
+        role: "upgrader",
+        priority: settings.SUPPORT_UPGRADER_PRIORITY || 58,
+        operation: "empire_support",
+        supportRole: "upgrader",
+        homeRoom: donorRoomName,
+        targetRoom: targetRoom.name,
+      };
+    }
+
+    return null;
+  },
+
+  countEmpireSupport(role, targetRoomName, donorRoomName) {
+    let count = 0;
+
+    for (const creepName in Game.creeps) {
+      if (!Object.prototype.hasOwnProperty.call(Game.creeps, creepName)) continue;
+      const creep = Game.creeps[creepName];
+      if (!creep || !creep.memory) continue;
+      if (creep.memory.operation !== "empire_support") continue;
+      if (creep.memory.supportRole !== role && creep.memory.role !== role) continue;
+      if (creep.memory.targetRoom !== targetRoomName) continue;
+      if (donorRoomName && creep.memory.homeRoom !== donorRoomName) continue;
+      if (creep.ticksToLive !== undefined && creep.ticksToLive <= 100) continue;
+      count++;
+    }
+
+    if (!Memory.rooms) return count;
+    for (const roomName in Memory.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+      const queue = Memory.rooms[roomName] ? Memory.rooms[roomName].spawnQueue : null;
+      if (!queue) continue;
+      for (let i = 0; i < queue.length; i++) {
+        const item = queue[i];
+        if (!item || item.operation !== "empire_support") continue;
+        if (item.role !== role && item.supportRole !== role) continue;
+        if (item.targetRoom !== targetRoomName) continue;
+        if (donorRoomName && item.homeRoom !== donorRoomName) continue;
+        count++;
+      }
+    }
+
+    return count;
   },
 
   createExpansion(targetRoomName, parentRoomName) {
@@ -1462,6 +1869,16 @@ module.exports = {
     }
     if (attackRows.length > 0) {
       lines.push(`Attacks: ${attackRows.length} active`);
+    }
+    if (
+      Memory.empire &&
+      Memory.empire.minerals &&
+      Memory.empire.minerals.lastTransfer
+    ) {
+      const transfer = Memory.empire.minerals.lastTransfer;
+      lines.push(
+        `Minerals: ${transfer.from} -> ${transfer.to} ${transfer.resourceType} ${transfer.amount}`,
+      );
     }
 
     if (roomReports.length > 0) {

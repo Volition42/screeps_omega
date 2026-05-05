@@ -10,11 +10,20 @@ const INTERACT_MOVE_OPTIONS = {
   range: 1,
 };
 
+const ROOM_TRAVEL_OPTIONS = {
+  reusePath: 30,
+  range: 20,
+};
+
 module.exports = {
   run(creep, options) {
     const thinkInterval =
       options && options.thinkInterval ? options.thinkInterval : 1;
     const state = this.getRuntimeState(creep.room);
+
+    if (this.travelToSupportTarget(creep)) {
+      return;
+    }
 
     delete creep.memory.targetId;
     delete creep.memory.overrideMove;
@@ -70,6 +79,20 @@ module.exports = {
         range: 3,
       });
     }
+  },
+
+  travelToSupportTarget(creep) {
+    const targetRoom = creep.memory && creep.memory.targetRoom;
+    if (!targetRoom || targetRoom === creep.room.name) return false;
+
+    creep.memory.upgrading = false;
+    delete creep.memory.withdrawTargetId;
+    utils.moveTo(
+      creep,
+      new RoomPosition(25, 25, targetRoom),
+      ROOM_TRAVEL_OPTIONS,
+    );
+    return true;
   },
 
   getWithdrawalTarget(creep, thinkInterval) {

@@ -56,6 +56,7 @@ module.exports = {
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
         operation: request.operation || null,
+        supportRole: request.supportRole || null,
         attackStatus: request.attackStatus || null,
         defenseType: request.defenseType || null,
         homeRoom: request.homeRoom || null,
@@ -162,6 +163,7 @@ module.exports = {
         targetId: request.targetId || null,
         targetRoom: request.targetRoom || null,
         operation: request.operation || null,
+        supportRole: request.supportRole || null,
         attackStatus: request.attackStatus || null,
         defenseType: request.defenseType || null,
         bodyProfile: bodyPlan.profile || null,
@@ -189,6 +191,7 @@ module.exports = {
             targetId: request.targetId || null,
             targetRoom: request.targetRoom || null,
             operation: request.operation || null,
+            supportRole: request.supportRole || null,
             attackStatus: request.attackStatus || null,
             defenseType: request.defenseType || null,
             bodyProfile: fallbackPlan.profile || null,
@@ -344,6 +347,7 @@ module.exports = {
       request.targetId || "",
       request.targetRoom || "",
       request.operation || "",
+      request.supportRole || "",
       request.attackStatus || "",
       request.defenseType || "",
       request.homeRoom || "",
@@ -542,6 +546,7 @@ module.exports = {
     if (!(state.defense && state.defense.recovery && state.defense.recovery.active)) {
       this.addExpansionRequests(room, state, requests);
       this.addReservationRequests(room, state, requests);
+      this.addEmpireSupportRequests(room, state, requests);
     }
     this.addCoreEconomyRequests(room, state, requests, {
       includeRepairs: true,
@@ -574,6 +579,14 @@ module.exports = {
 
     for (let i = 0; i < reservationRequests.length; i++) {
       requests.push(reservationRequests[i]);
+    }
+  },
+
+  addEmpireSupportRequests(room, state, requests) {
+    const supportRequests = empireManager.getEmpireSupportSpawnRequests(room, state);
+
+    for (let i = 0; i < supportRequests.length; i++) {
+      requests.push(supportRequests[i]);
     }
   },
 

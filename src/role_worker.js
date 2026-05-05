@@ -37,10 +37,19 @@ const HARVEST_SPOT_MOVE_OPTIONS = {
   range: 0,
 };
 
+const ROOM_TRAVEL_OPTIONS = {
+  reusePath: 30,
+  range: 20,
+};
+
 module.exports = {
   run(creep, options) {
     var thinkInterval =
       options && options.thinkInterval ? options.thinkInterval : 1;
+
+    if (this.travelToSupportTarget(creep)) {
+      return;
+    }
 
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;
@@ -114,6 +123,22 @@ module.exports = {
         utils.moveTo(creep, creep.room.controller.pos, INTERACT_MOVE_OPTIONS);
       }
     }
+  },
+
+  travelToSupportTarget(creep) {
+    const targetRoom = creep.memory && creep.memory.targetRoom;
+    if (!targetRoom || targetRoom === creep.room.name) return false;
+
+    creep.memory.working = false;
+    delete creep.memory.withdrawTargetId;
+    delete creep.memory.workTargetId;
+    utils.clearAssignedHarvestPosition(creep);
+    utils.moveTo(
+      creep,
+      new RoomPosition(25, 25, targetRoom),
+      ROOM_TRAVEL_OPTIONS,
+    );
+    return true;
   },
 
   getWithdrawalTarget(creep) {
