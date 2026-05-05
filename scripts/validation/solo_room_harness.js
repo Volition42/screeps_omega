@@ -5742,6 +5742,180 @@ function runFactoryOpsScenario() {
   );
 }
 
+function withBoostTargets(targets, fn) {
+  const previousTargets = config.ADVANCED.LABS.BOOST_TARGETS;
+  config.ADVANCED.LABS.BOOST_TARGETS = targets;
+
+  try {
+    fn();
+  } finally {
+    config.ADVANCED.LABS.BOOST_TARGETS = previousTargets;
+  }
+}
+
+function buildLabOpsRoom(name, options) {
+  const settings = options || {};
+  const room = buildRoomScenario(name, {
+    tick: settings.tick || 900,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: settings.creeps || [
+      { name: `${name}_hauler`, role: "hauler", x: 25, y: 24, store: {}, storeCapacity: 200 },
+    ],
+  });
+
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = settings.storageEnergy || 200000;
+  room.addStructure(
+    createStructure(STRUCTURE_TERMINAL, 25, 32, {
+      roomName: room.name,
+      store: settings.terminalStore || { energy: 10000 },
+      storeCapacity: 300000,
+      hits: 3000,
+      hitsMax: 3000,
+    }),
+  );
+
+  const labStores = settings.labStores || [{}, {}, {}, {}, {}];
+  const labPositions = [
+    [23, 30],
+    [25, 30],
+    [24, 29],
+    [24, 31],
+    [25, 29],
+  ];
+
+  for (let i = 0; i < labPositions.length; i++) {
+    room.addStructure(
+      createStructure(STRUCTURE_LAB, labPositions[i][0], labPositions[i][1], {
+        roomName: room.name,
+        store: labStores[i] || {},
+        storeCapacity: 3000,
+        hits: 500,
+        hitsMax: 500,
+        cooldown: 0,
+      }),
+    );
+  }
+
+  return room;
+}
+
+function runLabBoostDirectScenario() {
+  withBoostTargets({ UH: 1000 }, function () {
+    const room = buildLabOpsRoom("VAL_LAB_BOOST_DIRECT", {
+      terminalStore: { energy: 10000, U: 500, H: 500 },
+    });
+    const state = roomState.collect(room);
+    const summary = advancedStructureManager.getStatus(room, state);
+    const task = advancedStructureManager.getHaulerTask(room, Game.creeps.VAL_LAB_BOOST_DIRECT_hauler, state);
+
+    assert(summary.labStatus === "making_boost", `expected making_boost, got ${summary.labStatus}`);
+    assert(summary.labProduct === "UH", `expected UH product, got ${summary.labProduct}`);
+    assert(summary.labGoal === "UH", `expected UH goal, got ${summary.labGoal}`);
+    assert(summary.labNeed === 1000, `expected UH need 1000, got ${summary.labNeed}`);
+    assert(task && task.label === "lab_input", `expected lab_input task, got ${task ? task.label : "none"}`);
+  });
+}
+
+function runLabBoostIntermediateScenario() {
+  withBoostTargets({ GH: 1000 }, function () {
+    const room = buildLabOpsRoom("VAL_LAB_BOOST_INTERMEDIATE", {
+      terminalStore: { energy: 10000, ZK: 500, UL: 500, H: 500 },
+    });
+    const state = roomState.collect(room);
+    const summary = advancedStructureManager.getStatus(room, state);
+
+    assert(summary.labStatus === "making_intermediate", `expected making_intermediate, got ${summary.labStatus}`);
+    assert(summary.labProduct === "G", `expected G intermediate, got ${summary.labProduct}`);
+    assert(summary.labGoal === "GH", `expected GH goal, got ${summary.labGoal}`);
+  });
+}
+
+function runLabLoadedReactionPreservedScenario() {
+  withBoostTargets({ UH: 1000, KH: 1000 }, function () {
+    const room = buildLabOpsRoom("VAL_LAB_LOADED_KEEP", {
+      terminalStore: { energy: 10000, U: 500, H: 1000, K: 500 },
+      labStores: [{ U: 200 }, { H: 200 }, {}, {}, {}],
+    });
+    const state = roomState.collect(room);
+    const summary = advancedStructureManager.getStatus(room, state);
+
+    assert(summary.labStatus === "making_boost", `expected making_boost, got ${summary.labStatus}`);
+    assert(summary.labProduct === "UH", `expected loaded UH to be preserved, got ${summary.labProduct}`);
+  });
+}
+
+function runLabSwitchAfterTargetMetScenario() {
+  withBoostTargets({ UH: 1000, KH: 1000 }, function () {
+    const room = buildLabOpsRoom("VAL_LAB_SWITCH_TARGET_MET", {
+      terminalStore: { energy: 10000, UH: 1000, K: 500, H: 500 },
+      labStores: [{ U: 200 }, { H: 200 }, {}, {}, {}],
+    });
+    Memory.rooms[room.name] = {
+      advancedOps: {
+        labSchedule: {
+          tick: Game.time,
+          product: "UH",
+          goal: "UH",
+          reason: "cached",
+        },
+      },
+    };
+    const state = roomState.collect(room);
+    const summary = advancedStructureManager.getStatus(room, state);
+
+    assert(summary.labProduct === "KH", `expected switch to KH after UH target, got ${summary.labProduct}`);
+    assert(summary.labGoal === "KH", `expected KH goal, got ${summary.labGoal}`);
+  });
+}
+
+function runLabTargetsMetScenario() {
+  withBoostTargets({ UH: 1000 }, function () {
+    const room = buildLabOpsRoom("VAL_LAB_TARGETS_MET", {
+      terminalStore: { energy: 10000, UH: 1000, U: 500, H: 500 },
+    });
+    const state = roomState.collect(room);
+    const summary = advancedStructureManager.getStatus(room, state);
+
+    assert(summary.labStatus === "target_met", `expected target_met, got ${summary.labStatus}`);
+    assert(summary.labProduct === null, `expected no lab product, got ${summary.labProduct}`);
+    assert(summary.labReason === "target_met", `expected target_met reason, got ${summary.labReason}`);
+  });
+}
+
+function runLabTightReplanScenario() {
+  withBoostTargets({ UH: 1000, KH: 1000 }, function () {
+    const room = buildLabOpsRoom("VAL_LAB_TIGHT_REPLAN", {
+      tick: 1010,
+      terminalStore: { energy: 10000, U: 500, H: 1000, K: 500 },
+    });
+    Memory.runtime.rooms = {};
+    Memory.runtime.rooms[room.name] = { pressure: "tight" };
+    Memory.rooms[room.name] = {
+      advancedOps: {
+        labSchedule: {
+          tick: 1000,
+          product: "UH",
+          goal: "UH",
+          reason: "cached",
+        },
+      },
+    };
+    const state = roomState.collect(room);
+    const summary = advancedStructureManager.getStatus(room, state);
+
+    assert(summary.labProduct === "UH", `expected tight mode to keep cached UH, got ${summary.labProduct}`);
+    assert(summary.labReason === "cached", `expected cached reason, got ${summary.labReason}`);
+  });
+}
+
 function runEmpireAwarenessScenario() {
   const roomA = buildRoomScenario("VAL_EMPIRE_A", {
     tick: 850,
@@ -7665,6 +7839,12 @@ function main() {
     ["command_links", runCommandUtilityLinksScenario],
     ["multi_spawn_balance", runMultiSpawnBalancingScenario],
     ["factory_ops", runFactoryOpsScenario],
+    ["lab_boost_direct", runLabBoostDirectScenario],
+    ["lab_boost_intermediate", runLabBoostIntermediateScenario],
+    ["lab_loaded_reaction_preserved", runLabLoadedReactionPreservedScenario],
+    ["lab_switch_after_target_met", runLabSwitchAfterTargetMetScenario],
+    ["lab_targets_met", runLabTargetsMetScenario],
+    ["lab_tight_replan", runLabTightReplanScenario],
     ["empire_awareness", runEmpireAwarenessScenario],
     ["expansion_claim_request", runExpansionClaimRequestScenario],
     ["expansion_full_construction", runExpansionFullConstructionScenario],

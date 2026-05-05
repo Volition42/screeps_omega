@@ -173,32 +173,276 @@ module.exports = {
       };
     }
 
-    var currentReaction = this.getCurrentLabReaction(layout.inputIds);
-    var preferredProduct = memory.labProduct || null;
-    var desiredReaction = null;
-
-    if (currentReaction && this.canSupplyReaction(currentReaction.product, storage, terminal)) {
-      desiredReaction = currentReaction;
-    } else if (
-      preferredProduct &&
-      this.canSupplyReaction(preferredProduct, storage, terminal)
-    ) {
-      desiredReaction = this.getReactionInputsForProduct(preferredProduct);
-    } else {
-      desiredReaction = this.chooseReaction(storage, terminal);
-    }
+    var schedule = this.chooseLabSchedule(room, labs, layout, storage, terminal, memory);
+    var desiredReaction = schedule && schedule.reaction ? schedule.reaction : null;
 
     memory.labProduct = desiredReaction ? desiredReaction.product : null;
 
     return {
       enabled: true,
-      status: desiredReaction ? "ready" : "idle",
+      status: schedule ? schedule.status : "idle",
       product: desiredReaction ? desiredReaction.product : null,
       reagentA: desiredReaction ? desiredReaction.reagentA : null,
       reagentB: desiredReaction ? desiredReaction.reagentB : null,
+      goal: schedule ? schedule.goal || null : null,
+      need: schedule ? schedule.need || 0 : 0,
+      reason: schedule ? schedule.reason || null : null,
+      outputUnloadAt: schedule && schedule.outputUnloadAt ? schedule.outputUnloadAt : null,
       inputIds: layout.inputIds.slice(),
       reactorIds: layout.reactorIds.slice(),
     };
+  },
+
+  chooseLabSchedule(room, labs, layout, storage, terminal, memory) {
+    var boostTargets = this.getBoostTargets();
+    if (!boostTargets || Object.keys(boostTargets).length <= 0) {
+      var fallback = this.chooseReaction(storage, terminal);
+      return fallback
+        ? {
+            status: "ready",
+            reaction: fallback,
+            goal: fallback.product,
+            need: 0,
+            reason: "priority_fallback",
+          }
+        : {
+            status: "idle",
+            reaction: null,
+            goal: null,
+            need: 0,
+            reason: "missing_reagents",
+          };
+    }
+
+    var inventory = this.getLabInventory(storage, terminal, labs);
+    var currentReaction = this.getCurrentLabReaction(layout.inputIds);
+    var cached = memory.labSchedule || null;
+    var shouldReplan = this.shouldReplanLabs(cached, room);
+
+    if (!shouldReplan) {
+      var cachedReaction = cached && cached.product
+        ? this.getReactionInputsForProduct(cached.product)
+        : null;
+      if (
+        cachedReaction &&
+        this.canSupplyReactionWithInventory(cachedReaction, inventory) &&
+        this.isLabProductUseful(cachedReaction.product, cached.goal, boostTargets, inventory)
+      ) {
+        return this.finalizeLabSchedule(cachedReaction, cached.goal, boostTargets, inventory, cached.reason || "cached");
+      }
+    }
+
+    if (
+      currentReaction &&
+      this.canSupplyReactionWithInventory(currentReaction, inventory) &&
+      this.isLabProductUseful(currentReaction.product, null, boostTargets, inventory)
+    ) {
+      var currentGoal = this.getBestGoalForProduct(currentReaction.product, boostTargets, inventory);
+      memory.labSchedule = {
+        tick: Game.time,
+        product: currentReaction.product,
+        goal: currentGoal,
+        reason: currentReaction.product === currentGoal ? "loaded_boost" : "loaded_intermediate",
+      };
+      return this.finalizeLabSchedule(
+        currentReaction,
+        currentGoal,
+        boostTargets,
+        inventory,
+        memory.labSchedule.reason,
+      );
+    }
+
+    var candidate = this.chooseBoostReaction(boostTargets, inventory);
+    if (candidate && candidate.reaction) {
+      memory.labSchedule = {
+        tick: Game.time,
+        product: candidate.reaction.product,
+        goal: candidate.goal,
+        reason: candidate.reason,
+      };
+      return this.finalizeLabSchedule(
+        candidate.reaction,
+        candidate.goal,
+        boostTargets,
+        inventory,
+        candidate.reason,
+      );
+    }
+
+    memory.labSchedule = {
+      tick: Game.time,
+      product: null,
+      goal: candidate ? candidate.goal : null,
+      reason: candidate && candidate.allTargetsMet ? "target_met" : "missing_reagents",
+    };
+
+    return {
+      status: candidate && candidate.allTargetsMet ? "target_met" : "missing_reagents",
+      reaction: null,
+      goal: candidate ? candidate.goal : null,
+      need: candidate ? candidate.need || 0 : 0,
+      reason: memory.labSchedule.reason,
+    };
+  },
+
+  shouldReplanLabs(cached, room) {
+    if (!cached || !cached.tick) return true;
+
+    var interval = this.getLabReplanInterval();
+    var runtime = Memory.runtime && Memory.runtime.rooms
+      ? Memory.runtime.rooms[room.name] || null
+      : null;
+    var pressure = runtime && runtime.pressure ? runtime.pressure : "normal";
+
+    if (pressure !== "normal") {
+      if (!this.getAllowTightLabReplan()) return false;
+      interval *= this.getTightLabReplanMultiplier();
+    }
+
+    return Game.time - cached.tick >= interval;
+  },
+
+  finalizeLabSchedule(reaction, goal, boostTargets, inventory, reason) {
+    var target = goal && boostTargets[goal] ? boostTargets[goal] : 0;
+    var need = target > 0 ? Math.max(0, target - (inventory[goal] || 0)) : 0;
+    var status = reaction.product === goal ? "making_boost" : "making_intermediate";
+    var outputUnloadAt = this.getLabOutputUnloadAt();
+
+    if (boostTargets[reaction.product] && (inventory[reaction.product] || 0) >= boostTargets[reaction.product]) {
+      outputUnloadAt = this.getLabTargetMetUnloadAt();
+    }
+
+    return {
+      status: status,
+      reaction: reaction,
+      goal: goal,
+      need: need,
+      reason: reason || status,
+      outputUnloadAt: outputUnloadAt,
+    };
+  },
+
+  chooseBoostReaction(boostTargets, inventory) {
+    var targetNames = Object.keys(boostTargets);
+    var firstMissing = null;
+
+    for (var i = 0; i < targetNames.length; i++) {
+      var goal = targetNames[i];
+      var need = boostTargets[goal] - (inventory[goal] || 0);
+      if (need < this.getLabMinProductBatch()) continue;
+
+      if (!firstMissing) {
+        firstMissing = {
+          goal: goal,
+          need: need,
+        };
+      }
+
+      var reaction = this.findSupplyReadyReaction(goal, inventory, 0);
+      if (reaction) {
+        return {
+          goal: goal,
+          need: need,
+          reaction: reaction,
+          reason: reaction.product === goal ? "making_boost" : "making_intermediate",
+        };
+      }
+    }
+
+    if (firstMissing) {
+      return {
+        goal: firstMissing.goal,
+        need: firstMissing.need,
+        reaction: null,
+        reason: "missing_reagents",
+      };
+    }
+
+    return {
+      goal: null,
+      need: 0,
+      reaction: null,
+      allTargetsMet: true,
+      reason: "target_met",
+    };
+  },
+
+  findSupplyReadyReaction(product, inventory, depth) {
+    if (depth > 4) return null;
+
+    var reaction = this.getReactionInputsForProduct(product);
+    if (!reaction) return null;
+    if (this.canSupplyReactionWithInventory(reaction, inventory)) return reaction;
+
+    var reagentAReaction = this.findSupplyReadyReaction(reaction.reagentA, inventory, depth + 1);
+    if (reagentAReaction) return reagentAReaction;
+
+    return this.findSupplyReadyReaction(reaction.reagentB, inventory, depth + 1);
+  },
+
+  isLabProductUseful(product, preferredGoal, boostTargets, inventory) {
+    var goal = preferredGoal || this.getBestGoalForProduct(product, boostTargets, inventory);
+    if (!goal) return false;
+    if ((inventory[goal] || 0) >= boostTargets[goal]) return false;
+    if (product === goal) return true;
+    return this.isProductInReactionTree(product, goal, 0) &&
+      (inventory[product] || 0) < boostTargets[goal];
+  },
+
+  getBestGoalForProduct(product, boostTargets, inventory) {
+    var targetNames = Object.keys(boostTargets);
+
+    for (var i = 0; i < targetNames.length; i++) {
+      var goal = targetNames[i];
+      if ((inventory[goal] || 0) >= boostTargets[goal]) continue;
+      if (product === goal || this.isProductInReactionTree(product, goal, 0)) {
+        return goal;
+      }
+    }
+
+    return null;
+  },
+
+  isProductInReactionTree(product, goal, depth) {
+    if (depth > 4) return false;
+    var reaction = this.getReactionInputsForProduct(goal);
+    if (!reaction) return false;
+    if (reaction.reagentA === product || reaction.reagentB === product) return true;
+    return this.isProductInReactionTree(product, reaction.reagentA, depth + 1) ||
+      this.isProductInReactionTree(product, reaction.reagentB, depth + 1);
+  },
+
+  canSupplyReactionWithInventory(reaction, inventory) {
+    if (!reaction) return false;
+    var minimum = this.getLabStartMinimum();
+    return (
+      (inventory[reaction.reagentA] || 0) >= minimum &&
+      (inventory[reaction.reagentB] || 0) >= minimum
+    );
+  },
+
+  getLabInventory(storage, terminal, labs) {
+    var inventory = {};
+    this.addStoreToInventory(inventory, storage);
+    this.addStoreToInventory(inventory, terminal);
+
+    for (var i = 0; i < labs.length; i++) {
+      this.addStoreToInventory(inventory, labs[i]);
+    }
+
+    return inventory;
+  },
+
+  addStoreToInventory(inventory, structure) {
+    if (!structure || !structure.store) return;
+
+    for (var resourceType in structure.store) {
+      if (!Object.prototype.hasOwnProperty.call(structure.store, resourceType)) continue;
+      if (resourceType === RESOURCE_ENERGY) continue;
+      inventory[resourceType] = (inventory[resourceType] || 0) +
+        this.getStoredAmount(structure, resourceType);
+    }
   },
 
   getLabLayout(room, labs, memory) {
@@ -517,7 +761,7 @@ module.exports = {
 
     this.addTaskCandidate(
       tasks,
-      this.getLabUnloadTask(reactors, labPlan.product, hubOut),
+      this.getLabUnloadTask(reactors, labPlan.product, hubOut, labPlan),
     );
     this.addTaskCandidate(
       tasks,
@@ -569,7 +813,7 @@ module.exports = {
 
     if (!labPlan.product) return null;
 
-    var unloadTask = this.getLabUnloadTask(reactors, labPlan.product, hubOut);
+    var unloadTask = this.getLabUnloadTask(reactors, labPlan.product, hubOut, labPlan);
     if (unloadTask) return unloadTask;
 
     var fillTask = this.getLabFillTask(inputA, labPlan.reagentA, plan.storage, plan.terminal);
@@ -607,8 +851,10 @@ module.exports = {
     return null;
   },
 
-  getLabUnloadTask(reactors, product, delivery) {
-    var unloadAt = this.getLabOutputUnloadAt();
+  getLabUnloadTask(reactors, product, delivery, labPlan) {
+    var unloadAt = labPlan && labPlan.outputUnloadAt
+      ? labPlan.outputUnloadAt
+      : this.getLabOutputUnloadAt();
     var reactionAmount = this.getLabReactionAmount();
 
     for (var i = 0; i < reactors.length; i++) {
@@ -926,6 +1172,9 @@ module.exports = {
     return {
       labStatus: plan.lab.status,
       labProduct: plan.lab.product || null,
+      labGoal: plan.lab.goal || null,
+      labNeed: plan.lab.need || 0,
+      labReason: plan.lab.reason || null,
       factoryStatus: plan.factoryPlan.status,
       factoryProduct: plan.factoryPlan.product || null,
       powerSpawnStatus: plan.powerSpawnPlan.status,
@@ -1178,6 +1427,44 @@ module.exports = {
       : 250;
   },
 
+  getLabTargetMetUnloadAt() {
+    return config.ADVANCED && config.ADVANCED.LABS
+      ? config.ADVANCED.LABS.TARGET_MET_UNLOAD_AT || this.getLabReactionAmount()
+      : this.getLabReactionAmount();
+  },
+
+  getLabMinProductBatch() {
+    return config.ADVANCED && config.ADVANCED.LABS
+      ? config.ADVANCED.LABS.MIN_PRODUCT_BATCH || 250
+      : 250;
+  },
+
+  getLabReplanInterval() {
+    return config.ADVANCED && config.ADVANCED.LABS
+      ? config.ADVANCED.LABS.REPLAN_INTERVAL || 5
+      : 5;
+  },
+
+  getTightLabReplanMultiplier() {
+    return config.ADVANCED && config.ADVANCED.LABS
+      ? config.ADVANCED.LABS.TIGHT_REPLAN_MULTIPLIER || 3
+      : 3;
+  },
+
+  getAllowTightLabReplan() {
+    return !(
+      config.ADVANCED &&
+      config.ADVANCED.LABS &&
+      config.ADVANCED.LABS.ALLOW_TIGHT_MODE_REPLAN === false
+    );
+  },
+
+  getBoostTargets() {
+    return config.ADVANCED && config.ADVANCED.LABS && config.ADVANCED.LABS.BOOST_TARGETS
+      ? config.ADVANCED.LABS.BOOST_TARGETS
+      : null;
+  },
+
   getFactoryMinStorageEnergy() {
     return config.ADVANCED && config.ADVANCED.FACTORY
       ? config.ADVANCED.FACTORY.MIN_STORAGE_ENERGY || 50000
@@ -1258,6 +1545,9 @@ module.exports = {
     return {
       labStatus: "inactive",
       labProduct: null,
+      labGoal: null,
+      labNeed: 0,
+      labReason: null,
       factoryStatus: "inactive",
       factoryProduct: null,
       powerSpawnStatus: "inactive",

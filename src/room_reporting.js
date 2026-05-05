@@ -1074,6 +1074,7 @@ module.exports = {
     const advancedLines = [
       `[OPS][${room.name}][ADVANCED]`,
       `Labs ${String(advanced.labStatus || "inactive")} ${advanced.labProduct || ""}`.trim(),
+      `LabGoal ${advanced.labGoal || "none"} need ${advanced.labNeed || 0} ${advanced.labReason || ""}`.trim(),
       `Factory ${String(advanced.factoryStatus || "inactive")} ${advanced.factoryProduct || ""}`.trim(),
       `PowerSpawn ${String(advanced.powerSpawnStatus || "inactive")} | Nuker ${String(advanced.nukerStatus || "inactive")}`,
     ];
