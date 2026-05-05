@@ -1063,6 +1063,8 @@ module.exports = {
     var hasStorage = !!(state && state.infrastructure && state.infrastructure.hasStorage);
     var bankingReserve = reservePolicy.shouldBankStorageEnergy(room, state);
     var earlyGrowthRoom = this.isEarlyGrowthRoom(room);
+    var minWorkers = 0;
+    var targetWorkCap = 12;
 
     if (state.phase === "foundation") {
       targetWork = Math.max(4, (state.sources ? state.sources.length : 1) * 2);
@@ -1083,6 +1085,15 @@ module.exports = {
       }
     }
 
+    if (sites > 0) {
+      targetWork += Math.min(8, sites * 2);
+      minWorkers = Math.min(
+        this.getConstructionWorkerMax(),
+        Math.max(this.getConstructionWorkerMin(), Math.ceil(sites / 2)),
+      );
+      targetWorkCap = 20;
+    }
+
     if (
       state.buildStatus &&
       !state.buildStatus.developmentComplete &&
@@ -1099,7 +1110,24 @@ module.exports = {
       return 0;
     }
 
-    return Math.ceil(Math.min(12, targetWork) / workPerCreep);
+    return Math.max(
+      minWorkers,
+      Math.ceil(Math.min(targetWorkCap, targetWork) / workPerCreep),
+    );
+  },
+
+  getConstructionWorkerMin() {
+    return config.CREEPS &&
+      typeof config.CREEPS.constructionWorkerMin === "number"
+      ? Math.max(0, config.CREEPS.constructionWorkerMin)
+      : 2;
+  },
+
+  getConstructionWorkerMax() {
+    return config.CREEPS &&
+      typeof config.CREEPS.constructionWorkerMax === "number"
+      ? Math.max(1, config.CREEPS.constructionWorkerMax)
+      : 5;
   },
 
   getDesiredUpgraders(room, state) {

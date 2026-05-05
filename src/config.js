@@ -46,6 +46,8 @@ module.exports = {
     minersPerSource: 1,
     mineralMinersPerRoom: 1,
     spawnEnergyFallbackTicks: 10,
+    constructionWorkerMin: 2,
+    constructionWorkerMax: 5,
 
     // Developer note:
     // Optional per-source overrides.
@@ -449,6 +451,7 @@ module.exports = {
     // Body planning is role-specific and uses room energy capacity plus
     // infrastructure state instead of a single shared tier ladder.
     workerMaxWork: 8,
+    workerConstructionMaxWork: 4,
     minerMaxWork: 5,
     mineralMinerMaxWork: 5,
     remoteMinerMaxWork: 5,

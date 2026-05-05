@@ -2020,6 +2020,84 @@ function runWorkerDroppedEnergyPickupScenario() {
   );
 }
 
+function runWorkerClosestEnergyBufferScenario() {
+  const room = buildRoomScenario("VAL_WORKER_CLOSEST_BUFFER", {
+    tick: 287,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    creeps: [
+      { name: "workerNearSource", role: "worker", x: 17, y: 25 },
+    ],
+  });
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 10000;
+
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const worker = Game.creeps.workerNearSource;
+  const target = roleWorker.getWithdrawalTarget(worker, 1);
+
+  assert(
+    target && target.structureType === STRUCTURE_CONTAINER && target.pos.x === 16 && target.pos.y === 25,
+    `expected worker to choose nearest source container over farther storage, got ${target ? `${target.structureType}@${target.pos.x},${target.pos.y}` : "none"}`,
+  );
+}
+
+function runWorkerReserveClosestSkipsStorageScenario() {
+  const room = buildRoomScenario("VAL_WORKER_RESERVE_CLOSEST_SKIP", {
+    tick: 288,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: false,
+    creeps: [
+      { name: "workerReserveNearStorage", role: "worker", x: 24, y: 28 },
+    ],
+  });
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy = 1000;
+
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const worker = Game.creeps.workerReserveNearStorage;
+  const target = roleWorker.getWithdrawalTarget(worker, 1);
+
+  assert(
+    target && target.id !== room.storage.id,
+    `expected reserve-mode closest scan to skip protected storage, got ${target ? target.id : "none"}`,
+  );
+}
+
+function runWorkerEnergyHarvestFallbackScenario() {
+  const room = buildRoomScenario("VAL_WORKER_HARVEST_FALLBACK", {
+    tick: 289,
+    controllerLevel: 2,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: false,
+    supportContainers: false,
+    creeps: [
+      { name: "workerHarvestFallback", role: "worker", x: 25, y: 25 },
+    ],
+  });
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const worker = Game.creeps.workerHarvestFallback;
+  const target = roleWorker.getWithdrawalTarget(worker, 1);
+
+  assert(
+    target && target.energy !== undefined,
+    `expected worker to fall back to direct source harvest, got ${target ? target.id : "none"}`,
+  );
+}
+
 function runJrWorkerDroppedEnergyPickupScenario() {
   const room = buildRoomScenario("VAL_JRWORKER_DROPPED_ENERGY", {
     tick: 286,
@@ -3203,6 +3281,85 @@ function runWorkerReserveBankingScenario() {
   assert(
     withdrawTarget && withdrawTarget.id !== room.storage.id,
     "expected worker reserve mode to avoid withdrawing from storage while banking",
+  );
+}
+
+function runWorkerConstructionBodyScenario() {
+  const idleRoom = buildRoomScenario("VAL_WORKER_BODY_IDLE", {
+    tick: 562,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+  satisfyDevelopmentRequirements(idleRoom);
+  const idleState = roomState.collect(idleRoom);
+  const idlePlan = bodies.plan("worker", idleRoom, { role: "worker" }, idleState);
+
+  const buildRoom = buildRoomScenario("VAL_WORKER_BODY_BUILD", {
+    tick: 563,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    extraSites: [
+      { x: 24, y: 26, type: STRUCTURE_EXTENSION },
+    ],
+  });
+  satisfyDevelopmentRequirements(buildRoom);
+  const buildState = roomState.collect(buildRoom);
+  const buildPlan = bodies.plan("worker", buildRoom, { role: "worker" }, buildState);
+
+  assert(
+    buildPlan.workParts < idlePlan.workParts,
+    `expected construction worker body to be smaller than idle body, got build ${buildPlan.workParts} idle ${idlePlan.workParts}`,
+  );
+  assert(
+    buildPlan.workParts <= config.BODIES.workerConstructionMaxWork,
+    `expected construction worker body to respect cap ${config.BODIES.workerConstructionMaxWork}, got ${buildPlan.workParts}`,
+  );
+}
+
+function runWorkerConstructionDemandScenario() {
+  const idleRoom = buildRoomScenario("VAL_WORKER_DEMAND_IDLE", {
+    tick: 564,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+  satisfyDevelopmentRequirements(idleRoom);
+  const idleState = roomState.collect(idleRoom);
+  const idleDesired = spawnManager.getDesiredWorkers(idleRoom, idleState);
+
+  const buildRoom = buildRoomScenario("VAL_WORKER_DEMAND_BUILD", {
+    tick: 565,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    extraSites: [
+      { x: 24, y: 26, type: STRUCTURE_EXTENSION },
+      { x: 24, y: 27, type: STRUCTURE_EXTENSION },
+      { x: 24, y: 28, type: STRUCTURE_EXTENSION },
+    ],
+  });
+  satisfyDevelopmentRequirements(buildRoom);
+  const buildState = roomState.collect(buildRoom);
+  const buildDesired = spawnManager.getDesiredWorkers(buildRoom, buildState);
+
+  assert(idleDesired <= 1, `expected idle mature room to avoid worker overspawn, got ${idleDesired}`);
+  assert(
+    buildDesired > idleDesired && buildDesired >= config.CREEPS.constructionWorkerMin,
+    `expected construction room to request more workers, got build ${buildDesired} idle ${idleDesired}`,
   );
 }
 
@@ -4642,8 +4799,8 @@ function runSpawnEnergyFallbackScenario() {
   let queue = Memory.rooms[room.name].spawnQueue || [];
   assert(queue.length > 0 && queue[0].role === "worker", `expected worker queue, got ${JSON.stringify(queue)}`);
   assert(queue[0].waitAge === 0, `expected fresh request age 0, got ${queue[0].waitAge}`);
-  assert(queue[0].bodyCost === 1100, `expected initial capacity worker cost 1100, got ${queue[0].bodyCost}`);
-  assert(currentRuntime.spawnEvents.length === 0, "expected unaffordable capacity worker to wait before fallback window");
+  assert(queue[0].bodyCost === 600, `expected construction worker cost 600, got ${queue[0].bodyCost}`);
+  assert(currentRuntime.spawnEvents.length === 1, "expected smaller construction worker to spawn immediately");
 
   Game.time = 810;
   room.energyAvailable = 1050;
@@ -4651,7 +4808,7 @@ function runSpawnEnergyFallbackScenario() {
   spawnManager.run(room, state);
 
   queue = Memory.rooms[room.name].spawnQueue || [];
-  assert(queue.length > 0 && queue[0].energyFallback, `expected aged worker queue to use energy fallback, got ${JSON.stringify(queue[0])}`);
+  assert(queue.length > 0 && queue[0].role === "worker", `expected worker queue after immediate construction spawn, got ${JSON.stringify(queue[0])}`);
   assert(queue[0].waitAge === 10, `expected request age 10, got ${queue[0].waitAge}`);
   assert(queue[0].bodyCost <= 1050, `expected fallback worker to fit current energy, got ${queue[0].bodyCost}`);
   assert(currentRuntime.spawnEvents.length === 1, `expected fallback worker to spawn, got ${currentRuntime.spawnEvents.length}`);
@@ -6204,6 +6361,35 @@ function runEmpireSupportTravelScenario() {
     return action.creep === "supportUpgrader" && action.action === "moveTo";
   });
   assert(upgraderMove && upgraderMove.targetRoom === rooms.target.name, `expected support upgrader to travel to target room, got ${JSON.stringify(currentRuntime.creepActions)}`);
+}
+
+function runEmpireSupportLocalConstructionPriorityScenario() {
+  const rooms = buildEmpireSupportRooms({});
+  rooms.donor.createConstructionSite(23, 26, STRUCTURE_EXTENSION);
+  rooms.donor.createConstructionSite(23, 27, STRUCTURE_EXTENSION);
+  rooms.donor.createConstructionSite(23, 28, STRUCTURE_EXTENSION);
+  rooms.donor.createConstructionSite(23, 29, STRUCTURE_EXTENSION);
+  const donorState = roomState.collect(rooms.donor);
+  const targetState = roomState.collect(rooms.target);
+  empireManager.record([rooms.donor, rooms.target], {
+    [rooms.donor.name]: donorState,
+    [rooms.target.name]: targetState,
+  });
+
+  const requests = spawnManager.getSpawnRequests(rooms.donor, donorState);
+  const localWorkerIndex = requests.findIndex(function (request) {
+    return request.role === "worker" && request.operation !== "empire_support";
+  });
+  const supportWorkerIndex = requests.findIndex(function (request) {
+    return request.role === "worker" && request.operation === "empire_support";
+  });
+
+  assert(localWorkerIndex !== -1, `expected donor local construction worker request, got ${JSON.stringify(requests)}`);
+  assert(supportWorkerIndex !== -1, `expected donor support worker request, got ${JSON.stringify(requests)}`);
+  assert(
+    localWorkerIndex < supportWorkerIndex,
+    `expected local construction worker to outrank support worker, got local ${localWorkerIndex} support ${supportWorkerIndex} requests ${JSON.stringify(requests)}`,
+  );
 }
 
 function runEmpireAwarenessScenario() {
@@ -8064,6 +8250,9 @@ function main() {
     ["bootstrap_spawn_cap", runBootstrapSpawnCapScenario],
     ["foundation_worker_harvest_spread", runFoundationWorkerHarvestSpreadScenario],
     ["worker_dropped_energy_pickup", runWorkerDroppedEnergyPickupScenario],
+    ["worker_closest_energy_buffer", runWorkerClosestEnergyBufferScenario],
+    ["worker_reserve_closest_skip_storage", runWorkerReserveClosestSkipsStorageScenario],
+    ["worker_energy_harvest_fallback", runWorkerEnergyHarvestFallbackScenario],
     ["jrworker_dropped_energy_pickup", runJrWorkerDroppedEnergyPickupScenario],
     ["storage_cap", runStorageCapScenario],
     ["development", runDevelopmentScenario],
@@ -8088,6 +8277,8 @@ function main() {
     ["mineral_ops", runMineralOpsScenario],
     ["upgrader_reserve", runUpgraderReserveScenario],
     ["worker_reserve_banking", runWorkerReserveBankingScenario],
+    ["worker_construction_body", runWorkerConstructionBodyScenario],
+    ["worker_construction_demand", runWorkerConstructionDemandScenario],
     ["worker_spawn_site_cache", runWorkerSpawnSiteCacheScenario],
     ["worker_extension_fallback", runWorkerExtensionFallbackScenario],
     ["worker_extension_with_hauler", runWorkerExtensionFallbackWithHaulerScenario],
@@ -8142,6 +8333,7 @@ function main() {
     ["empire_support_upgrader", runEmpireSupportUpgraderScenario],
     ["empire_support_donor_blocked", runEmpireSupportDonorBlockedScenario],
     ["empire_support_travel", runEmpireSupportTravelScenario],
+    ["empire_support_local_construction_priority", runEmpireSupportLocalConstructionPriorityScenario],
     ["empire_awareness", runEmpireAwarenessScenario],
     ["expansion_claim_request", runExpansionClaimRequestScenario],
     ["expansion_full_construction", runExpansionFullConstructionScenario],

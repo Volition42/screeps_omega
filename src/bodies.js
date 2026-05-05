@@ -206,7 +206,13 @@ module.exports = {
   },
 
   planWorkerBody(energyCapacity, infrastructure) {
-    const maxWork = this.getConfiguredLimit("workerMaxWork", 8);
+    const hasConstruction =
+      infrastructure && typeof infrastructure.constructionSites === "number"
+        ? infrastructure.constructionSites > 0
+        : false;
+    const maxWork = hasConstruction
+      ? this.getConfiguredLimit("workerConstructionMaxWork", 4)
+      : this.getConfiguredLimit("workerMaxWork", 8);
     const hasStorage = infrastructure.hasStorage;
     const economyStage = infrastructure.economyStage;
     const counts = {
@@ -233,7 +239,7 @@ module.exports = {
 
     return this.finalizePlan(
       "worker",
-      hasStorage ? economyStage : "construction_heavy",
+      hasConstruction ? "construction_swarm" : hasStorage ? economyStage : "construction_heavy",
       this.buildEconomicBody(counts),
     );
   },
@@ -686,7 +692,9 @@ module.exports = {
 
   getInfrastructure(room, state) {
     if (state && state.infrastructure) {
-      return state.infrastructure;
+      return Object.assign({}, state.infrastructure, {
+        constructionSites: state.sites ? state.sites.length : 0,
+      });
     }
 
     return {
@@ -696,6 +704,7 @@ module.exports = {
       hasControllerLink: false,
       hasStorageLink: false,
       economyStage: state && state.phase ? state.phase : "bootstrap",
+      constructionSites: state && state.sites ? state.sites.length : 0,
     };
   },
 

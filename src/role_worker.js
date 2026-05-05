@@ -65,7 +65,7 @@ module.exports = {
     }
 
     if (!creep.memory.working) {
-      let target = this.getWithdrawalTarget(creep);
+      let target = this.getWithdrawalTarget(creep, thinkInterval);
 
       if (!target) return;
 
@@ -141,14 +141,22 @@ module.exports = {
     return true;
   },
 
-  getWithdrawalTarget(creep) {
+  getWithdrawalTarget(creep, thinkInterval) {
     const state = this.getRuntimeState(creep.room);
     let target = this.getCachedWithdrawalTarget(creep);
+    const hasConstruction = !!(state && state.sites && state.sites.length > 0);
+
+    if (target && hasConstruction && this.shouldThink(creep, 1, "workerWithdraw")) {
+      delete creep.memory.withdrawTargetId;
+      target = null;
+    }
 
     if (!target) {
-      target = reservePolicy.shouldBankStorageEnergy(creep.room, state)
+      const bankingReserve = reservePolicy.shouldBankStorageEnergy(creep.room, state);
+      target = this.getClosestEnergyTarget(creep, state, bankingReserve) ||
+        (bankingReserve
         ? this.getReserveWithdrawalTarget(creep, state)
-        : utils.getGeneralEnergyWithdrawalTarget(creep.room, creep);
+        : utils.getGeneralEnergyWithdrawalTarget(creep.room, creep));
 
       if (target && target.energy !== undefined && target.pos) {
         target = utils.getBalancedHarvestSource(creep) || target;
@@ -162,6 +170,66 @@ module.exports = {
     }
 
     return target;
+  },
+
+  getClosestEnergyTarget(creep, state, bankingReserve) {
+    const candidates = [];
+
+    const droppedEnergy =
+      state && state.droppedEnergy
+        ? state.droppedEnergy
+        : creep.room.find(FIND_DROPPED_RESOURCES, {
+            filter: function (resource) {
+              return resource.resourceType === RESOURCE_ENERGY;
+            },
+          });
+    for (let i = 0; i < droppedEnergy.length; i++) {
+      const resource = droppedEnergy[i];
+      if (
+        resource &&
+        resource.resourceType === RESOURCE_ENERGY &&
+        (resource.amount || 0) > 0 &&
+        resource.pos &&
+        resource.pos.roomName === creep.room.name
+      ) {
+        candidates.push(resource);
+      }
+    }
+
+    const storage = creep.room.storage || null;
+    if (
+      storage &&
+      !bankingReserve &&
+      (storage.store[RESOURCE_ENERGY] || 0) > 0
+    ) {
+      candidates.push(storage);
+    }
+
+    const containers = [];
+    if (state && state.hubContainer) containers.push(state.hubContainer);
+    if (state && state.sourceContainers) {
+      for (let sourceIndex = 0; sourceIndex < state.sourceContainers.length; sourceIndex++) {
+        containers.push(state.sourceContainers[sourceIndex]);
+      }
+    }
+
+    for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+      const container = containers[containerIndex];
+      if (
+        container &&
+        container.store &&
+        (container.store[RESOURCE_ENERGY] || 0) > 0 &&
+        container.pos &&
+        container.pos.roomName === creep.room.name
+      ) {
+        candidates.push(container);
+      }
+    }
+
+    if (candidates.length <= 0) return null;
+
+    return creep.pos.findClosestByPath(candidates) ||
+      creep.pos.findClosestByRange(candidates);
   },
 
   getWorkTarget(creep, thinkInterval) {
