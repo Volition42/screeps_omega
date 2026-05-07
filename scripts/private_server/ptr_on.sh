@@ -13,6 +13,8 @@ SERVER_CHECK_URL="http://127.0.0.1:${SCREEPS_SERVER_PORT}"
 CLIENT_CHECK_URL="http://127.0.0.1:${SCREEPS_BROWSER_PORT}"
 SERVER_SESSION="screeps-ptr-server"
 CLIENT_SESSION="screeps-ptr-client"
+SERVER_PID="${LOG_DIR}/server.pid"
+CLIENT_PID="${LOG_DIR}/client.pid"
 
 mkdir -p "${LOG_DIR}"
 : > "${SERVER_LOG}"
@@ -22,11 +24,19 @@ bash "${SCRIPT_DIR}/ptr_off.sh" >/dev/null 2>&1 || true
 bash "${SCRIPT_DIR}/stop_browser_client.sh" >/dev/null 2>&1 || true
 bash "${SCRIPT_DIR}/stop_dev_server.sh" >/dev/null 2>&1 || true
 
-tmux new-session -d -s "${SERVER_SESSION}" \
-  "bash '${SCRIPT_DIR}/start_dev_server.sh' >>'${SERVER_LOG}' 2>&1"
-sleep 2
-tmux new-session -d -s "${CLIENT_SESSION}" \
-  "bash '${SCRIPT_DIR}/start_browser_client.sh' >>'${CLIENT_LOG}' 2>&1"
+if command -v tmux >/dev/null 2>&1; then
+  tmux new-session -d -s "${SERVER_SESSION}" \
+    "bash '${SCRIPT_DIR}/start_dev_server.sh' >>'${SERVER_LOG}' 2>&1"
+  sleep 2
+  tmux new-session -d -s "${CLIENT_SESSION}" \
+    "bash '${SCRIPT_DIR}/start_browser_client.sh' >>'${CLIENT_LOG}' 2>&1"
+else
+  nohup bash "${SCRIPT_DIR}/start_dev_server.sh" >>"${SERVER_LOG}" 2>&1 &
+  echo "$!" > "${SERVER_PID}"
+  sleep 2
+  nohup bash "${SCRIPT_DIR}/start_browser_client.sh" >>"${CLIENT_LOG}" 2>&1 &
+  echo "$!" > "${CLIENT_PID}"
+fi
 
 echo "Starting Screeps PTR services..."
 echo "Server log: ${SERVER_LOG}"

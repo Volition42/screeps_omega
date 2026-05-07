@@ -475,6 +475,9 @@ module.exports = {
 
     const room = Game.rooms[plan.targetRoom] || null;
     const intel = plan.intel || {};
+    if (intel.updatedAt === Game.time) {
+      return intel;
+    }
     intel.updatedAt = Game.time;
     intel.visible = !!room;
 

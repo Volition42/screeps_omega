@@ -24,6 +24,7 @@ const utils = require("utils");
 const constructionStatus = require("construction_status");
 const roadmap = require("construction_roadmap");
 const statsManager = require("stats_manager");
+const scheduler = require("scheduler");
 const stamps = require("stamp_library");
 
 module.exports = {
@@ -43,6 +44,13 @@ module.exports = {
     var planInterval = Math.max(1, baseInterval * intervalMultiplier);
 
     if (Game.time - mem.lastPlan < planInterval) return;
+    var scheduleKey = "room." + room.name + ".construction";
+    var scheduleDecision = scheduler.canRunOptional(scheduleKey, planInterval);
+    if (!scheduleDecision.ok) {
+      scheduler.recordSkip(scheduleKey, scheduleDecision.reason);
+      return;
+    }
+    var scheduleCpu = Game.cpu ? Game.cpu.getUsed() : 0;
     mem.lastPlan = Game.time;
 
     this.updateOperationalUnlocks(room, state, mem);
@@ -155,6 +163,7 @@ module.exports = {
       }
     }
 
+    scheduler.markOptionalRun(scheduleKey, scheduleCpu);
   },
 
   getEarlyPlanInterval(room, state) {
@@ -377,6 +386,15 @@ module.exports = {
       return;
     }
 
+    var scheduleKey =
+      "room." + context.room.name + ".construction.futurePlan";
+    var scheduleDecision = scheduler.canRunOptional(scheduleKey, interval);
+    if (!scheduleDecision.ok) {
+      scheduler.recordSkip(scheduleKey, scheduleDecision.reason);
+      return;
+    }
+    var scheduleCpu = Game.cpu ? Game.cpu.getUsed() : 0;
+
     memory.lastAdvancedPlan = Game.time;
     memory.futurePlan = Object.assign(
       {},
@@ -384,6 +402,7 @@ module.exports = {
       this.buildFuturePlan(context, plan),
     );
     memory.futurePlan.signature = signature;
+    scheduler.markOptionalRun(scheduleKey, scheduleCpu);
   },
 
   getFuturePlanSignature(context, plan) {

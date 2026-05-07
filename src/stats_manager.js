@@ -96,6 +96,10 @@ module.exports = {
       creepCount: creepCount,
       roomCount: roomCount,
       pressure: runtime ? runtime.pressure : "normal",
+      scheduler:
+        Memory.stats && Memory.stats.scheduler
+          ? Memory.stats.scheduler
+          : null,
     };
   },
 

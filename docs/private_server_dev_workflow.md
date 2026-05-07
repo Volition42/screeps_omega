@@ -16,8 +16,8 @@ As of April 2, 2026:
 - PTR private server root: `/home/vadmin/screeps_private_server_ptr`
 - Optional alternate local server root: `/home/vadmin/screeps_private_server`
 - Browser client root: `/home/vadmin/screeps_browser_client`
-- PTR Node binary path: `/usr/bin`
-- Browser client Node binary path: `/home/vadmin/.local/opt/node24/bin`
+- PTR Node binary path: auto-detected Node 24 path, preferring `/home/vadmin/.local/opt/node24/bin` or Homebrew `node@24`.
+- Browser client Node binary path: auto-detected Node 24 path, preferring `/home/vadmin/.local/opt/node24/bin` or Homebrew `node@24`.
 - PTR server URL: `http://127.0.0.1:21035`
 - PTR CLI port: `21036`
 - Local dev auth token: `screeps-omega-dev-token`
@@ -35,13 +35,17 @@ The private server stays outside the repo on purpose. Only the helper scripts an
 - The local no-auth patch now also bridges `/api/auth/steam-ticket`, so the Screeps client login flow can complete without live Steam auth against this private server.
 - Browser access is provided by a separate `screepers-steamless-client` install on `http://127.0.0.1:8080/`, not by the private server itself.
 - The private server also loads `node_modules/screepsmod-auth`, which provides `/api/auth/signin` and password auth for the browser client.
-- The browser helper now defaults both the public browser URL and the public server URL to `127.0.0.1`. Keep this unless intentionally testing through a remote/Tailscale route; stale public routes can break room subscriptions and make the room view show `WAITING FOR DATA / Too many tabs opened`.
+- The browser helper now defaults both the public browser URL and the public server URL to a reachable host address. It prefers Tailscale when available, then the machine's primary non-loopback IP, then `127.0.0.1` only as a last resort. Override `SCREEPS_PUBLIC_HOSTNAME`, `SCREEPS_SERVER_PUBLIC_HOSTNAME`, or `SCREEPS_BROWSER_PUBLIC_HOSTNAME` when you need a specific remote route.
 - All repo helper scripts source `scripts/private_server/load_server_profile.sh`. The default `ptr` profile now uses Node 24. Set `SCREEPS_SERVER_PROFILE=feat-node24` only when you intentionally want the alternate local install.
 
 ## Repo Helpers
 
 - `scripts/private_server/start_dev_server.sh`
   Starts the external private server with Node 24 and local dev auth enabled.
+- `scripts/private_server/ptr_on.sh`
+  Starts the private server and browser client together. It uses detached `tmux` sessions when `tmux` is installed, otherwise it falls back to `nohup` background processes with PID files under `~/.cache/screeps_omega/private_server/`.
+- `scripts/private_server/ptr_off.sh`
+  Stops services started by `ptr_on.sh`, including both `tmux` sessions and no-`tmux` fallback PID files.
 - `scripts/private_server/stop_dev_server.sh`
   Stops the private-server process tree.
 - `scripts/private_server/check_dev_server.sh`
@@ -83,25 +87,33 @@ The private server stays outside the repo on purpose. Only the helper scripts an
 
 ## Standard Dev Loop
 
-1. Start the server:
+1. Start the server and browser client together:
+
+```bash
+scripts/private_server/ptr_on.sh
+```
+
+`ptr_on.sh` supports both `tmux` and no-`tmux` machines. Without `tmux`, it starts the services through `nohup` and records PID files next to the logs.
+
+2. Or start the server manually:
 
 ```bash
 scripts/private_server/start_dev_server.sh
 ```
 
-2. Check server health:
+3. Check server health:
 
 ```bash
 scripts/private_server/check_dev_server.sh
 ```
 
-3. Upload current `src/`:
+4. Upload current `src/`:
 
 ```bash
 scripts/private_server/upload_src.sh
 ```
 
-4. Validate behavior against the private server before pushing online changes.
+5. Validate behavior against the private server before pushing online changes.
 
 ## Browser Use
 

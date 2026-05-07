@@ -119,6 +119,8 @@ module.exports = {
       INVADER_CORE_HITS_STEP: 100000,
       THREAT_MEMORY_TTL: 25,
       RECOVERY_COOLDOWN_TICKS: 15,
+      RECOVERY_MAX_TICKS: 1500,
+      LIGHT_RECOVERY_MAX_TICKS: 300,
       TOWER_BREAKTHROUGH_DAMAGE: 50,
       TOWER_SCORE_PER_ACTIVE_TOWER: 6,
       EDGE_BUFFER: 2,
@@ -1092,6 +1094,9 @@ module.exports = {
       reason: recovery.reason || null,
       startedAt: recovery.startedAt || null,
       exitWhenReady: !!recovery.exitWhenReady,
+      mode: recovery.mode || null,
+      lastThreatSeen:
+        typeof recovery.lastThreatSeen === "number" ? recovery.lastThreatSeen : null,
     };
   },
 
@@ -1105,6 +1110,7 @@ module.exports = {
         startedAt: null,
         exitWhenReady: false,
         lastThreatSeen: null,
+        mode: null,
       };
     }
 
@@ -1122,6 +1128,12 @@ module.exports = {
       recovery.lastThreatSeen = Game.time;
       if (severeThreat || homeThreat.recoveryEligible) {
         recovery.eligible = true;
+        recovery.mode = "full";
+      } else {
+        recovery.eligible = true;
+        if (recovery.mode !== "full") {
+          recovery.mode = "light";
+        }
       }
       recovery.active = false;
       recovery.reason = null;
@@ -1130,7 +1142,7 @@ module.exports = {
     } else if (recovery.eligible) {
       if (!recovery.active) {
         recovery.active = true;
-        recovery.reason = "post_attack";
+        recovery.reason = recovery.mode === "light" ? "post_attack_light" : "post_attack";
         recovery.startedAt = Game.time;
         recovery.exitWhenReady = true;
       }
@@ -1141,15 +1153,26 @@ module.exports = {
         recovery.reason = null;
         recovery.startedAt = null;
         recovery.exitWhenReady = false;
+        recovery.mode = null;
       }
     }
+
+    var exitStatus = this.getRecoveryExitStatus(room, state, recovery, reaction);
+    var age =
+      recovery.active && typeof recovery.startedAt === "number"
+        ? Math.max(0, Game.time - recovery.startedAt)
+        : 0;
 
     return {
       active: !!recovery.active,
       reason: recovery.reason || null,
       startedAt: recovery.startedAt || null,
       exitWhenReady: !!recovery.exitWhenReady,
-      blockers: this.getRecoveryExitStatus(room, state, recovery, reaction).blockers,
+      mode: recovery.mode || null,
+      age: age,
+      lastThreatSeen:
+        typeof recovery.lastThreatSeen === "number" ? recovery.lastThreatSeen : null,
+      blockers: exitStatus.blockers,
     };
   },
 
@@ -1159,6 +1182,7 @@ module.exports = {
 
   getRecoveryExitStatus(room, state, recovery, reaction) {
     var blockers = [];
+    var mode = recovery && recovery.mode === "light" ? "light" : "full";
     var cooldown =
       reaction && typeof reaction.RECOVERY_COOLDOWN_TICKS === "number"
         ? reaction.RECOVERY_COOLDOWN_TICKS
@@ -1169,7 +1193,8 @@ module.exports = {
     if (elapsed < cooldown) {
       blockers.push("cooldown " + elapsed + "/" + cooldown);
     }
-    if (!this.isRecoveryEnergyReady(room)) {
+    var energyReady = this.isRecoveryEnergyReady(room);
+    if (!energyReady) {
       blockers.push("energy " + room.energyAvailable + "/" + room.energyCapacityAvailable);
     }
 
@@ -1209,14 +1234,51 @@ module.exports = {
       return getStoredEnergy(tower) >= reserveThreshold;
     }).length;
     var reserveNeeded = Math.ceil(towers.length / 2);
-    if (reserveReady < reserveNeeded) {
+    if (mode !== "light" && reserveReady < reserveNeeded) {
       blockers.push("tower reserve " + reserveReady + "/" + reserveNeeded);
+    }
+
+    if (
+      this.isRecoveryFailsafeReady(
+        room,
+        state,
+        recovery,
+        reaction,
+        mode,
+        energyReady,
+        defenseQueue,
+        emergencyReady,
+      )
+    ) {
+      return {
+        ready: true,
+        blockers: [],
+      };
     }
 
     return {
       ready: blockers.length === 0,
       blockers: blockers,
     };
+  },
+
+  isRecoveryFailsafeReady(room, state, recovery, reaction, mode, energyReady, defenseQueue, emergencyReady) {
+    if (!recovery || !recovery.active) return false;
+    if (!energyReady || defenseQueue > 0 || !emergencyReady) return false;
+    if (state && state.hostileCreeps && state.hostileCreeps.length > 0) return false;
+
+    var startedAt = typeof recovery.startedAt === "number" ? recovery.startedAt : Game.time;
+    var age = Game.time - startedAt;
+    var maxAge =
+      mode === "light"
+        ? reaction && typeof reaction.LIGHT_RECOVERY_MAX_TICKS === "number"
+          ? reaction.LIGHT_RECOVERY_MAX_TICKS
+          : 300
+        : reaction && typeof reaction.RECOVERY_MAX_TICKS === "number"
+          ? reaction.RECOVERY_MAX_TICKS
+          : 1500;
+
+    return age >= maxAge;
   },
 
   isRecoveryEnergyReady(room) {

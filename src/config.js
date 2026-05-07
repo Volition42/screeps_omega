@@ -71,6 +71,30 @@ module.exports = {
     },
   },
 
+  MEMORY: {
+    ROOM_REVIEW_ENABLED: true,
+    ROOM_REVIEW_INTERVAL: 500,
+    ROOM_REVIEW_ROOM_COOLDOWN: 5000,
+    ROOM_REVIEW_MAX_ROOMS: 1,
+    ROOM_REVIEW_MIN_BUCKET: 3000,
+  },
+
+  SCHEDULING: {
+    ENABLED: true,
+    OPTIONAL_MIN_BUCKET: 3000,
+    MAX_OPTIONAL_TASKS: {
+      normal: 4,
+      tight: 2,
+      critical: 0,
+    },
+    OPTIONAL_CPU_BUDGET_RATIO: {
+      normal: 0.18,
+      tight: 0.08,
+      critical: 0,
+    },
+    HISTORY_SIZE: 25,
+  },
+
   /*
   Developer Notes:
   Early Growth Controls
@@ -435,6 +459,9 @@ module.exports = {
       INVADER_CORE_LEVEL_SCORE: 2,
       INVADER_CORE_HITS_STEP: 100000,
       THREAT_MEMORY_TTL: 25,
+      RECOVERY_COOLDOWN_TICKS: 15,
+      RECOVERY_MAX_TICKS: 1500,
+      LIGHT_RECOVERY_MAX_TICKS: 300,
       CROSS_ROOM_ENABLED: true,
       MAX_SUPPORT_DISTANCE: 2,
       MAX_SUPPORT_DEFENDERS: 1,

@@ -1543,6 +1543,7 @@ const defenseManager = require("defense_manager");
 const defenseLayout = require("defense_layout");
 const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
+const kernelMemory = require("kernel_memory");
 const roleWorker = require("role_worker");
 const roleJrWorker = require("role_jrworker");
 const roleUpgrader = require("role_upgrader");
@@ -1558,6 +1559,7 @@ const statsManager = require("stats_manager");
 const utils = require("utils");
 const config = require("config");
 const stamps = require("stamp_library");
+const scheduler = require("scheduler");
 
 function getOccupiedKey(x, y) {
   return `${x}:${y}`;
@@ -4657,6 +4659,320 @@ function runDefenseRecoveryScenario() {
   );
 }
 
+function runRecoveryTowerBankingDeadlockScenario() {
+  const room = buildRoomScenario("VAL_RECOVERY_TOWER_BANKING", {
+    tick: 900,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [{ name: "recoveryHauler", role: "hauler", x: 25, y: 24 }],
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 621 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 297 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TOWER, x: 28, y: 24, options: { store: { energy: 100 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: {
+        active: true,
+        eligible: true,
+        reason: "post_attack",
+        mode: "full",
+        startedAt: 880,
+        exitWhenReady: true,
+        lastThreatSeen: 880,
+      },
+    },
+    spawnQueue: [],
+  };
+
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const delivery = logisticsManager.getHaulerDeliveryTarget(
+    room,
+    Game.creeps.recoveryHauler,
+    state,
+  );
+
+  assert(
+    delivery && delivery.structureType === STRUCTURE_TOWER,
+    `expected recovery tower below emergency to beat reserve-banking storage, got ${delivery ? delivery.id : "none"}`,
+  );
+}
+
+function runRecoveryTowerReserveIgnoresBankingScenario() {
+  const room = buildRoomScenario("VAL_RECOVERY_TOWER_RESERVE", {
+    tick: 930,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [{ name: "reserveHauler", role: "hauler", x: 25, y: 24 }],
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 621 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 500 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: {
+        active: true,
+        eligible: true,
+        reason: "post_attack",
+        mode: "full",
+        startedAt: 920,
+        exitWhenReady: true,
+        lastThreatSeen: 920,
+      },
+    },
+    spawnQueue: [],
+  };
+
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const delivery = logisticsManager.getHaulerDeliveryTarget(
+    room,
+    Game.creeps.reserveHauler,
+    state,
+  );
+
+  assert(
+    delivery && delivery.structureType === STRUCTURE_TOWER,
+    `expected recovery tower reserve to ignore storage banking, got ${delivery ? delivery.id : "none"}`,
+  );
+}
+
+function runLightRecoveryScenario() {
+  const room = buildRoomScenario("VAL_LIGHT_RECOVERY", {
+    tick: 1000,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 450 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [
+      {
+        name: "light_intruder",
+        x: 10,
+        y: 10,
+        body: [{ type: MOVE }],
+      },
+    ],
+  });
+
+  let state = roomState.collect(room);
+  assert(!state.defense.homeThreat.recoveryEligible, "expected light threat to avoid full recovery eligibility");
+
+  room._hostileCreeps = [];
+  Game.time = 1001;
+  state = roomState.collect(room);
+  assert(state.defense.recovery.active, "expected light post-attack recovery to start after a light threat clears");
+  assert(
+    state.defense.recovery.reason === "post_attack_light",
+    `expected light recovery reason, got ${state.defense.recovery.reason}`,
+  );
+
+  Game.time = 1016;
+  state = roomState.collect(room);
+  assert(
+    !state.defense.recovery.active,
+    "expected light recovery to clear with emergency tower energy and no reserve fill",
+  );
+}
+
+function runFullRecoveryRequiresReserveScenario() {
+  const room = buildRoomScenario("VAL_FULL_RECOVERY_RESERVE", {
+    tick: 1100,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 450 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: {
+        active: true,
+        eligible: true,
+        reason: "post_attack",
+        mode: "full",
+        startedAt: 1090,
+        exitWhenReady: true,
+        lastThreatSeen: 1090,
+      },
+    },
+    spawnQueue: [],
+  };
+
+  let state = roomState.collect(room);
+  assert(state.defense.recovery.active, "expected full recovery to remain active below tower reserve");
+  assert(
+    state.defense.recovery.blockers.indexOf("tower reserve 0/1") !== -1,
+    `expected tower reserve blocker, got ${state.defense.recovery.blockers.join(",")}`,
+  );
+
+  room._structures.forEach(function (structure) {
+    if (structure.structureType === STRUCTURE_TOWER) {
+      structure.store.energy = 700;
+    }
+  });
+  Game.time = 1106;
+  state = roomState.collect(room);
+  assert(!state.defense.recovery.active, "expected full recovery to clear once tower reserve is met");
+}
+
+function runRecoveryFailsafeScenario() {
+  const room = buildRoomScenario("VAL_RECOVERY_FAILSAFE", {
+    tick: 3000,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 621 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 450 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: {
+        active: true,
+        eligible: true,
+        reason: "post_attack",
+        mode: "full",
+        startedAt: 1000,
+        exitWhenReady: true,
+        lastThreatSeen: 1000,
+      },
+    },
+    spawnQueue: [],
+  };
+
+  const state = roomState.collect(room);
+  assert(
+    !state.defense.recovery.active,
+    "expected aged full recovery to clear when safe and tower emergency is restored",
+  );
+}
+
+function runRecoveryFailsafeBlockedScenario() {
+  const room = buildRoomScenario("VAL_RECOVERY_FAILSAFE_BLOCKED", {
+    tick: 3000,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 621 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 399 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: {
+        active: true,
+        eligible: true,
+        reason: "post_attack",
+        mode: "full",
+        startedAt: 1000,
+        exitWhenReady: true,
+        lastThreatSeen: 1000,
+      },
+    },
+    spawnQueue: [],
+  };
+
+  const state = roomState.collect(room);
+  assert(
+    state.defense.recovery.active,
+    "expected aged recovery to remain active below tower emergency threshold",
+  );
+}
+
+function runRecoveryReportingContextScenario() {
+  const room = buildRoomScenario("VAL_RECOVERY_REPORTING", {
+    tick: 646130,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 621 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 297 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: {
+        active: true,
+        eligible: true,
+        reason: "post_attack",
+        mode: "full",
+        startedAt: 644266,
+        exitWhenReady: true,
+        lastThreatSeen: 644265,
+      },
+    },
+    spawnQueue: [],
+  };
+
+  const state = roomState.collect(room);
+  const report = roomReporting.build(room, state, { updateProgress: false });
+  const recoveryLine = report.sections.defense.find(function (line) {
+    return line.indexOf("Recovery") === 0;
+  });
+
+  assert(
+    recoveryLine &&
+      recoveryLine.indexOf("post_attack") !== -1 &&
+      recoveryLine.indexOf("age 1864t") !== -1 &&
+      recoveryLine.indexOf("last 644265") !== -1,
+    `expected recovery line to include reason, age, and last threat, got ${recoveryLine}`,
+  );
+}
+
 function runRecoveryBuildIntentScenario() {
   const room = buildRoomScenario("W43N6", {
     tick: 700,
@@ -6477,6 +6793,222 @@ function runEmpireAwarenessScenario() {
   );
 }
 
+function runRoomReviewSchedulerScenario() {
+  const roomA = buildRoomScenario("VAL_REVIEW_A", {
+    tick: 1000,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 500 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+  roomA.controller.my = true;
+  const roomB = new FakeRoom("VAL_REVIEW_B", new FakeTerrain());
+  roomB.setController(createController(20, 20, { roomName: roomB.name, level: 4, my: true, owner: { username: "tester" } }));
+  roomB.addStructure(createStructure(STRUCTURE_SPAWN, 25, 25, {
+    roomName: roomB.name,
+    name: "SpawnB",
+    hits: 5000,
+    hitsMax: 5000,
+    store: { energy: 300 },
+    storeCapacityResource: { energy: 300 },
+  }));
+  roomB.addSource(createSource(15, 25, { roomName: roomB.name }));
+  roomB.addMineral(createMineral(40, 10, { roomName: roomB.name }));
+  roomB.addStructure(createStructure(STRUCTURE_STORAGE, 24, 29, { roomName: roomB.name, store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 }));
+  roomB.addStructure(createStructure(STRUCTURE_TOWER, 22, 24, { roomName: roomB.name, store: { energy: 500 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 }));
+  roomB.energyAvailable = 800;
+  roomB.energyCapacityAvailable = 800;
+  roomB.controller.my = true;
+
+  Memory.rooms[roomA.name] = { roomFocus: "legacy" };
+  Memory.rooms[roomB.name] = { roomFocus: "legacy" };
+  const ownedRooms = [roomA, roomB];
+  const states = {
+    [roomA.name]: roomState.collect(roomA),
+    [roomB.name]: roomState.collect(roomB),
+  };
+
+  let summary = kernelMemory.reviewOwnedRooms(ownedRooms, states);
+  assert(summary.reviewed.length === 1, `expected one reviewed room, got ${JSON.stringify(summary)}`);
+  assert(summary.reviewed[0].room === roomA.name, `expected first review room A, got ${summary.reviewed[0].room}`);
+  assert(!Object.prototype.hasOwnProperty.call(Memory.rooms[roomA.name], "roomFocus"), "review should remove room A legacy focus");
+  assert(Object.prototype.hasOwnProperty.call(Memory.rooms[roomB.name], "roomFocus"), "room B should wait for its turn");
+
+  Game.time = 1100;
+  summary = kernelMemory.reviewOwnedRooms(ownedRooms, states);
+  assert(summary.tick === 1000, "review should keep previous summary before interval elapses");
+
+  Game.time = 1500;
+  summary = kernelMemory.reviewOwnedRooms(ownedRooms, states);
+  assert(summary.reviewed[0].room === roomB.name, `expected second room B at next interval, got ${JSON.stringify(summary)}`);
+
+  Game.time = 2000;
+  summary = kernelMemory.reviewOwnedRooms(ownedRooms, states);
+  assert(summary.skipped === "cooldown", `expected cooldown skip, got ${JSON.stringify(summary)}`);
+
+  Game.time = 6501;
+  summary = kernelMemory.reviewOwnedRooms(ownedRooms, states);
+  assert(summary.reviewed[0].room === roomA.name, `expected room A after cooldown, got ${JSON.stringify(summary)}`);
+  assert(!Object.prototype.hasOwnProperty.call(Memory.rooms[roomB.name], "roomFocus"), "review should remove room B legacy focus");
+}
+
+function runRoomReviewBucketSkipScenario() {
+  const room = buildRoomScenario("VAL_REVIEW_BUCKET", {
+    tick: 2000,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+  });
+  room.controller.my = true;
+  Memory.rooms[room.name] = { roomFocus: "legacy" };
+  Game.cpu.bucket = 1000;
+
+  const summary = kernelMemory.reviewOwnedRooms([room], { [room.name]: roomState.collect(room) });
+  assert(summary.skipped === "bucket", `expected bucket skip, got ${JSON.stringify(summary)}`);
+  assert(Object.prototype.hasOwnProperty.call(Memory.rooms[room.name], "roomFocus"), "bucket skip should not mutate room memory");
+}
+
+function runRoomReviewRecoveryCleanupScenario() {
+  const room = buildRoomScenario("VAL_REVIEW_RECOVERY", {
+    tick: 3000,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 500 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+  });
+  room.controller.my = true;
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: { active: true, eligible: true, reason: "post_attack", startedAt: 2000, lastThreatSeen: 2000 },
+      spawnLocks: { defender: { lastQueued: 2990 } },
+      support: { stale: true },
+    },
+  };
+
+  const summary = kernelMemory.reviewOwnedRooms([room], { [room.name]: roomState.collect(room) });
+  assert(summary.reviewed[0].changed.indexOf("defense.recovery") !== -1, `expected recovery cleanup, got ${JSON.stringify(summary)}`);
+  assert(!Memory.rooms[room.name].defense, `expected empty defense memory to be removed, got ${JSON.stringify(Memory.rooms[room.name].defense)}`);
+}
+
+function runRoomReviewHostilePreservesDefenseScenario() {
+  const room = buildRoomScenario("VAL_REVIEW_HOSTILE", {
+    tick: 3100,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    extraStructures: [
+      { type: STRUCTURE_TOWER, x: 22, y: 24, options: { store: { energy: 500 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    hostiles: [{ name: "reviewHostile", x: 23, y: 24, body: [{ type: ATTACK }, { type: MOVE }] }],
+  });
+  room.controller.my = true;
+  Memory.rooms[room.name] = {
+    defense: {
+      recovery: { active: true, eligible: true, reason: "post_attack", startedAt: 3000, lastThreatSeen: 3000 },
+    },
+  };
+
+  kernelMemory.reviewOwnedRooms([room], { [room.name]: roomState.collect(room) });
+  assert(
+    Memory.rooms[room.name].defense && Memory.rooms[room.name].defense.recovery,
+    "review should preserve defense recovery while hostiles are visible",
+  );
+}
+
+function runRoomReviewSpawnQueueScenario() {
+  const room = buildRoomScenario("VAL_REVIEW_QUEUE", {
+    tick: 3200,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+  room.controller.my = true;
+  const sourceId = room.find(FIND_SOURCES)[0].id;
+  Memory.rooms[room.name] = {
+    spawnQueue: [
+      { role: "miner", sourceId: sourceId },
+      { role: "hauler", sourceId: "missing_source" },
+      { role: "worker", operation: "empire_support", homeRoom: room.name, targetRoom: "W9N9" },
+    ],
+  };
+
+  kernelMemory.reviewOwnedRooms([room], { [room.name]: roomState.collect(room) });
+  const queue = Memory.rooms[room.name].spawnQueue;
+  assert(queue.length === 2, `expected invalid queue entry to be removed, got ${JSON.stringify(queue)}`);
+  assert(queue.some(function (request) { return request.operation === "empire_support"; }), "review should preserve empire support queue entries");
+}
+
+function runRoomReviewConstructionAdvancedScenario() {
+  const room = buildRoomScenario("VAL_REVIEW_ADVANCED", {
+    tick: 3300,
+    controllerLevel: 6,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    extraStructures: [
+      { type: STRUCTURE_STORAGE, x: 24, y: 29, options: { store: { energy: 50000 }, storeCapacity: 1000000, hits: 10000, hitsMax: 10000 } },
+    ],
+  });
+  room.controller.my = true;
+  const state = roomState.collect(room);
+  Memory.rooms[room.name] = {
+    construction: {
+      futurePlan: { roadmapPhase: "obsolete_phase", signature: "old" },
+      lastAdvancedPlan: 1000,
+    },
+    advancedOps: {
+      task: { label: "lab_input", pickupId: "missing_pickup", deliveryId: "missing_delivery", resourceType: "H", amount: 100 },
+      summary: { labId: "missing_lab" },
+    },
+  };
+
+  kernelMemory.reviewOwnedRooms([room], { [room.name]: state });
+  assert(!Memory.rooms[room.name].construction, "review should clear obsolete construction future plan cache");
+  assert(!Memory.rooms[room.name].advancedOps, "review should clear invalid advanced task memory");
+}
+
+function runRoomReviewEmpireReportScenario() {
+  const room = buildRoomScenario("VAL_REVIEW_REPORT", {
+    tick: 3400,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+  });
+  room.controller.my = true;
+  Memory.rooms[room.name] = { roomFocus: "legacy" };
+  const state = roomState.collect(room);
+
+  kernelMemory.reviewOwnedRooms([room], { [room.name]: state });
+  empireManager.record([room], { [room.name]: state });
+  const report = empireManager.buildReport(empireManager.buildRoomReports([room], { [room.name]: state }, { updateProgress: false }));
+  assert(
+    report.lines.some(function (line) { return line.indexOf("Review:") !== -1 && line.indexOf(room.name) !== -1; }),
+    `expected empire report review summary, got ${report.lines.join(" / ")}`,
+  );
+}
+
 function runExpansionClaimRequestScenario() {
   const parent = buildRoomScenario("VAL_EXPAND_PARENT", {
     tick: 875,
@@ -6518,9 +7050,10 @@ function runExpansionClaimRequestScenario() {
   const result = empireManager.createExpansion(target.name, parent.name);
   assert(result.ok, `expected expansion plan to be created, got ${result.message}`);
   empireManager.getActiveExpansion(target.name).focus = "legacy";
+  kernelMemory.reviewOwnedRooms([parent], { [parent.name]: roomState.collect(parent) });
   assert(
     !Object.prototype.hasOwnProperty.call(empireManager.getActiveExpansion(target.name), "focus"),
-    "legacy expansion focus should be removed on read",
+    "legacy expansion focus should be removed by scheduled memory review",
   );
 
   const empireReport = empireManager.buildReport();
@@ -6586,9 +7119,10 @@ function runExpansionFullConstructionScenario() {
   assert(status.terminalNeeded === 1, `expansion should keep terminal, got ${status.terminalNeeded}`);
   assert(status.extractorNeeded === 1, `expansion should keep extractor, got ${status.extractorNeeded}`);
   assert(status.mineralContainersNeeded === 1, `expansion should keep mineral container, got ${status.mineralContainersNeeded}`);
+  kernelMemory.reviewOwnedRooms([room], { [room.name]: state });
   assert(
     !Object.prototype.hasOwnProperty.call(empireManager.getActiveExpansion(room.name), "focus"),
-    "legacy expansion plan focus should be deleted",
+    "legacy expansion plan focus should be deleted by scheduled memory review",
   );
   empireManager.record([room], { [room.name]: state });
   assert(
@@ -6644,12 +7178,12 @@ function runFocusRemovedOpsScenario() {
   ops.registerGlobals();
   global.ops.room(room.name, "overview");
   assert(typeof global.ops.roomRole === "undefined", "ops.roomRole should no longer be registered");
-  empireManager.record([room], { [room.name]: roomState.collect(room) });
+  kernelMemory.reviewOwnedRooms([room], { [room.name]: roomState.collect(room) });
   assert(
     !Object.prototype.hasOwnProperty.call(Memory.rooms[room.name], "roomFocus") &&
       !Object.prototype.hasOwnProperty.call(Memory.rooms[room.name], "roomFocusMigratedAt") &&
       !Object.prototype.hasOwnProperty.call(Memory.rooms[room.name], "roomFocusUpdatedAt"),
-    "empire record should remove legacy owned room focus memory",
+    "scheduled review should remove legacy owned room focus memory",
   );
 
   const parent = buildStableReservationParent("W4N5", 983);
@@ -6657,9 +7191,10 @@ function runFocusRemovedOpsScenario() {
   const reserve = reservationManager.createReservation(remote.name, parent.name);
   assert(reserve.ok, `expected reservation setup, got ${reserve.message}`);
   reservationManager.getActiveReservation(remote.name).focus = "hold";
+  kernelMemory.reviewOwnedRooms([parent], { [parent.name]: roomState.collect(parent) });
   assert(
     !Object.prototype.hasOwnProperty.call(reservationManager.getActiveReservation(remote.name), "focus"),
-    "legacy reservation focus should be removed on read",
+    "legacy reservation focus should be removed by scheduled memory review",
   );
 
   const target = new FakeRoom("W4N7", new FakeTerrain());
@@ -6681,9 +7216,11 @@ function runFocusRemovedOpsScenario() {
     `expected old expansion focus argument to be treated as invalid parent, got ${JSON.stringify(oldExpansionFocusResult)}`,
   );
   empireManager.getActiveExpansion(target.name).focus = "mineral";
+  Game.time += 500;
+  kernelMemory.reviewOwnedRooms([parent], { [parent.name]: roomState.collect(parent) });
   assert(
     !Object.prototype.hasOwnProperty.call(empireManager.getActiveExpansion(target.name), "focus"),
-    "legacy expansion focus should be removed on read",
+    "legacy expansion focus should be removed by scheduled memory review",
   );
 }
 
@@ -7039,10 +7576,12 @@ function runReservationOpsScenario() {
   assert(result.ok, `expected reserve plan through current room, got ${result.message}`);
   reservationManager.getActiveReservation("W5N6").focus = "legacy";
   delete reservationManager.getActiveReservation("W5N6").operation;
+  reservationManager.getActiveReservation("W5N6");
+  kernelMemory.reviewOwnedRooms([parent], { [parent.name]: roomState.collect(parent) });
   assert(
     !Object.prototype.hasOwnProperty.call(reservationManager.getActiveReservation("W5N6"), "focus") &&
       reservationManager.getActiveReservation("W5N6").operation === "reservation",
-    "legacy reservation plan should delete focus and backfill operation marker",
+    "scheduled review should delete legacy reservation focus and defaults should backfill operation marker",
   );
 
   const lines = global.ops.reserved(parent.name);
@@ -8031,6 +8570,85 @@ function runCpuSoftLimitScenario() {
   }
 }
 
+function runSchedulerStaggerScenario() {
+  resetRuntime(1000);
+
+  const interval = 7;
+  const keys = [];
+  const seenOffsets = {};
+  for (let i = 0; i < 100 && keys.length < 3; i++) {
+    const key = `sched.room.${i}.construction`;
+    const offset = scheduler.getOffset(key, interval);
+    if (seenOffsets[offset]) continue;
+    seenOffsets[offset] = true;
+    keys.push(key);
+  }
+
+  assert(keys.length === 3, `expected three staggerable keys, got ${keys.length}`);
+
+  let totalDue = 0;
+  let maxDue = 0;
+  for (let t = 1000; t < 1000 + interval; t++) {
+    Game.time = t;
+    scheduler.startTick();
+    let due = 0;
+    for (let i = 0; i < keys.length; i++) {
+      if (scheduler.canRunOptional(keys[i], interval).ok) due++;
+    }
+    totalDue += due;
+    maxDue = Math.max(maxDue, due);
+  }
+
+  assert(maxDue <= 1, `expected staggered keys not to align, max due ${maxDue}`);
+  assert(totalDue === keys.length, `expected each key due once, got ${totalDue}`);
+}
+
+function runSchedulerBudgetScenario() {
+  resetRuntime(1100);
+
+  const originalMax = config.SCHEDULING.MAX_OPTIONAL_TASKS;
+  try {
+    config.SCHEDULING.MAX_OPTIONAL_TASKS = {
+      normal: 1,
+      tight: 1,
+      critical: 0,
+    };
+    Memory.stats.runtime = { pressure: "normal" };
+    scheduler.startTick();
+
+    assert(
+      scheduler.canRunOptional("sched.budget.first", 1).ok,
+      "expected first optional task to fit budget",
+    );
+    scheduler.recordRun("sched.budget.first", 0.1);
+
+    const second = scheduler.canRunOptional("sched.budget.second", 1);
+    assert(!second.ok && second.reason === "count", `expected count deferral, got ${JSON.stringify(second)}`);
+
+    Memory.stats.runtime = { pressure: "critical" };
+    Game.time += 1;
+    scheduler.startTick();
+    const critical = scheduler.canRunOptional("sched.budget.critical", 1);
+    assert(!critical.ok && critical.reason === "count", `expected critical optional block, got ${JSON.stringify(critical)}`);
+  } finally {
+    config.SCHEDULING.MAX_OPTIONAL_TASKS = originalMax;
+  }
+}
+
+function runSchedulerReportScenario() {
+  resetRuntime(1200);
+  scheduler.startTick();
+  scheduler.recordRun("sched.report.task", 0.25);
+  scheduler.recordSkip("sched.report.deferred", "budget");
+
+  const report = empireManager.buildReport([]);
+  const line = report.lines.find(function (entry) {
+    return entry.indexOf("Sched:") === 0;
+  });
+
+  assert(line && line.indexOf("ran 1") !== -1 && line.indexOf("deferred 1") !== -1, `expected scheduler report line, got ${JSON.stringify(report.lines)}`);
+}
+
 function runSpawnBodyValidationScenario() {
   const validBody = bodies.validateBody([WORK, CARRY, MOVE]);
   assert(validBody.valid, `expected [WORK,CARRY,MOVE] to validate, got ${JSON.stringify(validBody)}`);
@@ -8302,6 +8920,13 @@ function main() {
     ["cross_room_defense_support_request", runCrossRoomDefenseSupportRequestScenario],
     ["cross_room_defender_role", runCrossRoomDefenderRoleScenario],
     ["defense_recovery", runDefenseRecoveryScenario],
+    ["recovery_tower_banking_deadlock", runRecoveryTowerBankingDeadlockScenario],
+    ["recovery_tower_reserve_ignores_banking", runRecoveryTowerReserveIgnoresBankingScenario],
+    ["light_recovery", runLightRecoveryScenario],
+    ["full_recovery_requires_reserve", runFullRecoveryRequiresReserveScenario],
+    ["recovery_failsafe", runRecoveryFailsafeScenario],
+    ["recovery_failsafe_blocked", runRecoveryFailsafeBlockedScenario],
+    ["recovery_reporting_context", runRecoveryReportingContextScenario],
     ["recovery_build_intent", runRecoveryBuildIntentScenario],
     ["construction_site_worker_floor", runConstructionSiteWorkerFloorScenario],
     ["spawn_energy_fallback", runSpawnEnergyFallbackScenario],
@@ -8335,6 +8960,13 @@ function main() {
     ["empire_support_travel", runEmpireSupportTravelScenario],
     ["empire_support_local_construction_priority", runEmpireSupportLocalConstructionPriorityScenario],
     ["empire_awareness", runEmpireAwarenessScenario],
+    ["room_review_scheduler", runRoomReviewSchedulerScenario],
+    ["room_review_bucket_skip", runRoomReviewBucketSkipScenario],
+    ["room_review_recovery_cleanup", runRoomReviewRecoveryCleanupScenario],
+    ["room_review_hostile_preserves_defense", runRoomReviewHostilePreservesDefenseScenario],
+    ["room_review_spawn_queue", runRoomReviewSpawnQueueScenario],
+    ["room_review_construction_advanced", runRoomReviewConstructionAdvancedScenario],
+    ["room_review_empire_report", runRoomReviewEmpireReportScenario],
     ["expansion_claim_request", runExpansionClaimRequestScenario],
     ["expansion_full_construction", runExpansionFullConstructionScenario],
     ["focus_removed_ops", runFocusRemovedOpsScenario],
@@ -8364,6 +8996,9 @@ function main() {
     ["hud_config_controls", runHudConfigControlsScenario],
     ["cpu_soft_limit", runCpuSoftLimitScenario],
     ["cpu_room_scale", runCpuRoomScaleScenario],
+    ["scheduler_stagger", runSchedulerStaggerScenario],
+    ["scheduler_budget", runSchedulerBudgetScenario],
+    ["scheduler_report", runSchedulerReportScenario],
     ["attack_ops", runAttackOpsScenario],
     ["attack_post_action_fallback", runAttackPostActionFallbackScenario],
     ["spawn_body_validation", runSpawnBodyValidationScenario],

@@ -254,6 +254,10 @@ module.exports = {
   },
 
   getEmergencyTowerThreshold(room, state) {
+    if (this.isRecoveryActive(state)) {
+      return config.LOGISTICS.towerEmergencyThreshold;
+    }
+
     if (
       !this.hasHostilePressure(room, state) &&
       reservePolicy.shouldBankStorageEnergy(room, state)
@@ -265,6 +269,10 @@ module.exports = {
   },
 
   getTowerReserveThreshold(room, state) {
+    if (this.isRecoveryActive(state)) {
+      return config.LOGISTICS.towerReserveThreshold;
+    }
+
     if (
       !this.hasHostilePressure(room, state) &&
       reservePolicy.shouldBankStorageEnergy(room, state)

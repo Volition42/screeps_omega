@@ -646,6 +646,14 @@ function getAlertSummary(room, state) {
     active: active,
     recoveryActive: !!(recovery && recovery.active),
     recoveryBlockers: recovery && recovery.blockers ? recovery.blockers.slice() : [],
+    recoveryReason: recovery && recovery.reason ? recovery.reason : null,
+    recoveryAge: recovery && typeof recovery.age === "number" ? recovery.age : 0,
+    recoveryStartedAt:
+      recovery && typeof recovery.startedAt === "number" ? recovery.startedAt : null,
+    recoveryLastThreatSeen:
+      recovery && typeof recovery.lastThreatSeen === "number"
+        ? recovery.lastThreatSeen
+        : null,
     hostiles: hostiles,
     threatScore: threatScore,
     threatLevel: threatLevel,
@@ -673,6 +681,25 @@ function getAlertSummary(room, state) {
         }).length,
     safeMode: getSafeModeLabel(room),
   };
+}
+
+function formatRecoveryLine(alert) {
+  if (!alert.recoveryActive) return "Recovery inactive";
+
+  const details = [];
+  if (alert.recoveryReason) details.push(alert.recoveryReason);
+  if (typeof alert.recoveryAge === "number") details.push(`age ${alert.recoveryAge}t`);
+  if (typeof alert.recoveryLastThreatSeen === "number") {
+    details.push(`last ${alert.recoveryLastThreatSeen}`);
+  }
+
+  const prefix = details.length > 0
+    ? `Recovery ${details.join(" ")}`
+    : "Recovery";
+
+  return alert.recoveryBlockers.length > 0
+    ? `${prefix} blocked ${alert.recoveryBlockers.join(", ")}`
+    : `${prefix} ready to clear`;
 }
 
 function getCpuSummary(room) {
@@ -1114,9 +1141,7 @@ module.exports = {
         `Defenders ${alert.defenders}/${alert.requiredDefenders} | Ready towers ${alert.readyTowers}/${summaryState.structuresByType && summaryState.structuresByType[STRUCTURE_TOWER] ? summaryState.structuresByType[STRUCTURE_TOWER].length : 0}`,
         `Support in ${alert.supportAssigned}/${alert.supportRequested} from ${alert.supportHelper} | out ${alert.outgoingSupport}`,
         `Target ${alert.towerTarget} | Focus ${alert.towerFocusDamage} | Hold ${alert.towerCanHandle ? "yes" : "no"}`,
-        alert.recoveryBlockers.length > 0
-          ? `Recovery blocked ${alert.recoveryBlockers.join(", ")}`
-          : `Recovery ${alert.recoveryActive ? "ready to clear" : "inactive"}`,
+        formatRecoveryLine(alert),
       ],
       creeps: [
         `[OPS][${room.name}][CREEPS]`,

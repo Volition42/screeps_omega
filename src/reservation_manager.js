@@ -19,6 +19,7 @@ const config = require("config");
 const utils = require("utils");
 const defenseManager = require("defense_manager");
 const invasionLog = require("invasion_log");
+const scheduler = require("scheduler");
 
 function ensureEmpireMemory() {
   if (!Memory.empire) Memory.empire = {};
@@ -189,10 +190,6 @@ function ensurePlanDefaults(plan, targetRoom) {
   let changed = false;
   if (!plan.targetRoom && targetRoom) {
     plan.targetRoom = targetRoom;
-    changed = true;
-  }
-  if (Object.prototype.hasOwnProperty.call(plan, "focus")) {
-    delete plan.focus;
     changed = true;
   }
   if (!plan.operation) {
@@ -1298,6 +1295,13 @@ module.exports = {
     if (plan.lastRemotePlan && Game.time - plan.lastRemotePlan < interval) {
       return;
     }
+    const scheduleKey = "reservation." + plan.targetRoom + ".remotePlan";
+    const scheduleDecision = scheduler.canRunOptional(scheduleKey, interval);
+    if (!scheduleDecision.ok) {
+      scheduler.recordSkip(scheduleKey, scheduleDecision.reason);
+      return;
+    }
+    const scheduleCpu = Game.cpu ? Game.cpu.getUsed() : 0;
     plan.lastRemotePlan = Game.time;
 
     const maxSites =
@@ -1306,16 +1310,23 @@ module.exports = {
         : 5;
     let placed = 0;
     const siteCount = targetRoom.find(FIND_CONSTRUCTION_SITES).length;
-    if (siteCount >= maxSites) return;
+    if (siteCount >= maxSites) {
+      scheduler.markOptionalRun(scheduleKey, scheduleCpu);
+      return;
+    }
 
     placed += this.placeRemoteSourceContainers(
       targetRoom,
       parentRoom,
       maxSites - siteCount - placed,
     );
-    if (placed >= maxSites - siteCount) return;
+    if (placed >= maxSites - siteCount) {
+      scheduler.markOptionalRun(scheduleKey, scheduleCpu);
+      return;
+    }
 
     this.placeRemoteRoads(targetRoom, parentRoom, maxSites - siteCount - placed);
+    scheduler.markOptionalRun(scheduleKey, scheduleCpu);
   },
 
   placeRemoteSourceContainers(targetRoom, parentRoom, budget) {

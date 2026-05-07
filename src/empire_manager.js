@@ -22,6 +22,7 @@ const roomProgress = require("room_progress");
 const utils = require("utils");
 const invasionLog = require("invasion_log");
 const advancedStructureManager = require("advanced_structure_manager");
+const scheduler = require("scheduler");
 
 function ensureEmpireMemory() {
   if (!Memory.empire) Memory.empire = {};
@@ -603,14 +604,6 @@ function getExpansionPlans() {
   return expansion.plans || {};
 }
 
-function clearRoomFocusMemory(roomName) {
-  const roomMemory = Memory.rooms && roomName ? Memory.rooms[roomName] : null;
-  if (!roomMemory) return;
-  delete roomMemory.roomFocus;
-  delete roomMemory.roomFocusMigratedAt;
-  delete roomMemory.roomFocusUpdatedAt;
-}
-
 function ensureExpansionPlanDefaults(plan, targetRoom) {
   if (!plan) return plan;
 
@@ -619,11 +612,6 @@ function ensureExpansionPlanDefaults(plan, targetRoom) {
     plan.targetRoom = targetRoom;
     changed = true;
   }
-  if (Object.prototype.hasOwnProperty.call(plan, "focus")) {
-    delete plan.focus;
-    changed = true;
-  }
-  clearRoomFocusMemory(plan.targetRoom || targetRoom);
   if (changed) {
     plan.defaultsUpgradedAt = Game.time;
     plan.updatedAt = Game.time;
@@ -989,7 +977,6 @@ module.exports = {
 
     for (let i = 0; i < rooms.length; i++) {
       const room = rooms[i];
-      clearRoomFocusMemory(room.name);
       const state = states[room.name] || null;
       const spawns = state && state.spawns
         ? state.spawns
@@ -1051,7 +1038,10 @@ module.exports = {
     memory.rooms = roomSnapshots;
     memory.expansion.summary = this.getExpansionSummary(rooms.length);
     memory.reservation.summary = reservationManager.getReservationSummary();
-    memory.support = this.buildSupportSummary(rooms, states);
+    memory.support = this.getScheduledSupportSummary(rooms, states, memory);
+    if (Memory.runtime && Memory.runtime.roomReview && Memory.runtime.roomReview.lastSummary) {
+      memory.roomReview = Memory.runtime.roomReview.lastSummary;
+    }
     this.runMineralBalancing(rooms, states, memory);
 
     return memory;
@@ -1069,11 +1059,17 @@ module.exports = {
 
     const interval =
       typeof settings.RUN_INTERVAL === "number" ? Math.max(1, settings.RUN_INTERVAL) : 5;
-    if (Game.time % interval !== 0) {
+    const balanceDecision = scheduler.canRunOptional(
+      "empire.mineralBalancing",
+      interval,
+    );
+    if (!balanceDecision.ok) {
+      scheduler.recordSkip("empire.mineralBalancing", balanceDecision.reason);
       mineralMemory.status = "waiting";
       empireMemory.minerals = mineralMemory;
       return mineralMemory;
     }
+    const balanceCpu = Game.cpu ? Game.cpu.getUsed() : 0;
 
     const rooms = ownedRooms || [];
     const states = roomStates || {};
@@ -1162,6 +1158,7 @@ module.exports = {
     mineralMemory.pendingByRoom = pendingByRoom;
     if (lastTransfer) mineralMemory.lastTransfer = lastTransfer;
     empireMemory.minerals = mineralMemory;
+    scheduler.markOptionalRun("empire.mineralBalancing", balanceCpu);
     return mineralMemory;
   },
 
@@ -1235,13 +1232,44 @@ module.exports = {
     };
   },
 
+  getScheduledSupportSummary(ownedRooms, roomStates, empireMemory) {
+    const settings = getSupportSettings();
+    const interval =
+      typeof settings.RUN_INTERVAL === "number" ? Math.max(1, settings.RUN_INTERVAL) : 5;
+    const existing = empireMemory && empireMemory.support ? empireMemory.support : null;
+    const decision = scheduler.canRunOptional("empire.support", interval);
+
+    if (!decision.ok) {
+      scheduler.recordSkip("empire.support", decision.reason);
+      return existing || {
+        tick: Game.time,
+        requestsByDonor: {},
+        status: "waiting",
+      };
+    }
+
+    const before = Game.cpu ? Game.cpu.getUsed() : 0;
+    const summary = this.buildSupportSummary(ownedRooms, roomStates);
+    summary.status = "updated";
+    scheduler.markOptionalRun("empire.support", before);
+    return summary;
+  },
+
   getEmpireSupportSpawnRequests(room, state) {
     const settings = getSupportSettings();
     if (settings.SUPPORT_ENABLED === false) return [];
 
     const memory = ensureEmpireMemory();
     if (!memory.support || !memory.support.requestsByDonor) {
-      memory.support = this.buildSupportSummary(this.collectOwnedRooms(), {});
+      if (!scheduler.getMemory().active) {
+        memory.support = this.buildSupportSummary(this.collectOwnedRooms(), {});
+      } else {
+        memory.support = {
+          tick: Game.time,
+          requestsByDonor: {},
+          status: "waiting",
+        };
+      }
     }
 
     return (memory.support.requestsByDonor[room.name] || []).filter(function (request) {
@@ -1871,6 +1899,25 @@ module.exports = {
       lines.push(`Attacks: ${attackRows.length} active`);
     }
     if (
+      Memory.stats &&
+      Memory.stats.scheduler &&
+      Memory.stats.scheduler.tick
+    ) {
+      const schedule = Memory.stats.scheduler;
+      const reasons = schedule.reasons || {};
+      const reasonParts = [];
+      for (const reason in reasons) {
+        if (!Object.prototype.hasOwnProperty.call(reasons, reason)) continue;
+        if (reason === "interval") continue;
+        if ((reasons[reason] || 0) <= 0) continue;
+        reasonParts.push(`${reason} ${reasons[reason]}`);
+      }
+      lines.push(
+        `Sched: ran ${schedule.ran || 0} deferred ${schedule.deferred || 0}` +
+          (reasonParts.length > 0 ? ` (${reasonParts.join(", ")})` : ""),
+      );
+    }
+    if (
       Memory.empire &&
       Memory.empire.minerals &&
       Memory.empire.minerals.lastTransfer
@@ -1879,6 +1926,23 @@ module.exports = {
       lines.push(
         `Minerals: ${transfer.from} -> ${transfer.to} ${transfer.resourceType} ${transfer.amount}`,
       );
+    }
+    if (
+      Memory.empire &&
+      Memory.empire.roomReview &&
+      Memory.empire.roomReview.reviewed &&
+      Memory.empire.roomReview.reviewed.length > 0
+    ) {
+      const review = Memory.empire.roomReview;
+      const segments = [];
+      for (let i = 0; i < review.reviewed.length; i++) {
+        const entry = review.reviewed[i];
+        if (!entry || !entry.changed || entry.changed.length <= 0) continue;
+        segments.push(`${entry.room} fixed ${entry.changed.join(",")}`);
+      }
+      if (segments.length > 0) {
+        lines.push(`Review: ${segments.join(" | ")}`);
+      }
     }
 
     if (roomReports.length > 0) {
