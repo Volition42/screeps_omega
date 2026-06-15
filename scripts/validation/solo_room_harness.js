@@ -6563,6 +6563,23 @@ function assertOpsLogisticsRequestShape(request, expected) {
   assert(request.to === expected.to, `expected to ${expected.to}, got ${request.to}`);
 }
 
+function captureConsoleLines(fn) {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = function (line) {
+    lines.push(line);
+  };
+
+  try {
+    return {
+      result: fn(),
+      lines: lines,
+    };
+  } finally {
+    console.log = originalLog;
+  }
+}
+
 function buildHaulerExecutionOrderRoom(name, options) {
   const settings = options || {};
   const room = buildLabOpsRoom(name, {
@@ -6796,6 +6813,193 @@ function runHaulerExecutionOrderCoverageScenario() {
   hauler.store.energy = 0;
   roleHauler.run(hauler, { thinkInterval: 1 });
   assert(!hauler.memory.deliveryTargetId, "empty delivering hauler should clear deliveryTargetId");
+}
+
+function runTerminalHygieneCommandsScenario() {
+  let room = buildOpsLogisticsRoom("VAL_TERMINAL_HYGIENE", {
+    tick: 1330,
+    storageStore: { energy: 200000, H: 8000 },
+    terminalStore: { energy: 12000, H: 60000, Z: 5000 },
+  });
+
+  let captured = captureConsoleLines(function () {
+    return ops.terminalStatus(room.name);
+  });
+  assert(captured.result.roomName === room.name, "room terminalStatus should return the requested room");
+  assert(captured.result.used === 77000, `expected terminal used 77000, got ${captured.result.used}`);
+  assert(captured.result.free === 223000, `expected terminal free 223000, got ${captured.result.free}`);
+  assert(captured.result.energy === 12000, `expected terminal energy 12000, got ${captured.result.energy}`);
+  assert(captured.result.status === "HEALTHY", `expected HEALTHY status, got ${captured.result.status}`);
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("H: 60,000") !== -1; }),
+    `room terminalStatus should list all resources, got ${captured.lines.join(" / ")}`,
+  );
+
+  const addTerminalStatusRoom = function (name, terminalStore) {
+    const statusRoom = new FakeRoom(name, new FakeTerrain());
+    statusRoom.setController(
+      createController(20, 20, {
+        roomName: name,
+        level: 8,
+        my: true,
+        owner: { username: "tester" },
+      }),
+    );
+    statusRoom.controller.my = true;
+    statusRoom.controller.owner = { username: "tester" };
+    statusRoom.addStructure(
+      createStructure(STRUCTURE_SPAWN, 25, 25, {
+        roomName: name,
+        name: `${name}_spawn`,
+        store: { energy: 300 },
+        storeCapacityResource: { energy: 300 },
+      }),
+    );
+    statusRoom.addSource(createSource(15, 25, { roomName: name }));
+    statusRoom.addMineral(createMineral(40, 10, { roomName: name }));
+    statusRoom.addStructure(
+      createStructure(STRUCTURE_TERMINAL, 25, 32, {
+        roomName: name,
+        store: terminalStore,
+        storeCapacity: 300000,
+        cooldown: 0,
+      }),
+    );
+    return statusRoom;
+  };
+
+  const busyRoom = addTerminalStatusRoom("VAL_TERMINAL_BUSY", { energy: 260000, H: 10000 });
+  const congestedRoom = addTerminalStatusRoom("VAL_TERMINAL_CONGESTED", { energy: 285000 });
+  const fullRoom = addTerminalStatusRoom("VAL_TERMINAL_FULL", { energy: 300000 });
+
+  captured = captureConsoleLines(function () {
+    return ops.terminalStatus();
+  });
+  const empireStatuses = captured.result;
+  assert(
+    empireStatuses.some(function (status) {
+      return status.roomName === room.name && status.status === "HEALTHY";
+    }),
+    "empire terminalStatus should include healthy room",
+  );
+  assert(
+    empireStatuses.some(function (status) {
+      return status.roomName === busyRoom.name && status.status === "BUSY";
+    }),
+    "empire terminalStatus should include busy room",
+  );
+  assert(
+    empireStatuses.some(function (status) {
+      return status.roomName === congestedRoom.name && status.status === "CONGESTED";
+    }),
+    "empire terminalStatus should include congested room",
+  );
+  assert(
+    empireStatuses.some(function (status) {
+      return status.roomName === fullRoom.name && status.status === "FULL";
+    }),
+    "empire terminalStatus should include full room",
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf(room.name) !== -1 && line.indexOf("top H 60,000") !== -1;
+    }),
+    `empire terminalStatus should include top resources, got ${captured.lines.join(" / ")}`,
+  );
+
+  const noTerminalRoom = buildRoomScenario("VAL_TERMINAL_NONE", {
+    tick: 1334,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+  });
+  noTerminalRoom.controller.my = true;
+  captured = captureConsoleLines(function () {
+    return ops.terminalStatus(noTerminalRoom.name);
+  });
+  assert(
+    captured.result.indexOf("has no terminal") !== -1,
+    `no-terminal status should print a clear message, got ${captured.result}`,
+  );
+
+  room = buildOpsLogisticsRoom("VAL_TERMINAL_CLEAR", {
+    tick: 1335,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 12000, H: 60000 },
+  });
+  let result = ops.clearTerminal(room.name, "H", 50000);
+  assert(result.ok && !result.skipped, `expected clearTerminal request, got ${result.message}`);
+  assert(result.request.amount === 50000, `clearTerminal should request 50000, got ${result.request.amount}`);
+  assertOpsLogisticsRequestShape(result.request, {
+    status: "open",
+    roomName: room.name,
+    resourceType: "H",
+    from: "terminal",
+    to: "storage",
+  });
+
+  const duplicateClear = ops.clearTerminal(room.name, "H", 10000);
+  assert(duplicateClear.ok && duplicateClear.skipped, `duplicate clearTerminal should be skipped, got ${duplicateClear.message}`);
+  assert(duplicateClear.request.id === result.request.id, "duplicate clearTerminal should return existing request");
+
+  result = ops.clearTerminal("VAL_TERMINAL_CLEAR_MISSING", "H", 5000);
+  assert(!result.ok, "clearTerminal should reject invalid rooms");
+
+  result = ops.clearTerminal(room.name, "Z", 5000);
+  assert(!result.ok, "clearTerminal should reject resources missing from terminal");
+
+  result = ops.clearTerminal(room.name, "H", 0);
+  assert(!result.ok, "clearTerminal should reject non-positive amounts");
+
+  room = buildOpsLogisticsRoom("VAL_TERMINAL_FILL", {
+    tick: 1336,
+    storageStore: { energy: 200000, H: 8000 },
+    terminalStore: { energy: 12000 },
+  });
+  result = ops.fillTerminal(room.name, "H", 5000);
+  assert(result.ok && !result.skipped, `expected fillTerminal request, got ${result.message}`);
+  assert(result.request.amount === 5000, `fillTerminal should request 5000, got ${result.request.amount}`);
+  assertOpsLogisticsRequestShape(result.request, {
+    status: "open",
+    roomName: room.name,
+    resourceType: "H",
+    from: "storage",
+    to: "terminal",
+  });
+
+  const duplicateFill = ops.fillTerminal(room.name, "H", 1000);
+  assert(duplicateFill.ok && duplicateFill.skipped, `duplicate fillTerminal should be skipped, got ${duplicateFill.message}`);
+  assert(duplicateFill.request.id === result.request.id, "duplicate fillTerminal should return existing request");
+
+  result = ops.fillTerminal("VAL_TERMINAL_FILL_MISSING", "H", 5000);
+  assert(!result.ok, "fillTerminal should reject invalid rooms");
+
+  result = ops.fillTerminal(room.name, "Z", 5000);
+  assert(!result.ok, "fillTerminal should reject resources missing from storage");
+
+  result = ops.fillTerminal(room.name, "H", 0);
+  assert(!result.ok, "fillTerminal should reject non-positive amounts");
+
+  room = buildOpsLogisticsRoom("VAL_TERMINAL_CLEAR_AUTO", {
+    tick: 1337,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 20000, H: 120000, Z: 5000 },
+  });
+  const autoClear = ops.clearTerminal(room.name);
+  assert(autoClear.ok, `expected automatic clearTerminal ok, got ${autoClear.message}`);
+  assert(
+    autoClear.requests.some(function (entry) {
+      return entry.request && entry.request.resourceType === "H" && entry.request.from === "terminal" && entry.request.to === "storage";
+    }),
+    "automatic clearTerminal should request non-energy mineral cleanup",
+  );
+  assert(
+    autoClear.requests.every(function (entry) {
+      return entry.request && entry.request.resourceType !== RESOURCE_ENERGY;
+    }),
+    "automatic clearTerminal should not create energy cleanup requests",
+  );
 }
 
 function runOpsLogisticsHarnessCoverageScenario() {
@@ -9612,6 +9816,7 @@ function main() {
     ["lab_targets_met", runLabTargetsMetScenario],
     ["lab_tight_replan", runLabTightReplanScenario],
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
+    ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
     ["hauler_execution_order_coverage", runHaulerExecutionOrderCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],

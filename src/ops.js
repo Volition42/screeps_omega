@@ -109,6 +109,107 @@ function fmt(value) {
   return Math.round(value || 0).toLocaleString();
 }
 
+function getStoredAmount(target, resourceType) {
+  if (!target || !target.store) return 0;
+
+  if (typeof target.store.getUsedCapacity === "function") {
+    const used = target.store.getUsedCapacity(resourceType);
+    if (typeof used === "number" && used > 0) return used;
+  }
+
+  return target.store[resourceType] || 0;
+}
+
+function getStoreTotal(target) {
+  if (!target || !target.store) return 0;
+
+  if (typeof target.store.getUsedCapacity === "function") {
+    const used = target.store.getUsedCapacity();
+    if (typeof used === "number") return used;
+  }
+
+  let total = 0;
+  for (const resourceType in target.store) {
+    if (!Object.prototype.hasOwnProperty.call(target.store, resourceType)) {
+      continue;
+    }
+    if (typeof target.store[resourceType] === "number") {
+      total += target.store[resourceType];
+    }
+  }
+
+  return total;
+}
+
+function getTotalFreeCapacity(target) {
+  if (!target || !target.store) return 0;
+
+  if (typeof target.store.getFreeCapacity === "function") {
+    const free = target.store.getFreeCapacity();
+    if (typeof free === "number") return free;
+  }
+
+  return Math.max(0, 300000 - getStoreTotal(target));
+}
+
+function getTerminalCongestionStatus(freeCapacity) {
+  if (freeCapacity <= 0) return "FULL";
+  if (freeCapacity < 20000) return "CONGESTED";
+  if (freeCapacity < 50000) return "BUSY";
+  return "HEALTHY";
+}
+
+function getStoreResources(store) {
+  if (!store) return [];
+
+  return Object.keys(store)
+    .filter(function (resourceType) {
+      return (store[resourceType] || 0) > 0;
+    })
+    .sort();
+}
+
+function getTerminalResourceRows(terminal) {
+  return getStoreResources(terminal.store)
+    .map(function (resourceType) {
+      return {
+        resourceType: resourceType,
+        amount: getStoredAmount(terminal, resourceType),
+      };
+    })
+    .sort(function (a, b) {
+      if (b.amount !== a.amount) return b.amount - a.amount;
+      return a.resourceType.localeCompare(b.resourceType);
+    });
+}
+
+function formatResourceList(resources, limit) {
+  const capped = typeof limit === "number" ? resources.slice(0, limit) : resources;
+  if (capped.length === 0) return "none";
+
+  return capped
+    .map(function (row) {
+      return row.resourceType + " " + fmt(row.amount);
+    })
+    .join(", ");
+}
+
+function buildTerminalStatus(room) {
+  const terminal = room.terminal;
+  const used = getStoreTotal(terminal);
+  const free = getTotalFreeCapacity(terminal);
+  const resources = getTerminalResourceRows(terminal);
+
+  return {
+    roomName: room.name,
+    used: used,
+    free: free,
+    energy: getStoredAmount(terminal, RESOURCE_ENERGY),
+    status: getTerminalCongestionStatus(free),
+    resources: resources,
+  };
+}
+
 function getTargetRoomOrPrintError(roomName, commandLabel) {
   const room = resolveOwnedRoom(roomName);
 
@@ -272,6 +373,24 @@ function getConsoleCommandHelp() {
       description:
         "Create a room-local logistics request between storage and terminal.",
       example: 'ops.move("H", 50000, "W42N9", "terminal", "storage")',
+    },
+    {
+      command: "ops.terminalStatus([roomName])",
+      description:
+        "Show terminal capacity, energy, resources, and congestion status.",
+      example: 'ops.terminalStatus("W42N9")',
+    },
+    {
+      command: "ops.clearTerminal(roomName, [resource], [amount])",
+      description:
+        "Create terminal -> storage logistics requests for terminal cleanup.",
+      example: 'ops.clearTerminal("W42N9", "H", 50000)',
+    },
+    {
+      command: "ops.fillTerminal(roomName, resource, amount)",
+      description:
+        "Create a storage -> terminal logistics request for market staging.",
+      example: 'ops.fillTerminal("W42N9", "energy", 10000)',
     },
     {
       command: "ops.requests([roomName])",
@@ -448,6 +567,15 @@ module.exports = {
       },
       move: function (resource, amount, roomName, from, to) {
         return module.exports.move(resource, amount, roomName, from, to);
+      },
+      terminalStatus: function (roomName) {
+        return module.exports.terminalStatus(roomName);
+      },
+      clearTerminal: function (roomName, resource, amount) {
+        return module.exports.clearTerminal(roomName, resource, amount);
+      },
+      fillTerminal: function (roomName, resource, amount) {
+        return module.exports.fillTerminal(roomName, resource, amount);
       },
       requests: function (roomName) {
         return module.exports.requests(roomName);
@@ -679,6 +807,159 @@ module.exports = {
       roomName,
       from,
       to,
+    );
+    printLine(result.message);
+    return result;
+  },
+
+  terminalStatus(roomName) {
+    if (roomName) {
+      const room = resolveOwnedRoom(roomName);
+
+      if (!room) {
+        return printLine(`[OPS] terminalStatus: owned room "${roomName}" not found.`);
+      }
+
+      if (!room.terminal) {
+        return printLine(`[OPS] terminalStatus: ${room.name} has no terminal.`);
+      }
+
+      const status = buildTerminalStatus(room);
+      const lines = [
+        `[OPS] Terminal ${room.name}: ${status.status}`,
+        `  used ${fmt(status.used)} | free ${fmt(status.free)} | energy ${fmt(status.energy)}`,
+        "  resources:",
+      ];
+
+      if (status.resources.length === 0) {
+        lines.push("    none");
+      } else {
+        for (let i = 0; i < status.resources.length; i++) {
+          lines.push(
+            `    ${status.resources[i].resourceType}: ${fmt(status.resources[i].amount)}`,
+          );
+        }
+      }
+
+      printBlock(lines);
+      return status;
+    }
+
+    const rooms = getOwnedRooms().filter(function (room) {
+      return !!room.terminal;
+    });
+    const statuses = rooms.map(buildTerminalStatus);
+    const lines = ["[OPS] Terminal status:"];
+
+    if (statuses.length === 0) {
+      lines.push("  no owned rooms with terminals");
+      printBlock(lines);
+      return statuses;
+    }
+
+    for (let i = 0; i < statuses.length; i++) {
+      const status = statuses[i];
+      lines.push(
+        `  ${status.roomName} | ${status.status}` +
+          ` | used ${fmt(status.used)}` +
+          ` | free ${fmt(status.free)}` +
+          ` | energy ${fmt(status.energy)}` +
+          ` | top ${formatResourceList(status.resources, 4)}`,
+      );
+    }
+
+    printBlock(lines);
+    return statuses;
+  },
+
+  clearTerminal(roomName, resource, amount) {
+    if (typeof resource === "undefined") {
+      const room = resolveOwnedRoom(roomName);
+
+      if (!room) {
+        const message = `[OPS] clearTerminal: owned room "${roomName}" not found.`;
+        printLine(message);
+        return {
+          ok: false,
+          roomName: roomName,
+          requests: [],
+          message: message,
+        };
+      }
+
+      if (!room.storage || !room.terminal) {
+        const message = `[OPS] clearTerminal: ${room.name} needs both storage and terminal.`;
+        printLine(message);
+        return {
+          ok: false,
+          roomName: room.name,
+          requests: [],
+          message: message,
+        };
+      }
+
+      const results = [];
+      const resources = getTerminalResourceRows(room.terminal).filter(function (row) {
+        return row.resourceType !== RESOURCE_ENERGY;
+      });
+      let projectedFree = getTotalFreeCapacity(room.terminal);
+
+      for (let i = 0; i < resources.length; i++) {
+        const row = resources[i];
+        const needFree = Math.max(
+          0,
+          opsLogisticsManager.BALANCE.terminalFreeCapacityTarget - projectedFree,
+        );
+        const excess = Math.max(0, row.amount - opsLogisticsManager.BALANCE.mineralMax);
+        const unloadAmount = Math.min(row.amount, Math.max(excess, needFree));
+
+        if (unloadAmount <= 0) continue;
+
+        const result = opsLogisticsManager.createMoveRequest(
+          row.resourceType,
+          unloadAmount,
+          room.name,
+          "terminal",
+          "storage",
+          { priority: opsLogisticsManager.BALANCE.priority },
+        );
+        results.push(result);
+        projectedFree += result.requestedAmount || 0;
+      }
+
+      const message =
+        `[OPS] clearTerminal ${room.name}: ${results.length} cleanup request result(s).`;
+      printLine(message);
+      for (let j = 0; j < results.length; j++) {
+        printLine(results[j].message);
+      }
+
+      return {
+        ok: true,
+        roomName: room.name,
+        requests: results,
+        message: message,
+      };
+    }
+
+    const result = opsLogisticsManager.createMoveRequest(
+      resource,
+      amount,
+      roomName,
+      "terminal",
+      "storage",
+    );
+    printLine(result.message);
+    return result;
+  },
+
+  fillTerminal(roomName, resource, amount) {
+    const result = opsLogisticsManager.createMoveRequest(
+      resource,
+      amount,
+      roomName,
+      "storage",
+      "terminal",
     );
     printLine(result.message);
     return result;
