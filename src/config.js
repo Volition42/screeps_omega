@@ -167,6 +167,36 @@ module.exports = {
 
   /*
   Developer Notes:
+  Power / GPL Bootstrap
+
+  ENABLED
+  Master toggle for Power Spawn GPL processing.
+
+  MIN_RCL
+  Power Spawn processing requires an RCL8 room.
+
+  PROCESS_POWER_COST / PROCESS_ENERGY_COST
+  Screeps processPower consumes 1 power and 50 energy per successful call.
+
+  This first phase only processes power already loaded into the Power Spawn.
+  It does not buy power, harvest Power Banks, spawn Power Creeps, or refill the
+  Power Spawn automatically.
+  */
+  POWER: {
+    ENABLED: true,
+    MIN_RCL: 8,
+
+    PROCESS_POWER_COST: 1,
+    PROCESS_ENERGY_COST: 50,
+
+    // Reserved for the next phase where haulers refill the Power Spawn.
+    MIN_STORAGE_ENERGY: 50000,
+    POWER_SPAWN_ENERGY_TARGET: 5000,
+    POWER_SPAWN_POWER_TARGET: 100,
+  },
+
+  /*
+  Developer Notes:
   Attack Operations
 
   Attack operations are manual ops commands. Participating rooms temporarily

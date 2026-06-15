@@ -1,10 +1,13 @@
 const loop = require("kernel_loop");
 const ops = require("ops");
+const marketConsole = require("market_console");
 const buildInfo = require("build_info");
 
 module.exports.loop = function () {
   try {
     ops.registerGlobals();
+    marketConsole.registerGlobals();
+
     if (!Memory.runtime) Memory.runtime = {};
 
     if (Memory.runtime.lastBuildId !== buildInfo.buildId) {
@@ -21,13 +24,11 @@ module.exports.loop = function () {
     delete Memory.runtime.lastError;
   } catch (error) {
     if (!Memory.runtime) Memory.runtime = {};
-
     Memory.runtime.lastError = {
       tick: Game.time,
       message: error && error.message ? error.message : String(error),
       stack: error && error.stack ? error.stack : null,
     };
-
     console.log(
       `[ERR][MAIN] tick=${Game.time} ${
         error && error.stack ? error.stack : error

@@ -6,6 +6,7 @@ const spawnManager = require("spawn_manager");
 const creepManager = require("creep_manager");
 const towerManager = require("tower_manager");
 const advancedStructureManager = require("advanced_structure_manager");
+const powerManager = require("power_manager");
 const controllerSigner = require("controller_signer");
 const directiveManager = require("directive_manager");
 const hud = require("hud");
@@ -88,6 +89,7 @@ module.exports = {
       detailCpu ? roomLabel : null,
       runtimeMode,
     );
+    runStep("power", powerManager.run, powerManager, room, state);
     const signKey = `room.${room.name}.sign`;
     const signDecision = !statsManager.isPastSoftCpuLimit(1)
       ? this.getOptionalDecision(
@@ -106,12 +108,23 @@ module.exports = {
       scheduler.recordSkip(signKey, signDecision.reason);
     }
     if (!runtimeMode.skipDirectives && !statsManager.isPastSoftCpuLimit(1)) {
-      runStep("directives", directiveManager.run, directiveManager, room, state);
+      runStep(
+        "directives",
+        directiveManager.run,
+        directiveManager,
+        room,
+        state,
+      );
     }
     const hudKey = `room.${room.name}.hud`;
-    const hudDecision = !runtimeMode.skipHud && !statsManager.isPastSoftCpuLimit(1)
-      ? this.getOptionalDecision(hudKey, this.getHudInterval(runtimeMode), runtimeMode)
-      : { ok: false, reason: runtimeMode.skipHud ? "pressure" : "soft_cpu" };
+    const hudDecision =
+      !runtimeMode.skipHud && !statsManager.isPastSoftCpuLimit(1)
+        ? this.getOptionalDecision(
+            hudKey,
+            this.getHudInterval(runtimeMode),
+            runtimeMode,
+          )
+        : { ok: false, reason: runtimeMode.skipHud ? "pressure" : "soft_cpu" };
     if (hudDecision.ok) {
       const beforeHud = Game.cpu ? Game.cpu.getUsed() : 0;
       runStep("hud", hud.run, hud, room, state);
@@ -139,9 +152,8 @@ module.exports = {
   },
 
   getOptionalDecision(key, interval, runtimeMode) {
-    const pressure = runtimeMode && runtimeMode.pressure
-      ? runtimeMode.pressure
-      : "normal";
+    const pressure =
+      runtimeMode && runtimeMode.pressure ? runtimeMode.pressure : "normal";
     if (pressure === "normal" && interval <= 1) {
       return { ok: true, reason: "direct" };
     }
@@ -164,13 +176,18 @@ module.exports = {
     if (!Memory.runtime) Memory.runtime = {};
     if (!Memory.runtime.rooms) Memory.runtime.rooms = {};
 
-    const pressure = runtimeMode && runtimeMode.pressure ? runtimeMode.pressure : "normal";
+    const pressure =
+      runtimeMode && runtimeMode.pressure ? runtimeMode.pressure : "normal";
     const snapshotInterval =
       pressure === "critical" ? 50 : pressure === "tight" ? 20 : 10;
     const previous = Memory.runtime.rooms[room.name] || {};
 
     const phase = state && state.phase ? state.phase : null;
-    if (previous.tick && previous.phase === phase && Game.time - previous.tick < snapshotInterval) {
+    if (
+      previous.tick &&
+      previous.phase === phase &&
+      Game.time - previous.tick < snapshotInterval
+    ) {
       return;
     }
     if (
@@ -191,12 +208,15 @@ module.exports = {
         state && state.spawns && state.spawns[0] && state.spawns[0].store
           ? state.spawns[0].store[RESOURCE_ENERGY] || 0
           : null,
-      controllerProgress: room.controller ? room.controller.progress || 0 : null,
+      controllerProgress: room.controller
+        ? room.controller.progress || 0
+        : null,
       controllerLevel: room.controller ? room.controller.level : null,
       roleCounts: state && state.roleCounts ? state.roleCounts : {},
-      hostileCount: state && state.defense && state.defense.homeThreat
-        ? state.defense.homeThreat.hostileCount || 0
-        : 0,
+      hostileCount:
+        state && state.defense && state.defense.homeThreat
+          ? state.defense.homeThreat.hostileCount || 0
+          : 0,
     };
   },
 };
