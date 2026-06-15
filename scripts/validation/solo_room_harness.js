@@ -68,7 +68,19 @@ const STRUCTURE_INVADER_CORE = "invaderCore";
 
 const RESOURCE_ENERGY = "energy";
 const RESOURCE_POWER = "power";
+const RESOURCE_OPS = "ops";
+const RESOURCE_HYDROGEN = "H";
+const RESOURCE_OXYGEN = "O";
+const RESOURCE_UTRIUM = "U";
+const RESOURCE_LEMERGIUM = "L";
+const RESOURCE_KEANIUM = "K";
+const RESOURCE_ZYNTHIUM = "Z";
+const RESOURCE_CATALYST = "X";
 const RESOURCE_GHODIUM = "G";
+const RESOURCE_SILICON = "silicon";
+const RESOURCE_METAL = "metal";
+const RESOURCE_BIOMASS = "biomass";
+const RESOURCE_MIST = "mist";
 
 const WORK = "work";
 const CARRY = "carry";
@@ -226,7 +238,36 @@ Object.assign(global, {
   STRUCTURE_INVADER_CORE,
   RESOURCE_ENERGY,
   RESOURCE_POWER,
+  RESOURCE_OPS,
+  RESOURCE_HYDROGEN,
+  RESOURCE_OXYGEN,
+  RESOURCE_UTRIUM,
+  RESOURCE_LEMERGIUM,
+  RESOURCE_KEANIUM,
+  RESOURCE_ZYNTHIUM,
+  RESOURCE_CATALYST,
   RESOURCE_GHODIUM,
+  RESOURCE_SILICON,
+  RESOURCE_METAL,
+  RESOURCE_BIOMASS,
+  RESOURCE_MIST,
+  RESOURCES_ALL: [
+    RESOURCE_ENERGY,
+    RESOURCE_POWER,
+    RESOURCE_OPS,
+    RESOURCE_HYDROGEN,
+    RESOURCE_OXYGEN,
+    RESOURCE_UTRIUM,
+    RESOURCE_LEMERGIUM,
+    RESOURCE_KEANIUM,
+    RESOURCE_ZYNTHIUM,
+    RESOURCE_CATALYST,
+    RESOURCE_GHODIUM,
+    RESOURCE_SILICON,
+    RESOURCE_METAL,
+    RESOURCE_BIOMASS,
+    RESOURCE_MIST,
+  ],
   WORK,
   CARRY,
   MOVE,
@@ -1543,6 +1584,8 @@ const defenseManager = require("defense_manager");
 const defenseLayout = require("defense_layout");
 const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
+const opsLogisticsManager = require("ops_logistics_manager");
+const marketConsole = require("market_console");
 const kernelMemory = require("kernel_memory");
 const roleWorker = require("role_worker");
 const roleJrWorker = require("role_jrworker");
@@ -6471,6 +6514,386 @@ function addOwnedStorageAndTerminal(room, terminalStore) {
   }
 }
 
+function buildOpsLogisticsRoom(name, options) {
+  const settings = options || {};
+  const room = buildRoomScenario(name, {
+    tick: settings.tick || 1300,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+
+  room.addStructure(
+    createStructure(STRUCTURE_STORAGE, 24, 27, {
+      roomName: room.name,
+      store: settings.storageStore || { energy: 200000 },
+      storeCapacity: settings.storageCapacity || 1000000,
+      hits: 10000,
+      hitsMax: 10000,
+    }),
+  );
+  room.addStructure(
+    createStructure(STRUCTURE_TERMINAL, 25, 32, {
+      roomName: room.name,
+      store: settings.terminalStore || { energy: 10000 },
+      storeCapacity: settings.terminalCapacity || 300000,
+      hits: 3000,
+      hitsMax: 3000,
+      cooldown: 0,
+    }),
+  );
+
+  return room;
+}
+
+function assertOpsLogisticsRequestShape(request, expected) {
+  assert(request, "expected an ops logistics request");
+  assert(request.status === expected.status, `expected status ${expected.status}, got ${request.status}`);
+  assert(request.roomName === expected.roomName, `expected room ${expected.roomName}, got ${request.roomName}`);
+  assert(request.resourceType === expected.resourceType, `expected resource ${expected.resourceType}, got ${request.resourceType}`);
+  assert(request.from === expected.from, `expected from ${expected.from}, got ${request.from}`);
+  assert(request.to === expected.to, `expected to ${expected.to}, got ${request.to}`);
+}
+
+function runOpsLogisticsHarnessCoverageScenario() {
+  let room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_CREATE", {
+    storageStore: { energy: 5000, H: 500 },
+    terminalStore: { energy: 1000 },
+  });
+
+  let result = ops.move(RESOURCE_ENERGY, 1200, room.name, "storage", "terminal");
+  assert(result.ok && !result.skipped, `expected storage -> terminal request, got ${result.message}`);
+  assert(result.request.amount === 1200, `expected request amount 1200, got ${result.request.amount}`);
+  assertOpsLogisticsRequestShape(result.request, {
+    status: "open",
+    roomName: room.name,
+    resourceType: RESOURCE_ENERGY,
+    from: "storage",
+    to: "terminal",
+  });
+
+  result = ops.move(RESOURCE_ENERGY, 500, room.name, "terminal", "storage");
+  assert(result.ok && !result.skipped, `expected terminal -> storage request, got ${result.message}`);
+  assertOpsLogisticsRequestShape(result.request, {
+    status: "open",
+    roomName: room.name,
+    resourceType: RESOURCE_ENERGY,
+    from: "terminal",
+    to: "storage",
+  });
+
+  result = ops.move(RESOURCE_ENERGY, 100, room.name, "container", "terminal");
+  assert(!result.ok, "invalid endpoint should be rejected");
+
+  result = ops.move(RESOURCE_ENERGY, 100, "VAL_OPS_LOGISTICS_MISSING", "storage", "terminal");
+  assert(!result.ok, "missing owned room should be rejected");
+
+  room = buildRoomScenario("VAL_OPS_LOGISTICS_NO_STORAGE", {
+    tick: 1301,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  room.addStructure(
+    createStructure(STRUCTURE_TERMINAL, 25, 32, {
+      roomName: room.name,
+      store: { energy: 1000 },
+      storeCapacity: 300000,
+    }),
+  );
+  result = ops.move(RESOURCE_ENERGY, 100, room.name, "storage", "terminal");
+  assert(!result.ok, "missing storage should be rejected");
+
+  room = buildRoomScenario("VAL_OPS_LOGISTICS_NO_TERMINAL", {
+    tick: 1302,
+    controllerLevel: 8,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  room.addStructure(
+    createStructure(STRUCTURE_STORAGE, 24, 27, {
+      roomName: room.name,
+      store: { energy: 1000 },
+      storeCapacity: 1000000,
+    }),
+  );
+  result = ops.move(RESOURCE_ENERGY, 100, room.name, "storage", "terminal");
+  assert(!result.ok, "missing terminal should be rejected");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_DUP", {
+    tick: 1303,
+    storageStore: { energy: 5000 },
+    terminalStore: { energy: 1000 },
+  });
+  const first = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 1000, room.name, "storage", "terminal");
+  const duplicate = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 500, room.name, "storage", "terminal");
+  assert(first.ok && duplicate.ok && duplicate.skipped, `expected duplicate to be skipped, got ${duplicate.message}`);
+  assert(duplicate.request.id === first.request.id, "duplicate should return the existing open request");
+  assert(duplicate.request.amount === 1000, `duplicate should not merge amount, got ${duplicate.request.amount}`);
+
+  const rows = ops.requests(room.name);
+  assert(rows.some((row) => row.id === first.request.id), "ops.requests should list the logistics request");
+  const cancel = ops.cancel(first.request.id);
+  assert(cancel.ok && cancel.request.status === "canceled", "cancel should mark request canceled");
+  const canceledHauler = createCreep("opsCancelHauler", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 100,
+  });
+  assert(opsLogisticsManager.getHaulerTask(room, canceledHauler) === null, "canceled request should not be claimable");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_CLAIM", {
+    tick: 1304,
+    storageStore: { energy: 1000 },
+    terminalStore: { energy: 1000 },
+  });
+  const claimResult = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 80, room.name, "storage", "terminal");
+  const haulerA = createCreep("opsClaimA", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  const haulerB = createCreep("opsClaimB", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  const taskA = opsLogisticsManager.getHaulerTask(room, haulerA);
+  const taskB = opsLogisticsManager.getHaulerTask(room, haulerB);
+  assert(taskA && taskA.amount === 50, `expected first claim to use creep capacity 50, got ${taskA ? taskA.amount : "none"}`);
+  assert(taskB && taskB.amount === 30, `expected second claim to cap at remaining 30, got ${taskB ? taskB.amount : "none"}`);
+  let listed = opsLogisticsManager.listRequests(room.name).find((row) => row.id === claimResult.request.id);
+  assert(listed.claimed === 80, `expected claimed amount 80, got ${listed.claimed}`);
+
+  delete Game.creeps[haulerB.name];
+  Game.time += 26;
+  listed = opsLogisticsManager.listRequests(room.name).find((row) => row.id === claimResult.request.id);
+  assert(listed.claimed === 0, `expected expired and missing creep claims to be cleaned up, got ${listed.claimed}`);
+
+  opsLogisticsManager.completeHaulerTask(haulerA, 50);
+  assert(claimResult.request.remaining === 30, `expected remaining 30 after completion, got ${claimResult.request.remaining}`);
+  assert(!claimResult.request.claims[haulerA.name], "completion should release hauler claim");
+  assert(!haulerA.memory.opsLogisticsTask, "completion should clear creep task memory");
+
+  const haulerC = createCreep("opsClaimC", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 100,
+  });
+  const taskC = opsLogisticsManager.getHaulerTask(room, haulerC);
+  assert(taskC && taskC.amount === 30, `expected final claim of 30, got ${taskC ? taskC.amount : "none"}`);
+  opsLogisticsManager.completeHaulerTask(haulerC, 30);
+  assert(claimResult.request.remaining === 0, "request should have zero remaining after final completion");
+  assert(claimResult.request.status === "done", `expected done request, got ${claimResult.request.status}`);
+  assert(!claimResult.request.claims[haulerC.name], "final completion should release claim");
+
+  const releaseResult = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 50, room.name, "storage", "terminal");
+  const releaseHauler = createCreep("opsReleaseHauler", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  assert(opsLogisticsManager.getHaulerTask(room, releaseHauler), "expected release hauler to claim request");
+  opsLogisticsManager.releaseHaulerTask(releaseHauler, "test_release");
+  assert(!releaseResult.request.claims[releaseHauler.name], "release should remove claim");
+  assert(!releaseHauler.memory.opsLogisticsTask, "release should clear creep task memory");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_CAPS", {
+    tick: 1305,
+    storageStore: { energy: 40 },
+    terminalStore: { energy: 299980 },
+  });
+  const capped = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 100, room.name, "storage", "terminal");
+  const cappedHauler = createCreep("opsCappedHauler", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  const cappedTask = opsLogisticsManager.getHaulerTask(room, cappedHauler);
+  assert(capped.request.amount === 20, `creation should cap by target free capacity, got ${capped.request.amount}`);
+  assert(cappedTask && cappedTask.amount === 20, `claim should cap by request/source/target/creep limits, got ${cappedTask ? cappedTask.amount : "none"}`);
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_BLOCKS", {
+    tick: 1306,
+    storageStore: { energy: 0 },
+    terminalStore: { energy: 1000 },
+  });
+  Memory.ops = {
+    logistics: {
+      requests: {
+        blocked_empty: {
+          id: "blocked_empty",
+          type: "move",
+          status: "open",
+          roomName: room.name,
+          resourceType: RESOURCE_ENERGY,
+          amount: 50,
+          remaining: 50,
+          from: "storage",
+          to: "terminal",
+          sourceId: room.storage.id,
+          targetId: room.terminal.id,
+          priority: 50,
+          createdAt: Game.time,
+          updatedAt: Game.time,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+      },
+    },
+  };
+  const blockedHauler = createCreep("opsBlockedEmpty", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  assert(opsLogisticsManager.getHaulerTask(room, blockedHauler) === null, "empty source should prevent task assignment");
+  assert(Memory.ops.logistics.requests.blocked_empty.status === "blocked", "empty source should mark request blocked");
+  assert(Memory.ops.logistics.requests.blocked_empty.reason === "source_empty", "empty source should record source_empty reason");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_FULL_TARGET", {
+    tick: 1307,
+    storageStore: { energy: 1000 },
+    terminalStore: { energy: 300000 },
+  });
+  const fullResult = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 50, room.name, "storage", "terminal");
+  assert(!fullResult.ok, "full target should prevent request creation");
+
+  Memory.ops = {
+    logistics: {
+      requests: {
+        blocked_full: {
+          id: "blocked_full",
+          type: "move",
+          status: "open",
+          roomName: room.name,
+          resourceType: RESOURCE_ENERGY,
+          amount: 50,
+          remaining: 50,
+          from: "storage",
+          to: "terminal",
+          sourceId: room.storage.id,
+          targetId: room.terminal.id,
+          priority: 50,
+          createdAt: Game.time,
+          updatedAt: Game.time,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+      },
+    },
+  };
+  const fullHauler = createCreep("opsBlockedFull", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  assert(opsLogisticsManager.getHaulerTask(room, fullHauler) === null, "full target should prevent task assignment");
+  assert(Memory.ops.logistics.requests.blocked_full.status === "blocked", "full target should mark request blocked");
+  assert(Memory.ops.logistics.requests.blocked_full.reason === "target_full", "full target should record target_full reason");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_MISSING_ENDPOINT", {
+    tick: 1308,
+    storageStore: { energy: 1000 },
+    terminalStore: { energy: 1000 },
+  });
+  const missingEndpointResult = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 50, room.name, "storage", "terminal");
+  delete room.terminal;
+  const missingEndpointHauler = createCreep("opsMissingEndpoint", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  assert(opsLogisticsManager.getHaulerTask(room, missingEndpointHauler) === null, "missing endpoint should prevent task assignment");
+  assert(missingEndpointResult.request.status === "blocked", "missing endpoint should mark request blocked");
+  assert(missingEndpointResult.request.reason === "missing_endpoint", "missing endpoint should record reason");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_BALANCE", {
+    tick: 1309,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000, H: 120000 },
+  });
+  const balance = opsLogisticsManager.balanceTerminal(room.name);
+  assert(balance.ok, `expected balanceTerminal ok, got ${balance.message}`);
+  assert(
+    balance.requests.some(function (entry) {
+      return entry.request && entry.request.resourceType === RESOURCE_ENERGY && entry.request.from === "storage" && entry.request.to === "terminal";
+    }),
+    "balanceTerminal should create storage -> terminal energy request below target",
+  );
+  assert(
+    balance.requests.some(function (entry) {
+      return entry.request && entry.request.resourceType === "H" && entry.request.from === "terminal" && entry.request.to === "storage";
+    }),
+    "balanceTerminal should create terminal -> storage mineral excess request",
+  );
+  const duplicateBalance = opsLogisticsManager.balanceTerminal(room.name);
+  assert(
+    duplicateBalance.requests.length > 0 && duplicateBalance.requests.every(function (entry) { return entry.skipped; }),
+    "balanceTerminal should skip duplicate open requests",
+  );
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_BALANCE_IMPOSSIBLE", {
+    tick: 1310,
+    storageStore: { energy: 0 },
+    terminalStore: { energy: 30000 },
+  });
+  const impossibleBalance = opsLogisticsManager.balanceTerminal(room.name);
+  assert(impossibleBalance.ok && impossibleBalance.requests.length === 0, "balanceTerminal should not create impossible requests");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_MARKET", {
+    tick: 1311,
+    storageStore: { energy: 200000, Z: 1000 },
+    terminalStore: { energy: 10000, Z: 250 },
+  });
+  marketConsole.stage("Z", 500, room.name);
+  let marketRows = opsLogisticsManager.listRequests(room.name);
+  assert(
+    marketRows.some(function (row) { return row.resourceType === "Z" && row.from === "storage" && row.to === "terminal"; }),
+    "market.stage should create storage -> terminal ops logistics request",
+  );
+  marketConsole.unstage("Z", 100, room.name);
+  marketRows = opsLogisticsManager.listRequests(room.name);
+  assert(
+    marketRows.some(function (row) { return row.resourceType === "Z" && row.from === "terminal" && row.to === "storage"; }),
+    "market.unstage should create terminal -> storage ops logistics request",
+  );
+  const originalLog = console.log;
+  const marketRequestLines = [];
+  console.log = function (line) {
+    marketRequestLines.push(line);
+  };
+  try {
+    marketConsole.requests(room.name);
+  } finally {
+    console.log = originalLog;
+  }
+  assert(
+    marketRequestLines.some(function (line) {
+      return line.indexOf("storage -> terminal") >= 0 && line.indexOf("Z") >= 0;
+    }),
+    "market.requests should include ops logistics storage -> terminal request",
+  );
+  assert(
+    marketRequestLines.some(function (line) {
+      return line.indexOf("terminal -> storage") >= 0 && line.indexOf("Z") >= 0;
+    }),
+    "market.requests should include ops logistics terminal -> storage request",
+  );
+}
+
 function buildEmpireMineralRooms(options) {
   const settings = options || {};
   const donor = buildRoomScenario("VAL_MINERAL_DONOR", {
@@ -8951,6 +9374,7 @@ function main() {
     ["lab_switch_after_target_met", runLabSwitchAfterTargetMetScenario],
     ["lab_targets_met", runLabTargetsMetScenario],
     ["lab_tight_replan", runLabTightReplanScenario],
+    ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],
     ["empire_mineral_one_transfer", runEmpireMineralOneTransferScenario],
