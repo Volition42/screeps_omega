@@ -6595,6 +6595,8 @@ function installFakeMarket(orders, options) {
   const settings = options || {};
   const orderRows = orders || [];
   const deals = [];
+  const createdOrders = [];
+  const changedOrders = [];
 
   Game.market = {
     credits: settings.credits !== undefined ? settings.credits : 1000000,
@@ -6620,7 +6622,21 @@ function installFakeMarket(orders, options) {
       });
       return OK;
     },
+    createOrder(order) {
+      createdOrders.push(order);
+      return OK;
+    },
+    changeOrderPrice(orderId, newPrice) {
+      changedOrders.push({
+        orderId: orderId,
+        newPrice: newPrice,
+      });
+      return OK;
+    },
   };
+
+  deals.createdOrders = createdOrders;
+  deals.changedOrders = changedOrders;
 
   return deals;
 }
@@ -7516,6 +7532,148 @@ function runOperatorReportCleanupScenario() {
   assert(report.indexOf("requested 1,000") !== -1, `buy report should include requested amount, got ${report}`);
   assert(report.indexOf("bought 75") !== -1, `buy report should include actual bought amount, got ${report}`);
   assert(report.indexOf("limited by order amount") !== -1, `buy report should include limit reason, got ${report}`);
+}
+
+function addOwnedMarketIntelRoom(name, options) {
+  const settings = options || {};
+  const room = new FakeRoom(name, new FakeTerrain());
+  room.setController(
+    createController(20, 20, {
+      roomName: name,
+      level: 8,
+      my: true,
+      owner: { username: "tester" },
+    }),
+  );
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  room.addStructure(
+    createStructure(STRUCTURE_SPAWN, 25, 25, {
+      roomName: name,
+      name: `${name}_spawn`,
+      store: { energy: 300 },
+      storeCapacityResource: { energy: 300 },
+    }),
+  );
+  room.addSource(createSource(15, 25, { roomName: name }));
+  room.addMineral(createMineral(40, 10, { roomName: name }));
+
+  if (settings.storage !== false) {
+    room.addStructure(
+      createStructure(STRUCTURE_STORAGE, 24, 27, {
+        roomName: name,
+        store: settings.storageStore || { energy: 200000, H: 5000 },
+        storeCapacity: 1000000,
+      }),
+    );
+  }
+
+  if (settings.terminal !== false) {
+    room.addStructure(
+      createStructure(STRUCTURE_TERMINAL, 25, 32, {
+        roomName: name,
+        store: settings.terminalStore || { energy: 10000 },
+        storeCapacity: 300000,
+        cooldown: settings.cooldown || 0,
+      }),
+    );
+  }
+
+  return room;
+}
+
+function runMarketIntelligenceReportsScenario() {
+  const readyRoom = buildOpsLogisticsRoom("VAL_MARKET_INTEL_READY", {
+    tick: 1350,
+    storageStore: { energy: 250000, H: 10000 },
+    terminalStore: { energy: 12000, H: 5000 },
+  });
+  const lowEnergyRoom = addOwnedMarketIntelRoom("VAL_MARKET_INTEL_LOW", {
+    terminalStore: { energy: 0, H: 2000 },
+  });
+  const fullRoom = addOwnedMarketIntelRoom("VAL_MARKET_INTEL_FULL", {
+    terminalStore: { energy: 1000, H: 299000 },
+  });
+  const noTerminalRoom = addOwnedMarketIntelRoom("VAL_MARKET_INTEL_NONE", {
+    terminal: false,
+  });
+  const noStorageRoom = addOwnedMarketIntelRoom("VAL_MARKET_INTEL_NOSTORE", {
+    storage: false,
+    terminalStore: { energy: 10000, H: 2000 },
+  });
+
+  Memory.ops = { logistics: { requests: {} } };
+  Memory.market = { requests: {} };
+
+  const deals = installFakeMarket([
+    {
+      id: "buy_H_intel",
+      type: ORDER_BUY,
+      resourceType: "H",
+      amount: 5000,
+      price: 0.71,
+      roomName: "W42N9",
+    },
+  ]);
+  const memoryBefore = JSON.stringify(Memory);
+  const requestCountBefore = opsLogisticsManager.listRequests().length;
+
+  let captured = captureConsoleLines(function () {
+    return marketConsole.help();
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("market.readiness()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.opportunities(resource)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.recommendations()") !== -1; }),
+    `market.help should include Layer 3 intelligence commands, got ${captured.lines.join(" / ")}`,
+  );
+
+  let report = marketConsole.readiness();
+  assert(typeof report === "string", "market.readiness should return a printable string");
+  assert(report.indexOf(`${readyRoom.name} | READY`) !== -1, `readiness should include READY room, got ${report}`);
+  assert(report.indexOf(`${lowEnergyRoom.name} | LOW_ENERGY`) !== -1, `readiness should include LOW_ENERGY room, got ${report}`);
+  assert(report.indexOf(`${fullRoom.name} | FULL`) !== -1, `readiness should include FULL room, got ${report}`);
+  assert(report.indexOf(`${noTerminalRoom.name} | NO_TERMINAL`) !== -1, `readiness should include NO_TERMINAL room, got ${report}`);
+  assert(report.indexOf(`${noStorageRoom.name} | NO_STORAGE`) !== -1, `readiness should include NO_STORAGE room, got ${report}`);
+
+  report = marketConsole.readiness(lowEnergyRoom.name);
+  assert(report.indexOf(`ops.fillTerminal("${lowEnergyRoom.name}", "energy", 10000)`) !== -1, `blocked room readiness should suggest terminal energy fill, got ${report}`);
+
+  report = marketConsole.readiness(fullRoom.name);
+  assert(report.indexOf(`ops.clearTerminal("${fullRoom.name}")`) !== -1, `full room readiness should suggest terminal clear, got ${report}`);
+
+  report = marketConsole.readiness("H");
+  assert(report.indexOf("[MARKET] H readiness") !== -1, `resource readiness should be resource-specific, got ${report}`);
+  assert(report.indexOf(`${readyRoom.name} | READY`) !== -1, `resource readiness should include ready room, got ${report}`);
+  assert(report.indexOf(`${lowEnergyRoom.name} | LOW_ENERGY`) !== -1, `resource readiness should include blocked room, got ${report}`);
+
+  report = marketConsole.opportunities("H");
+  assert(report.indexOf("[MARKET] H opportunities") !== -1, `resource opportunities should have heading, got ${report}`);
+  assert(report.indexOf("ready") !== -1, `resource opportunities should include ready data, got ${report}`);
+  assert(report.indexOf("blocked") !== -1, `resource opportunities should include blocked data, got ${report}`);
+  assert(report.indexOf("maxNow") !== -1, `resource opportunities should include maxNow, got ${report}`);
+  assert(report.indexOf("effective") !== -1, `resource opportunities should include effective price, got ${report}`);
+
+  report = marketConsole.opportunities();
+  assert(typeof report === "string", "market.opportunities should return a printable string");
+  assert(report.split("\n").length <= 10, `market.opportunities default output should be bounded, got ${report}`);
+  assert(report.indexOf("[MARKET] Opportunities") !== -1, `market.opportunities should include heading, got ${report}`);
+
+  report = marketConsole.recommendations();
+  assert(report.indexOf("[MARKET] Recommendations") !== -1, `recommendations should include heading, got ${report}`);
+  assert(report.indexOf("SELL_READY") !== -1, `recommendations should include conservative sell review, got ${report}`);
+  assert(report.indexOf("FILL_ENERGY") !== -1, `recommendations should include energy fill command, got ${report}`);
+  assert(report.indexOf("CLEAR_TERMINAL") !== -1, `recommendations should include terminal clear command, got ${report}`);
+  assert(report.indexOf("market.sellOptions(\"H\")") !== -1, `recommendations should prefer sellOptions before selling, got ${report}`);
+
+  assert(deals.length === 0, `intelligence reports must not execute Game.market.deal, got ${JSON.stringify(deals)}`);
+  assert(deals.createdOrders.length === 0, `intelligence reports must not create market orders, got ${JSON.stringify(deals.createdOrders)}`);
+  assert(deals.changedOrders.length === 0, `intelligence reports must not manipulate order prices, got ${JSON.stringify(deals.changedOrders)}`);
+  assert(
+    opsLogisticsManager.listRequests().length === requestCountBefore,
+    "intelligence reports must not create ops logistics requests",
+  );
+  assert(JSON.stringify(Memory) === memoryBefore, "intelligence reports should not mutate Memory");
 }
 
 function buildEmpireMineralRooms(options) {
@@ -10001,6 +10159,7 @@ function main() {
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
     ["operator_report_cleanup", runOperatorReportCleanupScenario],
+    ["market_intelligence_reports", runMarketIntelligenceReportsScenario],
     ["hauler_execution_order_coverage", runHaulerExecutionOrderCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],

@@ -14,6 +14,12 @@ const CONFIG = {
   sampleAmount: 1000,
   energyCreditValue: 0.3,
   maxAllResourcesToScan: 80,
+  readyEnergy: 1000,
+  healthyEnergy: 10000,
+  freeCapacityMinimum: 1000,
+  congestedFreeCapacity: 20000,
+  sellableMineralMinimum: 1000,
+  intelligenceLimit: 8,
   logPrefix: "[MARKET]",
 };
 
@@ -147,6 +153,472 @@ function terminalFreeCapacity(room) {
   }
 
   return 300000 - _.sum(room.terminal.store);
+}
+
+function terminalUsedCapacity(room) {
+  if (!room || !room.terminal) return 0;
+
+  if (room.terminal.store.getUsedCapacity) {
+    return room.terminal.store.getUsedCapacity();
+  }
+
+  return _.sum(room.terminal.store);
+}
+
+function isKnownResource(resource) {
+  if (!resource || typeof resource !== "string") return false;
+
+  if (typeof RESOURCES_ALL !== "undefined" && Array.isArray(RESOURCES_ALL)) {
+    return RESOURCES_ALL.indexOf(resource) >= 0;
+  }
+
+  return resourceList().indexOf(resource) >= 0 || resource.length > 0;
+}
+
+function sellableResources(room) {
+  if (!room || !room.terminal) return [];
+
+  return storeResources(room.terminal.store)
+    .filter((resource) => resource !== RESOURCE_ENERGY)
+    .map((resource) => ({
+      resource,
+      amount: amountIn(room.terminal.store, resource),
+    }))
+    .filter((row) => row.amount >= CONFIG.sellableMineralMinimum)
+    .sort((a, b) => {
+      if (b.amount !== a.amount) return b.amount - a.amount;
+      return a.resource.localeCompare(b.resource);
+    });
+}
+
+function classifyRoomReadiness(room) {
+  if (!room || !room.controller || !room.controller.my) {
+    return null;
+  }
+
+  const terminal = room.terminal;
+  const terminalEnergy = terminal ? amountIn(terminal.store, RESOURCE_ENERGY) : 0;
+  const freeCapacity = terminal ? terminalFreeCapacity(room) : 0;
+  const usedCapacity = terminal ? terminalUsedCapacity(room) : 0;
+  const cooldown = terminal ? terminal.cooldown || 0 : 0;
+  const blockers = [];
+  let status = "READY";
+
+  if (!terminal || !terminal.my) {
+    status = "NO_TERMINAL";
+    blockers.push("no terminal");
+  } else if (!room.storage) {
+    status = "NO_STORAGE";
+    blockers.push("storage missing");
+  } else if (freeCapacity <= 0) {
+    status = "FULL";
+    blockers.push("terminal full");
+  } else if (terminalEnergy < CONFIG.readyEnergy) {
+    status = "LOW_ENERGY";
+    blockers.push("low terminal energy");
+  } else if (freeCapacity < CONFIG.congestedFreeCapacity) {
+    status = "CONGESTED";
+    blockers.push("terminal congested");
+  }
+
+  if (terminal && cooldown > 0) {
+    blockers.push(`cooldown ${cooldown}`);
+  }
+
+  if (terminal && freeCapacity < CONFIG.freeCapacityMinimum && status !== "FULL") {
+    blockers.push("low terminal free capacity");
+  }
+
+  const sellable = sellableResources(room);
+
+  return {
+    room,
+    roomName: room.name,
+    status,
+    terminalEnergy,
+    freeCapacity,
+    usedCapacity,
+    cooldown,
+    hasStorage: !!room.storage,
+    sellable,
+    topSellable: sellable[0] || null,
+    blockers,
+    ready: status === "READY" && cooldown === 0,
+  };
+}
+
+function readinessRows() {
+  return ownedRooms().map(classifyRoomReadiness).filter(Boolean);
+}
+
+function formatSellable(row) {
+  return row ? `sellable ${row.resource} ${fmt(row.amount)}` : "sellable none";
+}
+
+function readinessCommand(input) {
+  if (input && getOwnedRoom(input)) return roomReadiness(input);
+  if (input && isKnownResource(input)) return resourceReadiness(input);
+  if (input) return printLine(`${CONFIG.logPrefix} Invalid owned room or resource: ${input}`);
+
+  const lines = ["[MARKET] Readiness:"];
+  const rows = readinessRows();
+
+  if (!rows.length) {
+    lines.push("  no owned rooms visible");
+    return printBlock(lines);
+  }
+
+  for (const row of rows) {
+    lines.push(
+      `  ${row.roomName} | ${row.status}` +
+        ` | energy ${fmt(row.terminalEnergy)}` +
+        ` | free ${fmt(row.freeCapacity)}` +
+        ` | ${formatSellable(row.topSellable)}` +
+        (row.blockers.length ? ` | blocker ${row.blockers.join(", ")}` : ""),
+    );
+  }
+
+  return printBlock(lines);
+}
+
+function roomReadiness(roomName) {
+  const room = getOwnedRoom(roomName);
+
+  if (!room) {
+    return printLine(`${CONFIG.logPrefix} Invalid owned room: ${roomName}`);
+  }
+
+  const row = classifyRoomReadiness(room);
+  const lines = [
+    `[MARKET] ${room.name} readiness:`,
+    `  status ${row.status}`,
+    `  terminal energy ${fmt(row.terminalEnergy)}`,
+    `  terminal used/free ${fmt(row.usedCapacity)}/${fmt(row.freeCapacity)}`,
+    `  storage ${row.hasStorage ? "exists" : "missing"}`,
+    `  terminal cooldown ${fmt(row.cooldown)}`,
+    "  sellable resources:",
+  ];
+
+  if (!row.sellable.length) {
+    lines.push("    none above threshold");
+  } else {
+    for (const item of row.sellable.slice(0, CONFIG.optionLimit)) {
+      lines.push(`    ${item.resource}: ${fmt(item.amount)}`);
+    }
+  }
+
+  lines.push(`  blockers: ${row.blockers.length ? row.blockers.join(", ") : "none"}`);
+  lines.push("  suggested commands:");
+
+  const suggestions = readinessSuggestions(row);
+  if (!suggestions.length) {
+    lines.push("    none");
+  } else {
+    for (const suggestion of suggestions) {
+      lines.push(`    ${suggestion}`);
+    }
+  }
+
+  return printBlock(lines);
+}
+
+function resourceReadiness(resource) {
+  const lines = [`[MARKET] ${resource} readiness:`];
+  let seen = false;
+
+  for (const row of readinessRows()) {
+    if (!row.room.terminal) continue;
+
+    const amount = amountIn(row.room.terminal.store, resource);
+    if (amount <= 0) continue;
+    seen = true;
+
+    lines.push(
+      `  ${row.roomName} | ${row.status}` +
+        ` | terminal ${resource} ${fmt(amount)}` +
+        ` | energy ${fmt(row.terminalEnergy)}` +
+        ` | free ${fmt(row.freeCapacity)}` +
+        (row.blockers.length ? ` | blocker ${row.blockers.join(", ")}` : ""),
+    );
+  }
+
+  if (!seen) lines.push("  no owned terminals contain this resource");
+
+  return printBlock(lines);
+}
+
+function readinessSuggestions(row) {
+  const suggestions = [];
+
+  if (row.status === "FULL" || row.status === "CONGESTED") {
+    suggestions.push(`ops.clearTerminal("${row.roomName}")`);
+  }
+
+  if (
+    row.room.terminal &&
+    row.terminalEnergy < CONFIG.healthyEnergy &&
+    row.freeCapacity > 0 &&
+    (row.sellable.length || row.terminalEnergy < CONFIG.readyEnergy)
+  ) {
+    suggestions.push(`ops.fillTerminal("${row.roomName}", "energy", ${CONFIG.healthyEnergy})`);
+  }
+
+  if (row.ready && row.topSellable) {
+    suggestions.push(`market.sellOptions("${row.topSellable.resource}")`);
+  }
+
+  return suggestions;
+}
+
+function getBuyOrders(resource) {
+  return Game.market
+    .getAllOrders({
+      type: ORDER_BUY,
+      resourceType: resource,
+    })
+    .filter((order) => order.amount > 0 && order.roomName);
+}
+
+function analyzeSellOpportunity(resource, room, orders) {
+  const readiness = classifyRoomReadiness(room);
+  const terminal = room.terminal;
+  const available = terminal ? amountIn(terminal.store, resource) : 0;
+  const terminalEnergy = terminal ? amountIn(terminal.store, RESOURCE_ENERGY) : 0;
+  const blockers = readiness ? readiness.blockers.slice() : ["room unavailable"];
+
+  if (!terminal) blockers.push("no terminal resource");
+  if (available <= 0) blockers.push("no terminal resource");
+  if (!orders.length) blockers.push("no buy orders");
+
+  let best = null;
+
+  for (const order of orders) {
+    const sample = Math.min(CONFIG.sampleAmount, available, order.amount);
+    if (sample <= 0) continue;
+
+    const score = scoreSellOrder(order, room.name, sample);
+    const maxByEnergy = maxAmountByTerminalEnergy(
+      room.name,
+      order.roomName,
+      terminalEnergy,
+      Math.min(order.amount, available),
+    );
+    const maxNow =
+      readiness && readiness.ready
+        ? Math.min(order.amount, available, maxByEnergy)
+        : 0;
+    const executable = maxNow > 0;
+
+    if (readiness && readiness.ready && maxByEnergy <= 0) {
+      blockers.push("energy short");
+    }
+
+    const candidate = {
+      resource,
+      room,
+      readiness,
+      order,
+      available,
+      terminalEnergy,
+      maxNow,
+      ready: executable,
+      energyCost: score.energyCost,
+      effectivePrice: score.effectivePrice,
+      blockers: blockers.filter((reason, index, list) => list.indexOf(reason) === index),
+    };
+
+    if (
+      !best ||
+      (candidate.ready !== best.ready ? candidate.ready : false) ||
+      candidate.effectivePrice > best.effectivePrice
+    ) {
+      best = candidate;
+    }
+  }
+
+  if (best) return best;
+
+  return {
+    resource,
+    room,
+    readiness,
+    order: null,
+    available,
+    terminalEnergy,
+    maxNow: 0,
+    ready: false,
+    energyCost: 0,
+    effectivePrice: 0,
+    blockers: blockers.filter((reason, index, list) => list.indexOf(reason) === index),
+  };
+}
+
+function opportunityResources() {
+  const seen = {};
+  const resources = [];
+
+  for (const row of readinessRows()) {
+    for (const item of row.sellable) {
+      if (seen[item.resource]) continue;
+      seen[item.resource] = true;
+      resources.push(item.resource);
+    }
+  }
+
+  return resources.slice(0, CONFIG.maxAllResourcesToScan);
+}
+
+function collectOpportunities(resource) {
+  const resources = resource ? [resource] : opportunityResources();
+  const rows = [];
+
+  for (const res of resources) {
+    const orders = getBuyOrders(res);
+
+    for (const room of ownedRooms()) {
+      if (!room.terminal) continue;
+      const row = analyzeSellOpportunity(res, room, orders);
+      if (resource || row.available > 0 || row.ready) rows.push(row);
+    }
+  }
+
+  rows.sort((a, b) => {
+    if (a.ready !== b.ready) return a.ready ? -1 : 1;
+    if (b.effectivePrice !== a.effectivePrice) return b.effectivePrice - a.effectivePrice;
+    return b.available - a.available;
+  });
+
+  return rows;
+}
+
+function hasActiveRequestsReadOnly() {
+  const opsRequests =
+    Memory.ops &&
+    Memory.ops.logistics &&
+    Memory.ops.logistics.requests
+      ? Memory.ops.logistics.requests
+      : {};
+  const marketRequests =
+    Memory.consoleTools &&
+    Memory.consoleTools.market &&
+    Memory.consoleTools.market.requests
+      ? Memory.consoleTools.market.requests
+      : {};
+
+  for (const id in opsRequests) {
+    if (!Object.prototype.hasOwnProperty.call(opsRequests, id)) continue;
+    const request = opsRequests[id];
+    if (request && (request.status === "open" || request.status === "blocked")) {
+      return true;
+    }
+  }
+
+  for (const roomName in marketRequests) {
+    if (!Object.prototype.hasOwnProperty.call(marketRequests, roomName)) continue;
+    const roomRequests = marketRequests[roomName] || {};
+
+    for (const id in roomRequests) {
+      if (!Object.prototype.hasOwnProperty.call(roomRequests, id)) continue;
+      const request = roomRequests[id];
+      if (request && (request.status === "open" || request.status === "blocked")) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function opportunities(resource) {
+  const rows = collectOpportunities(resource);
+  const lines = [
+    resource
+      ? `[MARKET] ${resource} opportunities:`
+      : "[MARKET] Opportunities:",
+  ];
+  const limit = resource ? CONFIG.optionLimit : CONFIG.intelligenceLimit;
+  const top = rows.slice(0, limit);
+
+  if (!top.length) {
+    lines.push("  no ready opportunities found");
+    lines.push("  likely blockers: no terminal resource, no terminal energy, no buy orders, terminal cooldown");
+    return printBlock(lines);
+  }
+
+  let readyCount = 0;
+  for (const row of top) {
+    if (row.ready) readyCount += 1;
+    lines.push(
+      `  ${row.room.name} | ${row.ready ? "ready" : "blocked " + row.blockers.join(", ")}` +
+        ` | ${row.resource}` +
+        ` | available ${fmt(row.available)}` +
+        ` | maxNow ${fmt(row.maxNow)}` +
+        ` | price ${row.order ? row.order.price.toFixed(4) : "n/a"}` +
+        ` | effective ${row.order ? row.effectivePrice.toFixed(4) : "n/a"}` +
+        ` | energy ${fmt(row.terminalEnergy)}`,
+    );
+  }
+
+  if (readyCount === 0) {
+    const blockers = {};
+    for (const row of rows) {
+      for (const reason of row.blockers) blockers[reason] = true;
+    }
+    lines.push(`  no ready opportunities; likely blockers: ${Object.keys(blockers).sort().join(", ") || "none"}`);
+  }
+
+  return printBlock(lines);
+}
+
+function recommendations() {
+  const lines = ["[MARKET] Recommendations:"];
+  const recs = [];
+
+  for (const row of readinessRows()) {
+    if (row.status === "FULL" || row.status === "CONGESTED") {
+      recs.push({
+        priority: 10,
+        text: `CLEAR_TERMINAL | ${row.roomName} | run ops.clearTerminal("${row.roomName}")`,
+      });
+    }
+
+    if (row.sellable.length && row.terminalEnergy < CONFIG.healthyEnergy && row.freeCapacity > 0) {
+      recs.push({
+        priority: 20,
+        text: `FILL_ENERGY | ${row.roomName} | run ops.fillTerminal("${row.roomName}", "energy", ${CONFIG.healthyEnergy})`,
+      });
+    }
+  }
+
+  const readyOpportunities = collectOpportunities()
+    .filter((row) => row.ready)
+    .slice(0, 3);
+
+  for (const row of readyOpportunities) {
+    recs.push({
+      priority: 30,
+      text: `SELL_READY | ${row.room.name} | ${row.resource} | run market.sellOptions("${row.resource}")`,
+    });
+  }
+
+  if (hasActiveRequestsReadOnly()) {
+    recs.push({
+      priority: 40,
+      text: "REVIEW_REQUESTS | empire | run ops.requests()",
+    });
+  }
+
+  recs.sort((a, b) => a.priority - b.priority);
+
+  if (!recs.length) {
+    lines.push("  none");
+  } else {
+    for (let i = 0; i < Math.min(recs.length, CONFIG.intelligenceLimit); i++) {
+      lines.push(`  ${i + 1}. ${recs[i].text}`);
+    }
+  }
+
+  return printBlock(lines);
 }
 
 function maxAmountByTerminalEnergy(roomName, orderRoomName, terminalEnergy, maxAmount) {
@@ -288,6 +760,14 @@ function help() {
     "  market.buyOptions(resource)",
     "  market.sellOptions()",
     "  market.sellOptions(resource)",
+    "",
+    "[MARKET] Market intelligence:",
+    "  market.readiness()",
+    "  market.readiness(roomName)",
+    "  market.readiness(resource)",
+    "  market.opportunities()",
+    "  market.opportunities(resource)",
+    "  market.recommendations()",
     "",
     "[MARKET] Manual trading:",
     "  market.buy(resource, amount, roomName)",
@@ -1173,6 +1653,9 @@ function registerGlobals() {
 
     buyOptions,
     sellOptions,
+    readiness: readinessCommand,
+    opportunities,
+    recommendations,
     buy,
     sell,
 
@@ -1207,6 +1690,9 @@ module.exports = {
 
   buyOptions,
   sellOptions,
+  readiness: readinessCommand,
+  opportunities,
+  recommendations,
   buy,
   sell,
 

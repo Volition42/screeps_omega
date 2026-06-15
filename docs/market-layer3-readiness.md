@@ -1,51 +1,55 @@
-# Market Layer 3 Readiness Plan
+# Market Layer 3 Intelligence Reports
 
-Layer 3 should not start until terminals are healthy enough for reliable manual operations. Layer 2 must remain the live baseline: ops owns logistics requests, market uses ops for prep/staging, and every buy or sell deal is explicitly operator-driven.
+Layer 3 starts with operator decision support only. These commands analyze terminal readiness, sell opportunities, and conservative next steps while preserving the Layer 2 rule that all logistics and market execution remain explicit operator actions.
 
-This document is planning only. It does not authorize or imply Layer 3 runtime automation.
+## Layer 3.0 Readiness
 
-## Candidate Layer 3 Work
+```js
+market.readiness()
+market.readiness("W42N9")
+market.readiness("H")
+```
 
-- refine `market.planSells()` into clearer readiness and priority reporting
-- refine `market.planBuys()` into clearer shortage and affordability reporting
-- add `market.prepareSell(resource, amount, roomName)` to create request-backed prep only
-- add `market.prepareBuy(resource, amount, roomName)` to create request-backed prep only
-- optionally add semi-automatic order selection recommendations
+Readiness reports show owned terminal status, terminal energy, free capacity, sellable resources, blockers, and suggested manual commands such as `ops.clearTerminal("W42N9")`, `ops.fillTerminal("W42N9", "energy", 10000)`, or `market.sellOptions("H")`.
 
-## Explicitly Prohibited For Now
+Statuses are conservative: `READY`, `LOW_ENERGY`, `CONGESTED`, `FULL`, `NO_TERMINAL`, and `NO_STORAGE`.
 
-- autonomous buying
-- autonomous selling
-- autonomous `terminal.send` balancing
-- cross-room terminal arbitrage
-- order manipulation bots
+## Layer 3.1 Opportunities
 
-## Safety Gates
+```js
+market.opportunities()
+market.opportunities("H")
+```
 
-Layer 3 proposals must include:
+Opportunity reports compare terminal resource availability with market buy orders. They show readiness, available amount, estimated `maxNow`, order price, effective price after estimated terminal energy cost, terminal energy, and blocker reasons.
 
-- dry-run first
-- request-backed prep only
-- explicit operator confirmation for any deal
-- hard limits for credits, amount, and terminal energy
-- clear requested vs executed reporting
+The empire-wide report is bounded by default to avoid console spam.
 
-Any command that can execute a market deal must be manual, visible, and bounded.
+## Layer 3.2 Recommendations
 
-## Proposed Layer 3 Phases
+```js
+market.recommendations()
+```
 
-- Layer 3.0 market readiness reports
-- Layer 3.1 `prepareSell`/`prepareBuy` request generation
-- Layer 3.2 dry-run deal planner
-- Layer 3.3 manual execute from plan id
-- Layer 3.4 optional recurring advisory reports
+Recommendations combine readiness, terminal hygiene, active request awareness, and ready sell opportunities. Output is command-first and conservative, for example:
 
-## Readiness Checklist
+```js
+ops.clearTerminal("W41N7")
+ops.fillTerminal("W41N8", "energy", 10000)
+market.sellOptions("H")
+ops.requests()
+```
 
-Before Layer 3 implementation starts:
+## No-Execution Boundary
 
-- `ops.terminalStatus()` reports mostly healthy terminals.
-- Stale active logistics requests are cleared or understood.
-- Terminal hygiene commands have been used live enough to trust request throughput.
-- Market sell and buy reports clearly show requested amount, executed amount, and limiting reason.
-- Operators agree on maximum deal size, credit spend, and terminal energy thresholds.
+Market intelligence commands do not:
+
+- execute `Game.market.deal`
+- create market orders
+- change market order prices
+- create ops logistics requests
+- send terminal resources
+- schedule recurring jobs
+- perform autonomous buying, selling, balancing, or arbitrage
+
+Use existing manual commands when you choose to act on a report: `ops.clearTerminal`, `ops.fillTerminal`, `market.sellOptions`, `market.buyOptions`, `market.sell`, and `market.buy`.
