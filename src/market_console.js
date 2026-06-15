@@ -1,3 +1,4 @@
+const opsLogisticsManager = require("ops_logistics_manager");
 const marketRequestManager = require("market_request_manager");
 
 const VERSION = "2.0.0-layer2-market-console";
@@ -247,6 +248,7 @@ function help() {
     "",
     "[MARKET] Internal terminal logistics:",
     "  market.stage(resource, amount, roomName)",
+    "  market.unstage(resource, amount, roomName)",
     "  market.requests()",
     "  market.requests(roomName)",
     "  market.cancel(requestId)",
@@ -496,21 +498,37 @@ function surplus() {
 }
 
 function stage(resource, amount, roomName) {
-  const result = marketRequestManager.createStageRequest(
+  const result = opsLogisticsManager.createMoveRequest(
     resource,
     amount,
     roomName,
+    "storage",
+    "terminal",
+  );
+
+  return printLine(result.message);
+}
+
+function unstage(resource, amount, roomName) {
+  const result = opsLogisticsManager.createMoveRequest(
+    resource,
+    amount,
+    roomName,
+    "terminal",
+    "storage",
   );
 
   return printLine(result.message);
 }
 
 function requests(roomName) {
-  const rows = marketRequestManager.listRequests(roomName);
+  const rows = opsLogisticsManager
+    .listRequests(roomName)
+    .concat(marketRequestManager.listRequests(roomName));
   const lines = [
     roomName
       ? `[MARKET] Requests for ${roomName}:`
-      : "[MARKET] Market staging requests:",
+      : "[MARKET] Market-compatible logistics requests:",
   ];
 
   if (!rows.length) {
@@ -520,11 +538,13 @@ function requests(roomName) {
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
+    const from = row.from || row.source || "storage";
+    const to = row.to || row.target || "terminal";
 
     lines.push(
       `  ${row.id} | ${row.status} | ${row.roomName}` +
-        ` | ${row.type}` +
         ` | ${row.resourceType}` +
+        ` | ${from} -> ${to}` +
         ` | remaining ${fmt(row.remaining)}/${fmt(row.amount)}` +
         ` | claimed ${fmt(row.claimed)}`,
     );
@@ -534,7 +554,12 @@ function requests(roomName) {
 }
 
 function cancel(requestId) {
-  const result = marketRequestManager.cancelRequest(requestId);
+  let result = opsLogisticsManager.cancelRequest(requestId);
+
+  if (!result.ok) {
+    result = marketRequestManager.cancelRequest(requestId);
+  }
+
   return printLine(result.message);
 }
 
@@ -969,6 +994,7 @@ function registerGlobals() {
     surplus,
 
     stage,
+    unstage,
     requests,
     cancel,
     send,
@@ -1002,6 +1028,7 @@ module.exports = {
   surplus,
 
   stage,
+  unstage,
   requests,
   cancel,
   send,

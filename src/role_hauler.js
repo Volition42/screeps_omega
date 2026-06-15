@@ -6,7 +6,8 @@ Purpose:
 - Pull energy from source-side logistics
 - Deliver energy using shared room-wide priority logic
 - Support emergency defense and spawn recovery first
-- Support operator-created market staging requests from storage to terminal
+- Support operator-created ops logistics requests between storage and terminal
+- Preserve compatibility with legacy market staging requests
 
 Delivery priority:
 Hostile pressure:
@@ -24,10 +25,10 @@ Normal mode:
 - storage
 - towers below reserve threshold
 
-Layer 2 market staging:
-- market.stage(resource, amount, roomName) creates a Memory request
-- haulers in that room move requested resources from storage to terminal
-- market staging runs before normal advanced structure hauling
+Layer 2.1 ops logistics:
+- ops.move(resource, amount, roomName, from, to) creates a Memory request
+- haulers in that room move requested resources between storage and terminal
+- ops logistics runs before legacy market staging and normal advanced hauling
 
 Pickup priority:
 Normal mode:
@@ -42,6 +43,7 @@ Emergency fallback:
 
 const utils = require("utils");
 const advancedStructureManager = require("advanced_structure_manager");
+const opsLogisticsManager = require("ops_logistics_manager");
 const marketRequestManager = require("market_request_manager");
 
 const MOVE_OPTIONS = {
@@ -54,6 +56,10 @@ module.exports = {
       options && options.thinkInterval ? options.thinkInterval : 1;
     const runtimeCache = utils.getRoomRuntimeCache(creep.room);
     const state = runtimeCache ? runtimeCache.state : null;
+
+    if (this.runOpsLogisticsRequest(creep, thinkInterval)) {
+      return;
+    }
 
     if (this.runMarketRequest(creep, thinkInterval)) {
       return;
@@ -351,6 +357,99 @@ module.exports = {
       creep.moveTo(pickup, MOVE_OPTIONS);
     } else if (withdrawResult !== OK) {
       marketRequestManager.releaseHaulerTask(
+        creep,
+        "withdraw_result_" + withdrawResult,
+      );
+    }
+
+    return true;
+  },
+
+  runOpsLogisticsRequest(creep, thinkInterval) {
+    const totalCarry = creep.store.getUsedCapacity();
+    const hasStoredTask = !!creep.memory.opsLogisticsTask;
+
+    if (!hasStoredTask && creep.memory.marketTask) {
+      return false;
+    }
+
+    if (!hasStoredTask && totalCarry > 0) {
+      return false;
+    }
+
+    if (!hasStoredTask && totalCarry === 0) {
+      if (!this.shouldThink(creep, thinkInterval, "haulerOpsLogistics")) {
+        return false;
+      }
+
+      const nextTask = opsLogisticsManager.getHaulerTask(creep.room, creep);
+      if (!nextTask) return false;
+    }
+
+    const task = creep.memory.opsLogisticsTask;
+    if (!task) return false;
+
+    const resourceType = task.resourceType;
+
+    if (!this.hasOnlyResource(creep, resourceType)) {
+      opsLogisticsManager.releaseHaulerTask(creep, "mixed_carry");
+      return false;
+    }
+
+    const pickup = Game.getObjectById(task.pickupId);
+    const delivery = Game.getObjectById(task.deliveryId);
+
+    if (!pickup || !delivery) {
+      opsLogisticsManager.releaseHaulerTask(creep, "missing_structure");
+      return false;
+    }
+
+    if (this.getStoredAmount(creep, resourceType) > 0) {
+      const carriedAmount = this.getStoredAmount(creep, resourceType);
+      const transferAmount =
+        typeof task.amount === "number" && task.amount > 0
+          ? Math.min(task.amount, carriedAmount)
+          : carriedAmount;
+
+      const transferResult = creep.transfer(
+        delivery,
+        resourceType,
+        transferAmount,
+      );
+
+      if (transferResult === ERR_NOT_IN_RANGE) {
+        creep.moveTo(delivery, MOVE_OPTIONS);
+      } else if (transferResult === OK) {
+        opsLogisticsManager.completeHaulerTask(creep, transferAmount);
+      } else {
+        opsLogisticsManager.releaseHaulerTask(
+          creep,
+          "transfer_result_" + transferResult,
+        );
+      }
+
+      return true;
+    }
+
+    if (this.getStoredAmount(pickup, resourceType) <= 0) {
+      opsLogisticsManager.releaseHaulerTask(creep, "source_empty");
+      return false;
+    }
+
+    const withdrawAmount =
+      typeof task.amount === "number" && task.amount > 0
+        ? Math.min(task.amount, creep.store.getFreeCapacity(resourceType))
+        : null;
+
+    const withdrawResult =
+      typeof withdrawAmount === "number" && withdrawAmount > 0
+        ? creep.withdraw(pickup, resourceType, withdrawAmount)
+        : creep.withdraw(pickup, resourceType);
+
+    if (withdrawResult === ERR_NOT_IN_RANGE) {
+      creep.moveTo(pickup, MOVE_OPTIONS);
+    } else if (withdrawResult !== OK) {
+      opsLogisticsManager.releaseHaulerTask(
         creep,
         "withdraw_result_" + withdrawResult,
       );

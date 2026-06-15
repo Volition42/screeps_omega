@@ -4,6 +4,7 @@ const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const invasionLog = require("invasion_log");
+const opsLogisticsManager = require("ops_logistics_manager");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -102,6 +103,10 @@ function buildToggleResult(label, enabled) {
     enabled: enabled,
     label: label,
   };
+}
+
+function fmt(value) {
+  return Math.round(value || 0).toLocaleString();
 }
 
 function getTargetRoomOrPrintError(roomName, commandLabel) {
@@ -263,6 +268,34 @@ function getConsoleCommandHelp() {
       example: "ops.tickRate(5)",
     },
     {
+      command: "ops.move(resource, amount, roomName, from, to)",
+      description:
+        "Create a room-local logistics request between storage and terminal.",
+      example: 'ops.move("H", 50000, "W42N9", "terminal", "storage")',
+    },
+    {
+      command: "ops.requests([roomName])",
+      description: "Show active and historical ops logistics requests.",
+      example: 'ops.requests("W42N9")',
+    },
+    {
+      command: "ops.cancel(requestId)",
+      description: "Cancel an ops logistics request.",
+      example: 'ops.cancel("ol_123_W42N9_H_1")',
+    },
+    {
+      command: "ops.balanceTerminal(roomName)",
+      description:
+        "Create conservative terminal hygiene requests for one owned room.",
+      example: 'ops.balanceTerminal("W42N9")',
+    },
+    {
+      command: "ops.balanceTerminals()",
+      description:
+        "Create conservative terminal hygiene requests for owned rooms with storage and terminal.",
+      example: "ops.balanceTerminals()",
+    },
+    {
       command: "ops.expand(targetRoom, [parentRoom])",
       description: "Start or update a manual expansion plan.",
       example: 'ops.expand("W5N6", "W5N5")',
@@ -412,6 +445,21 @@ module.exports = {
       },
       tickSpeed: function (sampleTicks) {
         return module.exports.tickRate(sampleTicks);
+      },
+      move: function (resource, amount, roomName, from, to) {
+        return module.exports.move(resource, amount, roomName, from, to);
+      },
+      requests: function (roomName) {
+        return module.exports.requests(roomName);
+      },
+      cancel: function (requestId) {
+        return module.exports.cancel(requestId);
+      },
+      balanceTerminal: function (roomName) {
+        return module.exports.balanceTerminal(roomName);
+      },
+      balanceTerminals: function () {
+        return module.exports.balanceTerminals();
       },
       expand: function (targetRoom, parentRoom) {
         return module.exports.expand(targetRoom, parentRoom);
@@ -622,6 +670,84 @@ module.exports = {
     return printLine(
       `[OPS] Tick rate armed: sampling ${resolvedSampleTicks} ticks starting next tick.`,
     );
+  },
+
+  move(resource, amount, roomName, from, to) {
+    const result = opsLogisticsManager.createMoveRequest(
+      resource,
+      amount,
+      roomName,
+      from,
+      to,
+    );
+    printLine(result.message);
+    return result;
+  },
+
+  requests(roomName) {
+    const rows = opsLogisticsManager.listRequests(roomName);
+    const lines = [
+      roomName
+        ? `[OPS] Logistics requests for ${roomName}:`
+        : "[OPS] Logistics requests:",
+    ];
+
+    if (!rows.length) {
+      lines.push("  none");
+      printBlock(lines);
+      return rows;
+    }
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      lines.push(
+        `  ${row.id} | ${row.status} | ${row.roomName}` +
+          ` | ${row.resourceType}` +
+          ` | ${row.from} -> ${row.to}` +
+          ` | remaining ${fmt(row.remaining)}/${fmt(row.amount)}` +
+          ` | claimed ${fmt(row.claimed)}`,
+      );
+    }
+
+    printBlock(lines);
+    return rows;
+  },
+
+  cancel(requestId) {
+    const result = opsLogisticsManager.cancelRequest(requestId);
+    printLine(result.message);
+    return result;
+  },
+
+  balanceTerminal(roomName) {
+    const result = opsLogisticsManager.balanceTerminal(roomName);
+    printLine(result.message);
+
+    if (result.requests && result.requests.length) {
+      for (let i = 0; i < result.requests.length; i++) {
+        printLine(result.requests[i].message);
+      }
+    }
+
+    return result;
+  },
+
+  balanceTerminals() {
+    const result = opsLogisticsManager.balanceTerminals();
+    printLine(result.message);
+
+    for (let i = 0; i < result.rooms.length; i++) {
+      const roomResult = result.rooms[i];
+      printLine(roomResult.message);
+      if (!roomResult.requests) continue;
+
+      for (let j = 0; j < roomResult.requests.length; j++) {
+        printLine(roomResult.requests[j].message);
+      }
+    }
+
+    return result;
   },
 
   expand(targetRoom, parentRoom) {
