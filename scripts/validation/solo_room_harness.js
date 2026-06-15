@@ -1597,12 +1597,14 @@ const roleRemoteWorker = require("role_remoteworker");
 const roleRemoteMiner = require("role_remoteminer");
 const roleRemoteHauler = require("role_remotehauler");
 const roleDefender = require("role_defender");
+const roleHauler = require("role_hauler");
 const towerManager = require("tower_manager");
 const statsManager = require("stats_manager");
 const utils = require("utils");
 const config = require("config");
 const stamps = require("stamp_library");
 const scheduler = require("scheduler");
+const marketRequestManager = require("market_request_manager");
 
 function getOccupiedKey(x, y) {
   return `${x}:${y}`;
@@ -6561,6 +6563,241 @@ function assertOpsLogisticsRequestShape(request, expected) {
   assert(request.to === expected.to, `expected to ${expected.to}, got ${request.to}`);
 }
 
+function buildHaulerExecutionOrderRoom(name, options) {
+  const settings = options || {};
+  const room = buildLabOpsRoom(name, {
+    tick: settings.tick || 1320,
+    storageEnergy: settings.storageEnergy || 200000,
+    terminalStore: settings.terminalStore || { energy: 10000, U: 500, H: 500 },
+    labStores: settings.labStores || [{}, {}, {}, {}, {}],
+    creeps: settings.creeps || [
+      { name: `${name}_hauler`, role: "hauler", x: 24, y: 27, store: {}, storeCapacity: 50 },
+    ],
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  return room;
+}
+
+function collectHaulerExecutionState(room) {
+  const state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  return state;
+}
+
+function getLastCreepAction(creep) {
+  for (let i = currentRuntime.creepActions.length - 1; i >= 0; i--) {
+    if (currentRuntime.creepActions[i].creep === creep.name) {
+      return currentRuntime.creepActions[i];
+    }
+  }
+  return null;
+}
+
+function assertHaulerAction(creep, action, targetId, message) {
+  const last = getLastCreepAction(creep);
+  assert(last, `${message}: expected ${action}, got no action`);
+  assert(last.action === action, `${message}: expected ${action}, got ${last.action}`);
+  assert(last.targetId === targetId, `${message}: expected target ${targetId}, got ${last.targetId}`);
+}
+
+function assertHaulerTargetAction(creep, targetId, message) {
+  const last = getLastCreepAction(creep);
+  assert(last, `${message}: expected action targeting ${targetId}, got no action`);
+  assert(last.targetId === targetId, `${message}: expected target ${targetId}, got ${last.targetId}`);
+}
+
+function firstSourceContainer(room) {
+  const containers = room
+    .find(FIND_STRUCTURES)
+    .filter(function (structure) {
+      return structure.structureType === STRUCTURE_CONTAINER;
+    });
+  assert(containers.length > 0, "expected at least one source container");
+  return containers[0];
+}
+
+function runHaulerExecutionOrderCoverageScenario() {
+  let room = buildHaulerExecutionOrderRoom("VAL_HAULER_ORDER_OPS_MARKET", {
+    tick: 1320,
+    storageEnergy: 200000,
+    terminalStore: { energy: 10000 },
+  });
+  room.storage.store.H = 500;
+  room.storage.store.Z = 500;
+  collectHaulerExecutionState(room);
+  let hauler = Game.creeps.VAL_HAULER_ORDER_OPS_MARKET_hauler;
+  const opsResult = opsLogisticsManager.createMoveRequest("H", 50, room.name, "storage", "terminal");
+  const marketResult = marketRequestManager.createStageRequest("Z", 50, room.name);
+  assert(opsResult.ok, `expected ops logistics request, got ${opsResult.message}`);
+  assert(marketResult.ok, `expected legacy market request, got ${marketResult.message}`);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.opsLogisticsTask, "ops logistics should outrank legacy market request");
+  assert(!hauler.memory.marketTask, "legacy market task should not be selected while ops logistics is available");
+  assert(!hauler.memory.advancedTask, "advanced task should not be selected while ops logistics is available");
+  assertHaulerTargetAction(hauler, room.storage.id, "ops logistics priority");
+
+  room = buildHaulerExecutionOrderRoom("VAL_HAULER_ORDER_MARKET_ADV", {
+    tick: 1321,
+    terminalStore: { energy: 10000, U: 500, H: 500 },
+  });
+  room.storage.store.Z = 500;
+  collectHaulerExecutionState(room);
+  hauler = Game.creeps.VAL_HAULER_ORDER_MARKET_ADV_hauler;
+  const advancedPreview = advancedStructureManager.getHaulerTask(room, hauler, utils.getRoomRuntimeCache(room).state);
+  assert(advancedPreview && advancedPreview.label === "lab_input", `expected lab_input advanced task, got ${advancedPreview ? advancedPreview.label : "none"}`);
+  delete hauler.memory.advancedTask;
+  const legacyMarket = marketRequestManager.createStageRequest("Z", 50, room.name);
+  assert(legacyMarket.ok, `expected legacy market request, got ${legacyMarket.message}`);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.marketTask, "legacy market should outrank advanced structure task");
+  assert(!hauler.memory.advancedTask, "advanced task should not be selected while legacy market is available");
+  assertHaulerTargetAction(hauler, room.storage.id, "legacy market priority");
+
+  room = buildHaulerExecutionOrderRoom("VAL_HAULER_ORDER_ADV_NORMAL", {
+    tick: 1322,
+    terminalStore: { energy: 10000, U: 500, H: 500 },
+  });
+  room.storage.store.energy = 200000;
+  collectHaulerExecutionState(room);
+  hauler = Game.creeps.VAL_HAULER_ORDER_ADV_NORMAL_hauler;
+  const sourceContainer = firstSourceContainer(room);
+  assert((sourceContainer.store.energy || 0) > 0, "expected normal pickup opportunity");
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.advancedTask, "advanced structure task should outrank normal hauling");
+  assert(!hauler.memory.pickupTargetId, "normal pickup target should not be selected while advanced task is available");
+  assert(!hauler.memory.deliveryTargetId, "normal delivery target should not be selected while advanced task is available");
+  assertHaulerTargetAction(hauler, room.terminal.id, "advanced structure priority");
+
+  room = buildOpsLogisticsRoom("VAL_HAULER_ORDER_NORMAL_PICKUP", {
+    tick: 1323,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
+  collectHaulerExecutionState(room);
+  hauler = createCreep("normalPickupHauler", "hauler", 16, 25, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  const normalPickup = firstSourceContainer(room);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.pickupTargetId === normalPickup.id, "normal hauling should select an energy pickup target");
+  assert(hauler.memory.pickupTargetKind === "withdraw", "normal hauling should record pickup target kind");
+  assertHaulerAction(hauler, "withdraw", normalPickup.id, "normal pickup fallback");
+
+  room = buildOpsLogisticsRoom("VAL_HAULER_ORDER_NORMAL_DELIVER", {
+    tick: 1324,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
+  room.spawn.store.energy = 0;
+  collectHaulerExecutionState(room);
+  hauler = createCreep("normalDeliveryHauler", "hauler", 25, 25, {
+    roomName: room.name,
+    memory: { delivering: true },
+    store: { energy: 50 },
+    storeCapacity: 50,
+  });
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.deliveryTargetId === room.spawn.id, "normal hauling should select an energy delivery target");
+  assertHaulerAction(hauler, "transfer", room.spawn.id, "normal delivery fallback");
+
+  room = buildHaulerExecutionOrderRoom("VAL_HAULER_ORDER_CARRY_SAFETY", {
+    tick: 1325,
+    terminalStore: { energy: 10000, U: 500, H: 500 },
+  });
+  room.storage.store.H = 500;
+  room.storage.store.Z = 500;
+  collectHaulerExecutionState(room);
+  hauler = createCreep("carrySafetyHauler", "hauler", 25, 31, {
+    roomName: room.name,
+    store: { Z: 25 },
+    storeCapacity: 50,
+  });
+  const staleAdvanced = advancedStructureManager.getHaulerTask(
+    room,
+    createCreep("carrySafetyPreview", "hauler", 24, 27, {
+      roomName: room.name,
+      store: {},
+      storeCapacity: 50,
+    }),
+    utils.getRoomRuntimeCache(room).state,
+  );
+  assert(staleAdvanced, "expected advanced task for carry-state safety setup");
+  hauler.memory.advancedTask = Object.assign({}, staleAdvanced);
+  opsLogisticsManager.createMoveRequest("H", 50, room.name, "storage", "terminal");
+  marketRequestManager.createStageRequest("Z", 50, room.name);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(!hauler.memory.opsLogisticsTask, "non-matching carry should not claim ops logistics task");
+  assert(!hauler.memory.marketTask, "non-matching carry should not claim legacy market task");
+  assert(!hauler.memory.advancedTask, "non-matching carry should clear stale advanced task");
+  assert(!hauler.memory.pickupTargetId, "non-matching carry should not create normal pickup memory");
+  assert(!hauler.memory.deliveryTargetId, "non-matching carry should not create normal delivery memory");
+  assertHaulerAction(hauler, "transfer", room.terminal.id, "non-matching advanced carry return");
+
+  room = buildHaulerExecutionOrderRoom("VAL_HAULER_ORDER_CLEANUP", {
+    tick: 1326,
+    terminalStore: { energy: 10000, U: 50, H: 50 },
+  });
+  room.storage.store.Z = 500;
+  collectHaulerExecutionState(room);
+  hauler = createCreep("cleanupMarketHauler", "hauler", 24, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  const cleanupMarket = marketRequestManager.createStageRequest("Z", 50, room.name);
+  assert(cleanupMarket.ok, `expected cleanup market request, got ${cleanupMarket.message}`);
+  hauler.pos = new RoomPosition(room.storage.pos.x, room.storage.pos.y, room.name);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.marketTask, "expected market task before cleanup");
+  hauler.pos = new RoomPosition(25, 32, room.name);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(!hauler.memory.marketTask, "completed legacy market task should clear marketTask memory");
+
+  room = buildHaulerExecutionOrderRoom("VAL_HAULER_ORDER_ADV_CLEANUP", {
+    tick: 1327,
+    terminalStore: { energy: 10000, U: 500, H: 500 },
+    creeps: [
+      { name: "VAL_HAULER_ORDER_ADV_CLEANUP_hauler", role: "hauler", x: 25, y: 32, store: {}, storeCapacity: 500 },
+    ],
+  });
+  collectHaulerExecutionState(room);
+  hauler = Game.creeps.VAL_HAULER_ORDER_ADV_CLEANUP_hauler;
+  hauler.pos = new RoomPosition(room.terminal.pos.x, room.terminal.pos.y, room.name);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.advancedTask, "expected advanced task before cleanup");
+  const advancedTask = hauler.memory.advancedTask;
+  const advancedDelivery = Game.getObjectById(advancedTask.deliveryId);
+  hauler.pos = new RoomPosition(advancedDelivery.pos.x, advancedDelivery.pos.y, room.name);
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(!hauler.memory.advancedTask, "completed advanced task should clear advancedTask memory");
+
+  room = buildOpsLogisticsRoom("VAL_HAULER_ORDER_PICKUP_CLEANUP", {
+    tick: 1328,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
+  collectHaulerExecutionState(room);
+  hauler = createCreep("cleanupPickupHauler", "hauler", 16, 25, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(hauler.memory.pickupTargetId && hauler.memory.pickupTargetKind, "expected normal pickup memory before cleanup");
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(!hauler.memory.pickupTargetId, "full hauler should clear pickupTargetId when switching to delivery");
+  assert(!hauler.memory.pickupTargetKind, "full hauler should clear pickupTargetKind when switching to delivery");
+
+  hauler.memory.deliveryTargetId = room.spawn.id;
+  hauler.memory.delivering = true;
+  hauler.store.energy = 0;
+  roleHauler.run(hauler, { thinkInterval: 1 });
+  assert(!hauler.memory.deliveryTargetId, "empty delivering hauler should clear deliveryTargetId");
+}
+
 function runOpsLogisticsHarnessCoverageScenario() {
   let room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_CREATE", {
     storageStore: { energy: 5000, H: 500 },
@@ -9375,6 +9612,7 @@ function main() {
     ["lab_targets_met", runLabTargetsMetScenario],
     ["lab_tight_replan", runLabTightReplanScenario],
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
+    ["hauler_execution_order_coverage", runHaulerExecutionOrderCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],
     ["empire_mineral_one_transfer", runEmpireMineralOneTransferScenario],
