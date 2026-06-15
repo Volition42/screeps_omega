@@ -1,4 +1,6 @@
-const VERSION = "1.0.0-layer1-market-console";
+const marketRequestManager = require("market_request_manager");
+
+const VERSION = "2.0.0-layer2-market-console";
 
 const CONFIG = {
   terminalEnergyReserve: 30000,
@@ -244,6 +246,10 @@ function help() {
     "  market.surplus()",
     "",
     "[MARKET] Internal terminal logistics:",
+    "  market.stage(resource, amount, roomName)",
+    "  market.requests()",
+    "  market.requests(roomName)",
+    "  market.cancel(requestId)",
     "  market.send(resource, amount, fromRoom, toRoom)",
     "",
     "[MARKET] Market scanning:",
@@ -489,6 +495,49 @@ function surplus() {
   return printBlock(lines);
 }
 
+function stage(resource, amount, roomName) {
+  const result = marketRequestManager.createStageRequest(
+    resource,
+    amount,
+    roomName,
+  );
+
+  return printLine(result.message);
+}
+
+function requests(roomName) {
+  const rows = marketRequestManager.listRequests(roomName);
+  const lines = [
+    roomName
+      ? `[MARKET] Requests for ${roomName}:`
+      : "[MARKET] Market staging requests:",
+  ];
+
+  if (!rows.length) {
+    lines.push("  none");
+    return printBlock(lines);
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+
+    lines.push(
+      `  ${row.id} | ${row.status} | ${row.roomName}` +
+        ` | ${row.type}` +
+        ` | ${row.resourceType}` +
+        ` | remaining ${fmt(row.remaining)}/${fmt(row.amount)}` +
+        ` | claimed ${fmt(row.claimed)}`,
+    );
+  }
+
+  return printBlock(lines);
+}
+
+function cancel(requestId) {
+  const result = marketRequestManager.cancelRequest(requestId);
+  return printLine(result.message);
+}
+
 function send(resource, amount, fromRoom, toRoom) {
   amount = Number(amount);
 
@@ -629,17 +678,27 @@ function sellOptions(resource) {
         if (sample <= 0) continue;
 
         const score = scoreSellOrder(order, room.name, sample);
+        const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+        const ready =
+          terminalReady(room) &&
+          terminalEnergy >= score.energyCost &&
+          available >= sample;
 
         scored.push({
           order,
           room,
+          terminalEnergy,
+          ready,
           energyCost: score.energyCost,
           effectivePrice: score.effectivePrice,
         });
       }
     }
 
-    scored.sort((a, b) => b.effectivePrice - a.effectivePrice);
+    scored.sort((a, b) => {
+      if (a.ready !== b.ready) return a.ready ? -1 : 1;
+      return b.effectivePrice - a.effectivePrice;
+    });
 
     const top = scored.slice(
       0,
@@ -647,7 +706,7 @@ function sellOptions(resource) {
     );
 
     if (resource && !top.length) {
-      lines.push("  no usable sell options found");
+      lines.push("  no sell options found");
     }
 
     if (!resource && top.length) {
@@ -658,11 +717,13 @@ function sellOptions(resource) {
     for (const item of top) {
       lines.push(
         `  ${item.order.id} | ${res}` +
+          ` | ${item.ready ? "ready" : "blocked"}` +
           ` | price ${item.order.price.toFixed(4)}` +
           ` | effective ${item.effectivePrice.toFixed(4)}` +
           ` | order amount ${fmt(item.order.amount)}` +
           ` | sell from ${item.room.name}` +
-          ` | energy ${fmt(item.energyCost)}`,
+          ` | energy need ${fmt(item.energyCost)}` +
+          ` | terminal energy ${fmt(item.terminalEnergy)}`,
       );
     }
   }
@@ -907,6 +968,9 @@ function registerGlobals() {
     needs,
     surplus,
 
+    stage,
+    requests,
+    cancel,
     send,
 
     buyOptions,
@@ -937,6 +1001,9 @@ module.exports = {
   needs,
   surplus,
 
+  stage,
+  requests,
+  cancel,
   send,
 
   buyOptions,

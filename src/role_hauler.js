@@ -6,6 +6,7 @@ Purpose:
 - Pull energy from source-side logistics
 - Deliver energy using shared room-wide priority logic
 - Support emergency defense and spawn recovery first
+- Support operator-created market staging requests from storage to terminal
 
 Delivery priority:
 Hostile pressure:
@@ -23,6 +24,11 @@ Normal mode:
 - storage
 - towers below reserve threshold
 
+Layer 2 market staging:
+- market.stage(resource, amount, roomName) creates a Memory request
+- haulers in that room move requested resources from storage to terminal
+- market staging runs before normal advanced structure hauling
+
 Pickup priority:
 Normal mode:
 - assigned source container
@@ -32,16 +38,11 @@ Normal mode:
 
 Emergency fallback:
 - storage if source-side logistics are unavailable
-
-Important Notes:
-- Storage fallback allows haulers to keep spawn/extensions alive
-  when miners are dead or containers are empty
-- This makes haulers useful during colony recovery without changing
-  miner or upgrader specialization
 */
 
 const utils = require("utils");
 const advancedStructureManager = require("advanced_structure_manager");
+const marketRequestManager = require("market_request_manager");
 
 const MOVE_OPTIONS = {
   reusePath: 12,
@@ -53,6 +54,10 @@ module.exports = {
       options && options.thinkInterval ? options.thinkInterval : 1;
     const runtimeCache = utils.getRoomRuntimeCache(creep.room);
     const state = runtimeCache ? runtimeCache.state : null;
+
+    if (this.runMarketRequest(creep, thinkInterval)) {
+      return;
+    }
 
     if (this.runAdvancedTask(creep, state, thinkInterval)) {
       return;
@@ -84,7 +89,8 @@ module.exports = {
       }
 
       if (
-        creep.withdraw(pickupTarget.target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE
+        creep.withdraw(pickupTarget.target, RESOURCE_ENERGY) ===
+        ERR_NOT_IN_RANGE
       ) {
         creep.moveTo(pickupTarget.target, MOVE_OPTIONS);
       }
@@ -183,10 +189,6 @@ module.exports = {
       return this.storePickupTarget(creep, smallDrop, "pickup");
     }
 
-    // Developer note:
-    // Emergency fallback.
-    // If source-side logistics are dry, allow haulers to pull from storage
-    // so they can still power spawn/extensions/towers during recovery.
     if (
       creep.room.storage &&
       (creep.room.storage.store[RESOURCE_ENERGY] || 0) > 0
@@ -211,10 +213,7 @@ module.exports = {
     if (!target) return false;
 
     if (kind === "pickup") {
-      return (
-        target.resourceType === RESOURCE_ENERGY &&
-        target.amount > 0
-      );
+      return target.resourceType === RESOURCE_ENERGY && target.amount > 0;
     }
 
     return (
@@ -268,6 +267,96 @@ module.exports = {
     }
 
     return false;
+  },
+
+  runMarketRequest(creep, thinkInterval) {
+    const carriedResource = this.getCarriedResourceType(creep);
+    const totalCarry = creep.store.getUsedCapacity();
+    const hasStoredTask = !!creep.memory.marketTask;
+
+    if (!hasStoredTask && totalCarry > 0) {
+      return false;
+    }
+
+    if (!hasStoredTask && totalCarry === 0) {
+      if (!this.shouldThink(creep, thinkInterval, "haulerMarket")) {
+        return false;
+      }
+
+      const nextTask = marketRequestManager.getHaulerTask(creep.room, creep);
+      if (!nextTask) return false;
+    }
+
+    const task = creep.memory.marketTask;
+    if (!task) return false;
+
+    const resourceType = task.resourceType;
+
+    if (!this.hasOnlyResource(creep, resourceType)) {
+      marketRequestManager.releaseHaulerTask(creep, "mixed_carry");
+      return false;
+    }
+
+    const pickup = Game.getObjectById(task.pickupId);
+    const delivery = Game.getObjectById(task.deliveryId);
+
+    if (!pickup || !delivery) {
+      marketRequestManager.releaseHaulerTask(creep, "missing_structure");
+      return false;
+    }
+
+    if (this.getStoredAmount(creep, resourceType) > 0) {
+      const carriedAmount = this.getStoredAmount(creep, resourceType);
+      const transferAmount =
+        typeof task.amount === "number" && task.amount > 0
+          ? Math.min(task.amount, carriedAmount)
+          : carriedAmount;
+
+      const transferResult = creep.transfer(
+        delivery,
+        resourceType,
+        transferAmount,
+      );
+
+      if (transferResult === ERR_NOT_IN_RANGE) {
+        creep.moveTo(delivery, MOVE_OPTIONS);
+      } else if (transferResult === OK) {
+        marketRequestManager.completeHaulerTask(creep, transferAmount);
+      } else {
+        marketRequestManager.releaseHaulerTask(
+          creep,
+          "transfer_result_" + transferResult,
+        );
+      }
+
+      return true;
+    }
+
+    if (this.getStoredAmount(pickup, resourceType) <= 0) {
+      marketRequestManager.releaseHaulerTask(creep, "source_empty");
+      return false;
+    }
+
+    const withdrawAmount =
+      typeof task.amount === "number" && task.amount > 0
+        ? Math.min(task.amount, creep.store.getFreeCapacity(resourceType))
+        : null;
+
+    const withdrawResult =
+      typeof withdrawAmount === "number" && withdrawAmount > 0
+        ? creep.withdraw(pickup, resourceType, withdrawAmount)
+        : creep.withdraw(pickup, resourceType);
+
+    if (withdrawResult === ERR_NOT_IN_RANGE) {
+      creep.moveTo(pickup, MOVE_OPTIONS);
+    } else if (withdrawResult !== OK) {
+      marketRequestManager.releaseHaulerTask(
+        creep,
+        "withdraw_result_" + withdrawResult,
+      );
+    }
+
+    return true;
   },
 
   runAdvancedTask(creep, state, thinkInterval) {
