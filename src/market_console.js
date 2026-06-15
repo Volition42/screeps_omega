@@ -278,6 +278,8 @@ function help() {
     "  market.unstage(resource, amount, roomName)",
     "  market.requests()",
     "  market.requests(roomName)",
+    '  market.requests("all"|"history")',
+    '  market.requests(roomName, "all"|"history")',
     "  market.cancel(requestId)",
     "  market.send(resource, amount, fromRoom, toRoom)",
     "",

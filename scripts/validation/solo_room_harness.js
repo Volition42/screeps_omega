@@ -6101,6 +6101,13 @@ function runCommandScenario() {
     `expected simplified expand/reserve help, got ${helpLines.join(" / ")}`,
   );
   assert(
+    helpLines.some(function (line) { return line === "ops.terminalStatus([roomName])"; }) &&
+      helpLines.some(function (line) { return line === "ops.clearTerminal(roomName, [resource], [amount])"; }) &&
+      helpLines.some(function (line) { return line === "ops.fillTerminal(roomName, resource, amount)"; }) &&
+      helpLines.some(function (line) { return line === "ops.requests([roomName])"; }),
+    `expected Layer 2 terminal hygiene help, got ${helpLines.join(" / ")}`,
+  );
+  assert(
     helpLines.every(function (line) { return line.length <= 80; }),
     `expected help output lines to stay within 80 chars, got ${helpLines.filter(function (line) { return line.length > 80; }).join(" / ")}`,
   );
@@ -7401,6 +7408,26 @@ function runOpsLogisticsHarnessCoverageScenario() {
   assert(
     marketRequestReport.indexOf("canceled 1") !== -1,
     `market.requests should include status counts, got ${marketRequestReport}`,
+  );
+
+  const originalMarketHelpLog = console.log;
+  const helpLines = [];
+  console.log = function (line) {
+    helpLines.push(String(line));
+  };
+  try {
+    marketConsole.help();
+  } finally {
+    console.log = originalMarketHelpLog;
+  }
+  assert(
+    helpLines.some(function (line) { return line.indexOf("market.stage(resource, amount, roomName)") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf("market.unstage(resource, amount, roomName)") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf("market.requests()") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf("market.requests(roomName)") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf('market.requests("all"|"history")') !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf('market.requests(roomName, "all"|"history")') !== -1; }),
+    `expected Layer 2 market request help, got ${helpLines.join(" / ")}`,
   );
 }
 

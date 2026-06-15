@@ -396,8 +396,9 @@ function getConsoleCommandHelp() {
     },
     {
       command: "ops.requests([roomName])",
-      description: "Show active and historical ops logistics requests.",
-      example: 'ops.requests("W42N9")',
+      description:
+        "Show active ops logistics requests. Pass all or history to include completed, canceled, and expired requests.",
+      example: 'ops.requests("W42N9", "all")',
     },
     {
       command: "ops.cancel(requestId)",
