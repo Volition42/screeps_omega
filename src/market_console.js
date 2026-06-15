@@ -1,4 +1,44 @@
-const VERSION = "0.0.1-layer0-source-integrated";
+const VERSION = "1.0.0-layer1-market-console";
+
+const CONFIG = {
+  terminalEnergyReserve: 30000,
+  terminalEnergyTarget: 50000,
+  storageEnergyReserve: 100000,
+  mineralTarget: 10000,
+  mineralSurplus: 25000,
+  optionLimit: 5,
+  allOptionLimitPerResource: 3,
+  sampleAmount: 1000,
+  energyCreditValue: 0.3,
+  maxAllResourcesToScan: 80,
+  logPrefix: "[MARKET]",
+};
+
+const BASE_RESOURCES = [
+  RESOURCE_ENERGY,
+  RESOURCE_POWER,
+  RESOURCE_OPS,
+  RESOURCE_HYDROGEN,
+  RESOURCE_OXYGEN,
+  RESOURCE_UTRIUM,
+  RESOURCE_LEMERGIUM,
+  RESOURCE_KEANIUM,
+  RESOURCE_ZYNTHIUM,
+  RESOURCE_CATALYST,
+  RESOURCE_GHODIUM,
+  RESOURCE_SILICON,
+  RESOURCE_METAL,
+  RESOURCE_BIOMASS,
+  RESOURCE_MIST,
+].filter(Boolean);
+
+function resourceList() {
+  if (typeof RESOURCES_ALL !== "undefined" && Array.isArray(RESOURCES_ALL)) {
+    return RESOURCES_ALL.slice(0, CONFIG.maxAllResourcesToScan);
+  }
+
+  return BASE_RESOURCES.slice(0, CONFIG.maxAllResourcesToScan);
+}
 
 function printLine(line) {
   console.log(line);
@@ -9,22 +49,24 @@ function printBlock(lines) {
   for (let i = 0; i < lines.length; i++) {
     console.log(lines[i]);
   }
+
+  return lines;
+}
+
+function fmt(value) {
+  return Math.round(value || 0).toLocaleString();
 }
 
 function getMemoryRoot() {
   if (!Memory.consoleTools) Memory.consoleTools = {};
-  if (!Memory.consoleTools.market) {
-    Memory.consoleTools.market = {};
-  }
+  if (!Memory.consoleTools.market) Memory.consoleTools.market = {};
   return Memory.consoleTools.market;
 }
 
 function touchMemory() {
   const memory = getMemoryRoot();
 
-  if (!memory.installedAt) {
-    memory.installedAt = Game.time;
-  }
+  if (!memory.installedAt) memory.installedAt = Game.time;
 
   memory.version = VERSION;
   memory.lastRegisteredAt = Game.time;
@@ -34,12 +76,159 @@ function touchMemory() {
   return memory;
 }
 
+function amountIn(store, resource) {
+  if (!store) return 0;
+  return store[resource] || 0;
+}
+
+function storeResources(store) {
+  if (!store) return [];
+  return Object.keys(store)
+    .filter((resource) => amountIn(store, resource) > 0)
+    .sort();
+}
+
+function ownedRooms() {
+  return Object.values(Game.rooms)
+    .filter((room) => room.controller && room.controller.my)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getOwnedRoom(roomName) {
+  const room = Game.rooms[roomName];
+
+  if (!room || !room.controller || !room.controller.my) {
+    return null;
+  }
+
+  return room;
+}
+
+function roomResourceTotal(room, resource) {
+  return (
+    amountIn(room.storage && room.storage.store, resource) +
+    amountIn(room.terminal && room.terminal.store, resource)
+  );
+}
+
+function empireTotals() {
+  const totals = {};
+
+  for (const room of ownedRooms()) {
+    for (const structure of [room.storage, room.terminal]) {
+      if (!structure) continue;
+
+      for (const resource of storeResources(structure.store)) {
+        totals[resource] =
+          (totals[resource] || 0) + amountIn(structure.store, resource);
+      }
+    }
+  }
+
+  return totals;
+}
+
+function terminalUsable(room) {
+  return !!(room && room.terminal && room.terminal.my);
+}
+
+function terminalReady(room) {
+  return terminalUsable(room) && room.terminal.cooldown === 0;
+}
+
+function terminalFreeCapacity(room) {
+  if (!room || !room.terminal) return 0;
+
+  if (room.terminal.store.getFreeCapacity) {
+    return room.terminal.store.getFreeCapacity();
+  }
+
+  return 300000 - _.sum(room.terminal.store);
+}
+
+function scoreBuyOrder(order, roomName, amount) {
+  const sampleAmount = Math.max(
+    1,
+    Math.min(
+      amount || CONFIG.sampleAmount,
+      order.amount || CONFIG.sampleAmount,
+    ),
+  );
+
+  const energyCost = Game.market.calcTransactionCost(
+    sampleAmount,
+    roomName,
+    order.roomName,
+  );
+  const energyCostPerUnit = energyCost / sampleAmount;
+  const effectivePrice =
+    order.price + energyCostPerUnit * CONFIG.energyCreditValue;
+
+  return {
+    order,
+    energyCost,
+    effectivePrice,
+  };
+}
+
+function scoreSellOrder(order, roomName, amount) {
+  const sampleAmount = Math.max(
+    1,
+    Math.min(
+      amount || CONFIG.sampleAmount,
+      order.amount || CONFIG.sampleAmount,
+    ),
+  );
+
+  const energyCost = Game.market.calcTransactionCost(
+    sampleAmount,
+    roomName,
+    order.roomName,
+  );
+  const energyCostPerUnit = energyCost / sampleAmount;
+  const effectivePrice =
+    order.price - energyCostPerUnit * CONFIG.energyCreditValue;
+
+  return {
+    order,
+    energyCost,
+    effectivePrice,
+  };
+}
+
+function bestOwnedRoomForBuy(amount, order) {
+  let best = null;
+
+  for (const room of ownedRooms()) {
+    if (!terminalUsable(room)) continue;
+
+    const sampleAmount = Math.min(amount, order.amount || amount);
+    const energyCost = Game.market.calcTransactionCost(
+      sampleAmount,
+      room.name,
+      order.roomName,
+    );
+
+    if (terminalFreeCapacity(room) < sampleAmount) continue;
+    if (amountIn(room.terminal.store, RESOURCE_ENERGY) < energyCost) continue;
+
+    if (!best || energyCost < best.energyCost) {
+      best = {
+        room,
+        energyCost,
+      };
+    }
+  }
+
+  return best;
+}
+
 function help() {
-  const lines = [
+  return printBlock([
     "[MARKET] Screeps Market Console Helper",
     `[MARKET] Version: ${VERSION}`,
     "",
-    "[MARKET] Layer 0 commands:",
+    "[MARKET] Memory/runtime:",
     "  market.help()",
     "  market.info()",
     "  market.ping()",
@@ -47,13 +236,30 @@ function help() {
     "  market.restore()",
     "  market.uninstall()",
     "",
-    "[MARKET] Status:",
-    "  Source-integrated skeleton only.",
-    "  Market, room, stock, transfer, buy, and sell commands are not added yet.",
-  ];
-
-  printBlock(lines);
-  return lines;
+    "[MARKET] Visibility:",
+    "  market.rooms()",
+    "  market.stock()",
+    "  market.stock(roomName)",
+    "  market.needs()",
+    "  market.surplus()",
+    "",
+    "[MARKET] Internal terminal logistics:",
+    "  market.send(resource, amount, fromRoom, toRoom)",
+    "",
+    "[MARKET] Market scanning:",
+    "  market.buyOptions()",
+    "  market.buyOptions(resource)",
+    "  market.sellOptions()",
+    "  market.sellOptions(resource)",
+    "",
+    "[MARKET] Manual trading:",
+    "  market.buy(resource, amount, roomName)",
+    "  market.sell(resource, amount, roomName)",
+    "",
+    "[MARKET] Planning:",
+    "  market.planBuys()",
+    "  market.planSells()",
+  ]);
 }
 
 function info() {
@@ -72,6 +278,7 @@ function info() {
   ];
 
   printBlock(lines);
+
   return {
     runtimeLoaded: !!global.market,
     memory,
@@ -114,6 +321,568 @@ function uninstall() {
   );
 }
 
+function rooms() {
+  const lines = ["[MARKET] Owned rooms:"];
+
+  for (const room of ownedRooms()) {
+    lines.push(
+      `  ${room.name} | RCL ${room.controller.level}` +
+        ` | storage: ${room.storage ? "yes" : "no"}` +
+        ` | terminal: ${room.terminal ? "yes" : "no"}` +
+        (room.terminal ? ` | cooldown: ${room.terminal.cooldown}` : ""),
+    );
+  }
+
+  if (lines.length === 1) lines.push("  none visible");
+
+  return printBlock(lines);
+}
+
+function stock(roomName) {
+  if (roomName) {
+    const room = getOwnedRoom(roomName);
+
+    if (!room) {
+      return printLine(`${CONFIG.logPrefix} Invalid owned room: ${roomName}`);
+    }
+
+    const lines = [`[MARKET] Stock for ${room.name}:`];
+
+    for (const label of ["storage", "terminal"]) {
+      const structure = room[label];
+
+      lines.push("");
+      lines.push(`  ${label}: ${structure ? "" : "missing"}`);
+
+      if (!structure) continue;
+
+      const resources = storeResources(structure.store);
+
+      if (!resources.length) {
+        lines.push("    empty");
+      }
+
+      for (const resource of resources) {
+        lines.push(
+          `    ${resource}: ${fmt(amountIn(structure.store, resource))}`,
+        );
+      }
+    }
+
+    return printBlock(lines);
+  }
+
+  const totals = empireTotals();
+  const resources = Object.keys(totals).sort();
+  const lines = ["[MARKET] Empire stock:"];
+
+  if (!resources.length) lines.push("  empty");
+
+  for (const resource of resources) {
+    lines.push(`  ${resource}: ${fmt(totals[resource])}`);
+  }
+
+  return printBlock(lines);
+}
+
+function needs() {
+  const lines = ["[MARKET] Empire needs:"];
+
+  for (const room of ownedRooms()) {
+    const roomNeeds = [];
+
+    if (room.terminal) {
+      const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+
+      if (terminalEnergy < CONFIG.terminalEnergyTarget) {
+        roomNeeds.push(
+          `terminal energy +${fmt(CONFIG.terminalEnergyTarget - terminalEnergy)}`,
+        );
+      }
+    } else {
+      roomNeeds.push("terminal missing");
+    }
+
+    if (room.storage) {
+      const storageEnergy = amountIn(room.storage.store, RESOURCE_ENERGY);
+
+      if (storageEnergy < CONFIG.storageEnergyReserve) {
+        roomNeeds.push(
+          `storage energy +${fmt(CONFIG.storageEnergyReserve - storageEnergy)}`,
+        );
+      }
+    } else {
+      roomNeeds.push("storage missing");
+    }
+
+    const mineral = room.find(FIND_MINERALS)[0];
+
+    if (mineral) {
+      const total = roomResourceTotal(room, mineral.mineralType);
+
+      if (total < CONFIG.mineralTarget) {
+        roomNeeds.push(
+          `${mineral.mineralType} +${fmt(CONFIG.mineralTarget - total)}`,
+        );
+      }
+    }
+
+    if (roomNeeds.length) {
+      lines.push(`  ${room.name}: ${roomNeeds.join(", ")}`);
+    }
+  }
+
+  if (lines.length === 1) lines.push("  no obvious room-level needs found");
+
+  return printBlock(lines);
+}
+
+function surplus() {
+  const lines = ["[MARKET] Empire surplus:"];
+
+  for (const room of ownedRooms()) {
+    const roomSurplus = [];
+
+    if (room.terminal) {
+      const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+
+      if (terminalEnergy > CONFIG.terminalEnergyTarget) {
+        roomSurplus.push(
+          `terminal energy +${fmt(terminalEnergy - CONFIG.terminalEnergyTarget)}`,
+        );
+      }
+
+      for (const resource of storeResources(room.terminal.store)) {
+        if (resource === RESOURCE_ENERGY) continue;
+
+        const amount = amountIn(room.terminal.store, resource);
+
+        if (amount > CONFIG.mineralSurplus) {
+          roomSurplus.push(
+            `${resource} terminal +${fmt(amount - CONFIG.mineralSurplus)}`,
+          );
+        }
+      }
+    }
+
+    if (room.storage) {
+      for (const resource of storeResources(room.storage.store)) {
+        if (resource === RESOURCE_ENERGY) continue;
+
+        const total = roomResourceTotal(room, resource);
+
+        if (total > CONFIG.mineralSurplus) {
+          roomSurplus.push(
+            `${resource} total +${fmt(total - CONFIG.mineralSurplus)}`,
+          );
+        }
+      }
+    }
+
+    if (roomSurplus.length) {
+      lines.push(`  ${room.name}: ${roomSurplus.join(", ")}`);
+    }
+  }
+
+  if (lines.length === 1) lines.push("  no obvious surplus found");
+
+  return printBlock(lines);
+}
+
+function send(resource, amount, fromRoom, toRoom) {
+  amount = Number(amount);
+
+  const source = getOwnedRoom(fromRoom);
+  const target = getOwnedRoom(toRoom);
+
+  if (!source)
+    return printLine(`${CONFIG.logPrefix} Invalid source room: ${fromRoom}`);
+  if (!target)
+    return printLine(`${CONFIG.logPrefix} Invalid target room: ${toRoom}`);
+  if (!terminalUsable(source))
+    return printLine(`${CONFIG.logPrefix} Source room has no usable terminal.`);
+  if (!terminalUsable(target))
+    return printLine(`${CONFIG.logPrefix} Target room has no usable terminal.`);
+  if (!terminalReady(source))
+    return printLine(
+      `${CONFIG.logPrefix} Source terminal cooldown: ${source.terminal.cooldown}`,
+    );
+  if (!resource || !amount || amount <= 0)
+    return printLine(`${CONFIG.logPrefix} Invalid resource or amount.`);
+
+  if (amountIn(source.terminal.store, resource) < amount) {
+    return printLine(
+      `${CONFIG.logPrefix} Source terminal lacks ${resource}. Has ${fmt(amountIn(source.terminal.store, resource))}, needs ${fmt(amount)}.`,
+    );
+  }
+
+  const energyCost = Game.market.calcTransactionCost(amount, fromRoom, toRoom);
+
+  if (amountIn(source.terminal.store, RESOURCE_ENERGY) < energyCost) {
+    return printLine(
+      `${CONFIG.logPrefix} Not enough terminal energy. Needs ${fmt(energyCost)}.`,
+    );
+  }
+
+  const result = source.terminal.send(
+    resource,
+    amount,
+    toRoom,
+    "market console helper transfer",
+  );
+
+  return printLine(
+    `${CONFIG.logPrefix} send ${resource} x${fmt(amount)} ${fromRoom} -> ${toRoom}` +
+      ` | energy cost ${fmt(energyCost)} | result ${result}`,
+  );
+}
+
+function buyOptions(resource) {
+  const resources = resource ? [resource] : resourceList();
+  const lines = [
+    resource
+      ? `[MARKET] Buy options for ${resource}:`
+      : "[MARKET] Buy options for scanned resources:",
+  ];
+
+  for (const res of resources) {
+    const orders = Game.market
+      .getAllOrders({
+        type: ORDER_SELL,
+        resourceType: res,
+      })
+      .filter((order) => order.amount > 0 && order.roomName);
+
+    const scored = [];
+
+    for (const order of orders) {
+      const best = bestOwnedRoomForBuy(CONFIG.sampleAmount, order);
+      if (!best) continue;
+
+      const score = scoreBuyOrder(order, best.room.name, CONFIG.sampleAmount);
+
+      scored.push({
+        order,
+        room: best.room,
+        energyCost: score.energyCost,
+        effectivePrice: score.effectivePrice,
+      });
+    }
+
+    scored.sort((a, b) => a.effectivePrice - b.effectivePrice);
+
+    const top = scored.slice(
+      0,
+      resource ? CONFIG.optionLimit : CONFIG.allOptionLimitPerResource,
+    );
+
+    if (resource && !top.length) {
+      lines.push("  no usable buy options found");
+    }
+
+    if (!resource && top.length) {
+      lines.push("");
+      lines.push(`${res}:`);
+    }
+
+    for (const item of top) {
+      lines.push(
+        `  ${item.order.id} | ${res}` +
+          ` | price ${item.order.price.toFixed(4)}` +
+          ` | effective ${item.effectivePrice.toFixed(4)}` +
+          ` | amount ${fmt(item.order.amount)}` +
+          ` | receive ${item.room.name}` +
+          ` | energy ${fmt(item.energyCost)}`,
+      );
+    }
+  }
+
+  return printBlock(lines);
+}
+
+function sellOptions(resource) {
+  const resources = resource ? [resource] : resourceList();
+  const lines = [
+    resource
+      ? `[MARKET] Sell options for ${resource}:`
+      : "[MARKET] Sell options for scanned resources:",
+  ];
+
+  for (const res of resources) {
+    const orders = Game.market
+      .getAllOrders({
+        type: ORDER_BUY,
+        resourceType: res,
+      })
+      .filter((order) => order.amount > 0 && order.roomName);
+
+    const scored = [];
+
+    for (const room of ownedRooms()) {
+      if (!terminalUsable(room)) continue;
+
+      const available = amountIn(room.terminal.store, res);
+      if (available <= 0) continue;
+
+      for (const order of orders) {
+        const sample = Math.min(CONFIG.sampleAmount, available, order.amount);
+        if (sample <= 0) continue;
+
+        const score = scoreSellOrder(order, room.name, sample);
+
+        scored.push({
+          order,
+          room,
+          energyCost: score.energyCost,
+          effectivePrice: score.effectivePrice,
+        });
+      }
+    }
+
+    scored.sort((a, b) => b.effectivePrice - a.effectivePrice);
+
+    const top = scored.slice(
+      0,
+      resource ? CONFIG.optionLimit : CONFIG.allOptionLimitPerResource,
+    );
+
+    if (resource && !top.length) {
+      lines.push("  no usable sell options found");
+    }
+
+    if (!resource && top.length) {
+      lines.push("");
+      lines.push(`${res}:`);
+    }
+
+    for (const item of top) {
+      lines.push(
+        `  ${item.order.id} | ${res}` +
+          ` | price ${item.order.price.toFixed(4)}` +
+          ` | effective ${item.effectivePrice.toFixed(4)}` +
+          ` | order amount ${fmt(item.order.amount)}` +
+          ` | sell from ${item.room.name}` +
+          ` | energy ${fmt(item.energyCost)}`,
+      );
+    }
+  }
+
+  return printBlock(lines);
+}
+
+function buy(resource, amount, roomName) {
+  amount = Number(amount);
+
+  const room = getOwnedRoom(roomName);
+
+  if (!room)
+    return printLine(`${CONFIG.logPrefix} Invalid owned room: ${roomName}`);
+  if (!terminalUsable(room))
+    return printLine(`${CONFIG.logPrefix} Room has no usable terminal.`);
+  if (!terminalReady(room))
+    return printLine(
+      `${CONFIG.logPrefix} Terminal cooldown: ${room.terminal.cooldown}`,
+    );
+  if (!resource || !amount || amount <= 0)
+    return printLine(`${CONFIG.logPrefix} Invalid resource or amount.`);
+  if (terminalFreeCapacity(room) < amount)
+    return printLine(`${CONFIG.logPrefix} Terminal lacks free capacity.`);
+
+  const orders = Game.market
+    .getAllOrders({
+      type: ORDER_SELL,
+      resourceType: resource,
+    })
+    .filter((order) => order.amount > 0 && order.roomName);
+
+  const scored = orders
+    .map((order) => {
+      const score = scoreBuyOrder(order, room.name, amount);
+      return {
+        order,
+        energyCost: score.energyCost,
+        effectivePrice: score.effectivePrice,
+      };
+    })
+    .sort((a, b) => a.effectivePrice - b.effectivePrice);
+
+  const selected = scored.find((item) => {
+    const dealAmount = Math.min(amount, item.order.amount);
+    const totalPrice = dealAmount * item.order.price;
+
+    return (
+      Game.market.credits >= totalPrice &&
+      amountIn(room.terminal.store, RESOURCE_ENERGY) >= item.energyCost
+    );
+  });
+
+  if (!selected) {
+    return printLine(
+      `${CONFIG.logPrefix} No affordable usable sell order found for ${resource}.`,
+    );
+  }
+
+  const dealAmount = Math.min(amount, selected.order.amount);
+  const result = Game.market.deal(selected.order.id, dealAmount, room.name);
+
+  return printLine(
+    `${CONFIG.logPrefix} buy ${resource} x${fmt(dealAmount)} into ${room.name}` +
+      ` | price ${selected.order.price.toFixed(4)}` +
+      ` | effective ${selected.effectivePrice.toFixed(4)}` +
+      ` | credits ${fmt(dealAmount * selected.order.price)}` +
+      ` | energy ${fmt(selected.energyCost)}` +
+      ` | result ${result}`,
+  );
+}
+
+function sell(resource, amount, roomName) {
+  amount = Number(amount);
+
+  const room = getOwnedRoom(roomName);
+
+  if (!room)
+    return printLine(`${CONFIG.logPrefix} Invalid owned room: ${roomName}`);
+  if (!terminalUsable(room))
+    return printLine(`${CONFIG.logPrefix} Room has no usable terminal.`);
+  if (!terminalReady(room))
+    return printLine(
+      `${CONFIG.logPrefix} Terminal cooldown: ${room.terminal.cooldown}`,
+    );
+  if (!resource || !amount || amount <= 0)
+    return printLine(`${CONFIG.logPrefix} Invalid resource or amount.`);
+
+  if (amountIn(room.terminal.store, resource) < amount) {
+    return printLine(
+      `${CONFIG.logPrefix} Terminal lacks ${resource}. Has ${fmt(amountIn(room.terminal.store, resource))}, needs ${fmt(amount)}.`,
+    );
+  }
+
+  const orders = Game.market
+    .getAllOrders({
+      type: ORDER_BUY,
+      resourceType: resource,
+    })
+    .filter((order) => order.amount > 0 && order.roomName);
+
+  const scored = orders
+    .map((order) => {
+      const score = scoreSellOrder(order, room.name, amount);
+      return {
+        order,
+        energyCost: score.energyCost,
+        effectivePrice: score.effectivePrice,
+      };
+    })
+    .sort((a, b) => b.effectivePrice - a.effectivePrice);
+
+  const selected = scored.find((item) => {
+    return amountIn(room.terminal.store, RESOURCE_ENERGY) >= item.energyCost;
+  });
+
+  if (!selected) {
+    return printLine(
+      `${CONFIG.logPrefix} No usable buy order found for ${resource}.`,
+    );
+  }
+
+  const dealAmount = Math.min(amount, selected.order.amount);
+  const result = Game.market.deal(selected.order.id, dealAmount, room.name);
+
+  return printLine(
+    `${CONFIG.logPrefix} sell ${resource} x${fmt(dealAmount)} from ${room.name}` +
+      ` | price ${selected.order.price.toFixed(4)}` +
+      ` | effective ${selected.effectivePrice.toFixed(4)}` +
+      ` | credits ${fmt(dealAmount * selected.order.price)}` +
+      ` | energy ${fmt(selected.energyCost)}` +
+      ` | result ${result}`,
+  );
+}
+
+function planBuys() {
+  const totals = empireTotals();
+  const lines = ["[MARKET] Suggested buys:"];
+
+  for (const room of ownedRooms()) {
+    if (!room.terminal) continue;
+
+    const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+
+    if (terminalEnergy < CONFIG.terminalEnergyTarget) {
+      lines.push(
+        `  ${room.name}: buy/receive energy +${fmt(CONFIG.terminalEnergyTarget - terminalEnergy)}`,
+      );
+    }
+
+    const mineral = room.find(FIND_MINERALS)[0];
+
+    if (mineral) {
+      const resource = mineral.mineralType;
+      const total = roomResourceTotal(room, resource);
+
+      if (total < CONFIG.mineralTarget) {
+        lines.push(
+          `  ${room.name}: buy/receive ${resource} +${fmt(CONFIG.mineralTarget - total)}`,
+        );
+      }
+    }
+  }
+
+  for (const resource of BASE_RESOURCES) {
+    if (resource === RESOURCE_ENERGY) continue;
+
+    const total = totals[resource] || 0;
+
+    if (total > 0 && total < CONFIG.mineralTarget) {
+      lines.push(
+        `  empire: consider buying ${resource} +${fmt(CONFIG.mineralTarget - total)}`,
+      );
+    }
+  }
+
+  if (lines.length === 1) {
+    lines.push("  no obvious buys recommended");
+  }
+
+  return printBlock(lines);
+}
+
+function planSells() {
+  const lines = ["[MARKET] Suggested sells:"];
+
+  for (const room of ownedRooms()) {
+    if (!room.terminal) continue;
+
+    for (const resource of storeResources(room.terminal.store)) {
+      const amount = amountIn(room.terminal.store, resource);
+
+      if (resource === RESOURCE_ENERGY) {
+        if (
+          amount >
+          CONFIG.terminalEnergyTarget + CONFIG.terminalEnergyReserve
+        ) {
+          lines.push(
+            `  ${room.name}: sell/send energy surplus ${fmt(amount - CONFIG.terminalEnergyTarget)}`,
+          );
+        }
+
+        continue;
+      }
+
+      if (amount > CONFIG.mineralSurplus) {
+        lines.push(
+          `  ${room.name}: sell/send ${resource} surplus ${fmt(amount - CONFIG.mineralSurplus)}`,
+        );
+      }
+    }
+  }
+
+  if (lines.length === 1) {
+    lines.push("  no obvious sells recommended");
+  }
+
+  return printBlock(lines);
+}
+
 function registerGlobals() {
   const memory = touchMemory();
 
@@ -124,12 +893,29 @@ function registerGlobals() {
 
   global.market = {
     version: VERSION,
+    config: CONFIG,
+
     help,
     info,
     ping,
     install,
     restore,
     uninstall,
+
+    rooms,
+    stock,
+    needs,
+    surplus,
+
+    send,
+
+    buyOptions,
+    sellOptions,
+    buy,
+    sell,
+
+    planBuys,
+    planSells,
   };
 
   return global.market;
@@ -138,10 +924,26 @@ function registerGlobals() {
 module.exports = {
   VERSION,
   registerGlobals,
+
   help,
   info,
   ping,
   install,
   restore,
   uninstall,
+
+  rooms,
+  stock,
+  needs,
+  surplus,
+
+  send,
+
+  buyOptions,
+  sellOptions,
+  buy,
+  sell,
+
+  planBuys,
+  planSells,
 };
