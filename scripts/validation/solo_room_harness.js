@@ -27,6 +27,8 @@ const ERR_INVALID_ARGS = -10;
 const ERR_TIRED = -11;
 const ERR_NO_BODYPART = -12;
 const ERR_RCL_NOT_ENOUGH = -14;
+const ORDER_BUY = "buy";
+const ORDER_SELL = "sell";
 
 const LOOK_STRUCTURES = "structure";
 const LOOK_CONSTRUCTION_SITES = "constructionSite";
@@ -202,6 +204,8 @@ Object.assign(global, {
   ERR_TIRED,
   ERR_NO_BODYPART,
   ERR_RCL_NOT_ENOUGH,
+  ORDER_BUY,
+  ORDER_SELL,
   LOOK_STRUCTURES,
   LOOK_CONSTRUCTION_SITES,
   LOOK_CREEPS,
@@ -6580,6 +6584,40 @@ function captureConsoleLines(fn) {
   }
 }
 
+function installFakeMarket(orders, options) {
+  const settings = options || {};
+  const orderRows = orders || [];
+  const deals = [];
+
+  Game.market = {
+    credits: settings.credits !== undefined ? settings.credits : 1000000,
+    getAllOrders(filter) {
+      return orderRows.filter(function (order) {
+        if (filter && filter.type && order.type !== filter.type) return false;
+        if (filter && filter.resourceType && order.resourceType !== filter.resourceType) return false;
+        return true;
+      });
+    },
+    calcTransactionCost(amount, roomName, orderRoomName) {
+      if (settings.transactionCost) {
+        return settings.transactionCost(amount, roomName, orderRoomName);
+      }
+      if (roomName === orderRoomName) return 0;
+      return Math.ceil(amount * 0.1);
+    },
+    deal(orderId, amount, roomName) {
+      deals.push({
+        orderId: orderId,
+        amount: amount,
+        roomName: roomName,
+      });
+      return OK;
+    },
+  };
+
+  return deals;
+}
+
 function buildHaulerExecutionOrderRoom(name, options) {
   const settings = options || {};
   const room = buildLabOpsRoom(name, {
@@ -6825,11 +6863,11 @@ function runTerminalHygieneCommandsScenario() {
   let captured = captureConsoleLines(function () {
     return ops.terminalStatus(room.name);
   });
-  assert(captured.result.roomName === room.name, "room terminalStatus should return the requested room");
-  assert(captured.result.used === 77000, `expected terminal used 77000, got ${captured.result.used}`);
-  assert(captured.result.free === 223000, `expected terminal free 223000, got ${captured.result.free}`);
-  assert(captured.result.energy === 12000, `expected terminal energy 12000, got ${captured.result.energy}`);
-  assert(captured.result.status === "HEALTHY", `expected HEALTHY status, got ${captured.result.status}`);
+  assert(typeof captured.result === "string", "room terminalStatus should return a printable string");
+  assert(captured.result.indexOf(`Terminal ${room.name}: HEALTHY`) !== -1, "room terminalStatus should return the requested room report");
+  assert(captured.result.indexOf("used 77,000") !== -1, `expected terminal used 77000, got ${captured.result}`);
+  assert(captured.result.indexOf("free 223,000") !== -1, `expected terminal free 223000, got ${captured.result}`);
+  assert(captured.result.indexOf("energy 12,000") !== -1, `expected terminal energy 12000, got ${captured.result}`);
   assert(
     captured.lines.some(function (line) { return line.indexOf("H: 60,000") !== -1; }),
     `room terminalStatus should list all resources, got ${captured.lines.join(" / ")}`,
@@ -6875,29 +6913,22 @@ function runTerminalHygieneCommandsScenario() {
   captured = captureConsoleLines(function () {
     return ops.terminalStatus();
   });
-  const empireStatuses = captured.result;
+  const empireReport = captured.result;
+  assert(typeof empireReport === "string", "empire terminalStatus should return a printable string");
   assert(
-    empireStatuses.some(function (status) {
-      return status.roomName === room.name && status.status === "HEALTHY";
-    }),
+    empireReport.indexOf(`${room.name} | HEALTHY`) !== -1,
     "empire terminalStatus should include healthy room",
   );
   assert(
-    empireStatuses.some(function (status) {
-      return status.roomName === busyRoom.name && status.status === "BUSY";
-    }),
+    empireReport.indexOf(`${busyRoom.name} | BUSY`) !== -1,
     "empire terminalStatus should include busy room",
   );
   assert(
-    empireStatuses.some(function (status) {
-      return status.roomName === congestedRoom.name && status.status === "CONGESTED";
-    }),
+    empireReport.indexOf(`${congestedRoom.name} | CONGESTED`) !== -1,
     "empire terminalStatus should include congested room",
   );
   assert(
-    empireStatuses.some(function (status) {
-      return status.roomName === fullRoom.name && status.status === "FULL";
-    }),
+    empireReport.indexOf(`${fullRoom.name} | FULL`) !== -1,
     "empire terminalStatus should include full room",
   );
   assert(
@@ -7084,10 +7115,21 @@ function runOpsLogisticsHarnessCoverageScenario() {
   assert(duplicate.request.id === first.request.id, "duplicate should return the existing open request");
   assert(duplicate.request.amount === 1000, `duplicate should not merge amount, got ${duplicate.request.amount}`);
 
-  const rows = ops.requests(room.name);
-  assert(rows.some((row) => row.id === first.request.id), "ops.requests should list the logistics request");
+  let requestReport = ops.requests(room.name);
+  assert(typeof requestReport === "string", "ops.requests should return a printable string");
+  assert(requestReport.indexOf(first.request.id) !== -1, "ops.requests should list the active logistics request");
   const cancel = ops.cancel(first.request.id);
   assert(cancel.ok && cancel.request.status === "canceled", "cancel should mark request canceled");
+  requestReport = ops.requests(room.name);
+  assert(requestReport.indexOf(first.request.id) === -1, "ops.requests should hide canceled history by default");
+  requestReport = ops.requests(room.name, "all");
+  assert(requestReport.indexOf(first.request.id) !== -1, "ops.requests(roomName, all) should include canceled history");
+  requestReport = ops.requests("history");
+  assert(requestReport.indexOf(first.request.id) !== -1, "ops.requests(history) should include all room history");
+  assert(
+    requestReport.indexOf("canceled 1") !== -1,
+    `ops.requests should include status counts, got ${requestReport}`,
+  );
   const canceledHauler = createCreep("opsCancelHauler", "hauler", 25, 27, {
     roomName: room.name,
     store: {},
@@ -7203,6 +7245,8 @@ function runOpsLogisticsHarnessCoverageScenario() {
   assert(opsLogisticsManager.getHaulerTask(room, blockedHauler) === null, "empty source should prevent task assignment");
   assert(Memory.ops.logistics.requests.blocked_empty.status === "blocked", "empty source should mark request blocked");
   assert(Memory.ops.logistics.requests.blocked_empty.reason === "source_empty", "empty source should record source_empty reason");
+  requestReport = ops.requests(room.name);
+  assert(requestReport.indexOf("blocked_empty") !== -1, "ops.requests should show blocked requests as active");
 
   room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_FULL_TARGET", {
     tick: 1307,
@@ -7317,7 +7361,8 @@ function runOpsLogisticsHarnessCoverageScenario() {
     marketRequestLines.push(line);
   };
   try {
-    marketConsole.requests(room.name);
+    const marketRequestReport = marketConsole.requests(room.name);
+    assert(typeof marketRequestReport === "string", "market.requests should return a printable string");
   } finally {
     console.log = originalLog;
   }
@@ -7333,6 +7378,117 @@ function runOpsLogisticsHarnessCoverageScenario() {
     }),
     "market.requests should include ops logistics terminal -> storage request",
   );
+  const canceledMarketRow = marketRows.find(function (row) {
+    return row.resourceType === "Z" && row.from === "storage" && row.to === "terminal";
+  });
+  assert(canceledMarketRow, "expected a market-compatible ops logistics row to cancel");
+  marketConsole.cancel(canceledMarketRow.id);
+  let marketRequestReport = marketConsole.requests(room.name);
+  assert(
+    marketRequestReport.indexOf(canceledMarketRow.id) === -1,
+    "market.requests should hide canceled history by default",
+  );
+  marketRequestReport = marketConsole.requests(room.name, "all");
+  assert(
+    marketRequestReport.indexOf(canceledMarketRow.id) !== -1,
+    "market.requests(roomName, all) should include canceled history",
+  );
+  marketRequestReport = marketConsole.requests("history");
+  assert(
+    marketRequestReport.indexOf(canceledMarketRow.id) !== -1,
+    "market.requests(history) should include all room history",
+  );
+  assert(
+    marketRequestReport.indexOf("canceled 1") !== -1,
+    `market.requests should include status counts, got ${marketRequestReport}`,
+  );
+}
+
+function runOperatorReportCleanupScenario() {
+  let room = buildOpsLogisticsRoom("VAL_OPERATOR_REPORTS", {
+    tick: 1340,
+    storageStore: { energy: 200000, H: 10000, Z: 1000 },
+    terminalStore: { energy: 10000, H: 5000, Z: 250 },
+  });
+  installFakeMarket([
+    {
+      id: "buy_H_small",
+      type: ORDER_BUY,
+      resourceType: "H",
+      amount: 58,
+      price: 0.25,
+      roomName: "W42N9",
+    },
+    {
+      id: "sell_H_small",
+      type: ORDER_SELL,
+      resourceType: "H",
+      amount: 75,
+      price: 0.35,
+      roomName: "W42N9",
+    },
+  ]);
+
+  let report = marketConsole.stock();
+  assert(typeof report === "string" && report.indexOf("[MARKET] Empire stock") !== -1, "market.stock should return a report string");
+  report = marketConsole.stock(room.name);
+  assert(typeof report === "string" && report.indexOf(`Stock for ${room.name}`) !== -1, "market.stock(room) should return a report string");
+  report = marketConsole.needs();
+  assert(typeof report === "string" && report.indexOf("[MARKET] Empire needs") !== -1, "market.needs should return a report string");
+  report = marketConsole.surplus();
+  assert(typeof report === "string" && report.indexOf("[MARKET] Empire surplus") !== -1, "market.surplus should return a report string");
+  report = marketConsole.buyOptions("H");
+  assert(typeof report === "string" && report.indexOf("Buy options for H") !== -1, "market.buyOptions(resource) should return a report string");
+
+  report = marketConsole.sellOptions("H");
+  assert(typeof report === "string", "market.sellOptions(resource) should return a report string");
+  assert(report.indexOf("ready") !== -1, `sellOptions should show ready options, got ${report}`);
+  assert(report.indexOf("maxNow") !== -1, `sellOptions should show maxNow, got ${report}`);
+  assert(report.indexOf("terminal amount") !== -1, `sellOptions should show terminal amount, got ${report}`);
+  assert(report.indexOf("sample energy need") !== -1, `sellOptions should show sample energy need, got ${report}`);
+
+  room.terminal.cooldown = 5;
+  report = marketConsole.sellOptions("H");
+  assert(report.indexOf("blocked") !== -1, `sellOptions should show cooldown-blocked options, got ${report}`);
+  assert(report.indexOf("cooldown 5") !== -1, `sellOptions should show cooldown reason, got ${report}`);
+  room.terminal.cooldown = 0;
+
+  let deals = installFakeMarket([
+    {
+      id: "buy_H_58",
+      type: ORDER_BUY,
+      resourceType: "H",
+      amount: 58,
+      price: 0.25,
+      roomName: "W42N9",
+    },
+  ]);
+  report = marketConsole.sell("H", 2580, room.name);
+  assert(deals.length === 1 && deals[0].amount === 58, `expected sell deal amount 58, got ${JSON.stringify(deals)}`);
+  assert(report.indexOf("requested 2,580") !== -1, `sell report should include requested amount, got ${report}`);
+  assert(report.indexOf("sold 58") !== -1, `sell report should include actual sold amount, got ${report}`);
+  assert(report.indexOf("limited by order amount") !== -1, `sell report should include limit reason, got ${report}`);
+
+  room = buildOpsLogisticsRoom("VAL_OPERATOR_REPORTS_BUY", {
+    tick: 1341,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
+  deals = installFakeMarket([
+    {
+      id: "sell_Z_75",
+      type: ORDER_SELL,
+      resourceType: "Z",
+      amount: 75,
+      price: 0.35,
+      roomName: "W42N9",
+    },
+  ]);
+  report = marketConsole.buy("Z", 1000, room.name);
+  assert(deals.length === 1 && deals[0].amount === 75, `expected buy deal amount 75, got ${JSON.stringify(deals)}`);
+  assert(report.indexOf("requested 1,000") !== -1, `buy report should include requested amount, got ${report}`);
+  assert(report.indexOf("bought 75") !== -1, `buy report should include actual bought amount, got ${report}`);
+  assert(report.indexOf("limited by order amount") !== -1, `buy report should include limit reason, got ${report}`);
 }
 
 function buildEmpireMineralRooms(options) {
@@ -9817,6 +9973,7 @@ function main() {
     ["lab_tight_replan", runLabTightReplanScenario],
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
+    ["operator_report_cleanup", runOperatorReportCleanupScenario],
     ["hauler_execution_order_coverage", runHaulerExecutionOrderCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],

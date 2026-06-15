@@ -85,6 +85,8 @@ function printBlock(lines) {
   for (let i = 0; i < lines.length; i++) {
     console.log(lines[i]);
   }
+
+  return lines.join("\n");
 }
 
 function getRuntimeMemory() {
@@ -577,8 +579,8 @@ module.exports = {
       fillTerminal: function (roomName, resource, amount) {
         return module.exports.fillTerminal(roomName, resource, amount);
       },
-      requests: function (roomName) {
-        return module.exports.requests(roomName);
+      requests: function (roomName, mode) {
+        return module.exports.requests(roomName, mode);
       },
       cancel: function (requestId) {
         return module.exports.cancel(requestId);
@@ -841,8 +843,7 @@ module.exports = {
         }
       }
 
-      printBlock(lines);
-      return status;
+      return printBlock(lines);
     }
 
     const rooms = getOwnedRooms().filter(function (room) {
@@ -853,8 +854,7 @@ module.exports = {
 
     if (statuses.length === 0) {
       lines.push("  no owned rooms with terminals");
-      printBlock(lines);
-      return statuses;
+      return printBlock(lines);
     }
 
     for (let i = 0; i < statuses.length; i++) {
@@ -868,8 +868,7 @@ module.exports = {
       );
     }
 
-    printBlock(lines);
-    return statuses;
+    return printBlock(lines);
   },
 
   clearTerminal(roomName, resource, amount) {
@@ -965,22 +964,56 @@ module.exports = {
     return result;
   },
 
-  requests(roomName) {
-    const rows = opsLogisticsManager.listRequests(roomName);
+  requests(roomName, mode) {
+    const firstArg = typeof roomName === "string" ? roomName.trim().toLowerCase() : "";
+    const secondArg = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+    const includeAll =
+      firstArg === "all" ||
+      firstArg === "history" ||
+      secondArg === "all" ||
+      secondArg === "history";
+    const resolvedRoomName =
+      firstArg === "all" || firstArg === "history" ? null : roomName;
+    const allRows = opsLogisticsManager.listRequests(resolvedRoomName);
+    const counts = {
+      open: 0,
+      blocked: 0,
+      done: 0,
+      canceled: 0,
+      expired: 0,
+    };
+
+    for (let i = 0; i < allRows.length; i++) {
+      const status = allRows[i].status || "open";
+      if (Object.prototype.hasOwnProperty.call(counts, status)) {
+        counts[status] += 1;
+      }
+    }
+
+    const rows = includeAll
+      ? allRows
+      : allRows.filter(function (row) {
+          return row.status === "open" || row.status === "blocked";
+        });
     const lines = [
-      roomName
-        ? `[OPS] Logistics requests for ${roomName}:`
-        : "[OPS] Logistics requests:",
+      (resolvedRoomName
+        ? `[OPS] Logistics requests for ${resolvedRoomName}`
+        : "[OPS] Logistics requests") +
+        (includeAll ? " (all)" : " (active)") +
+        ` | open ${counts.open}` +
+        ` | blocked ${counts.blocked}` +
+        ` | done ${counts.done}` +
+        ` | canceled ${counts.canceled}` +
+        ` | expired ${counts.expired}:`,
     ];
 
     if (!rows.length) {
       lines.push("  none");
-      printBlock(lines);
-      return rows;
+      return printBlock(lines);
     }
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
+    for (let j = 0; j < rows.length; j++) {
+      const row = rows[j];
 
       lines.push(
         `  ${row.id} | ${row.status} | ${row.roomName}` +
@@ -991,8 +1024,7 @@ module.exports = {
       );
     }
 
-    printBlock(lines);
-    return rows;
+    return printBlock(lines);
   },
 
   cancel(requestId) {

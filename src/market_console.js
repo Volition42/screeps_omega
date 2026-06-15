@@ -53,7 +53,7 @@ function printBlock(lines) {
     console.log(lines[i]);
   }
 
-  return lines;
+  return lines.join("\n");
 }
 
 function fmt(value) {
@@ -147,6 +147,33 @@ function terminalFreeCapacity(room) {
   }
 
   return 300000 - _.sum(room.terminal.store);
+}
+
+function maxAmountByTerminalEnergy(roomName, orderRoomName, terminalEnergy, maxAmount) {
+  let low = 0;
+  let high = Math.max(0, Math.floor(maxAmount || 0));
+
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const energyCost = Game.market.calcTransactionCost(
+      mid,
+      roomName,
+      orderRoomName,
+    );
+
+    if (energyCost <= terminalEnergy) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return low;
+}
+
+function formatLimitReasons(reasons) {
+  if (!reasons.length) return "not limited";
+  return "limited by " + reasons.join(", ");
 }
 
 function scoreBuyOrder(order, roomName, amount) {
@@ -521,14 +548,47 @@ function unstage(resource, amount, roomName) {
   return printLine(result.message);
 }
 
-function requests(roomName) {
-  const rows = opsLogisticsManager
-    .listRequests(roomName)
-    .concat(marketRequestManager.listRequests(roomName));
+function requests(roomName, mode) {
+  const firstArg = typeof roomName === "string" ? roomName.trim().toLowerCase() : "";
+  const secondArg = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  const includeAll =
+    firstArg === "all" ||
+    firstArg === "history" ||
+    secondArg === "all" ||
+    secondArg === "history";
+  const resolvedRoomName =
+    firstArg === "all" || firstArg === "history" ? null : roomName;
+  const allRows = opsLogisticsManager
+    .listRequests(resolvedRoomName)
+    .concat(marketRequestManager.listRequests(resolvedRoomName));
+  const counts = {
+    open: 0,
+    blocked: 0,
+    done: 0,
+    canceled: 0,
+    expired: 0,
+  };
+
+  for (let i = 0; i < allRows.length; i++) {
+    const status = allRows[i].status || "open";
+    if (Object.prototype.hasOwnProperty.call(counts, status)) {
+      counts[status] += 1;
+    }
+  }
+
+  const rows = includeAll
+    ? allRows
+    : allRows.filter((row) => row.status === "open" || row.status === "blocked");
   const lines = [
-    roomName
-      ? `[MARKET] Requests for ${roomName}:`
-      : "[MARKET] Market-compatible logistics requests:",
+    (resolvedRoomName
+      ? `[MARKET] Requests for ${resolvedRoomName}`
+      : "[MARKET] Market-compatible logistics requests") +
+      (includeAll ? " (all)" : " (active)") +
+      ` | open ${counts.open}` +
+      ` | blocked ${counts.blocked}` +
+      ` | done ${counts.done}` +
+      ` | canceled ${counts.canceled}` +
+      ` | expired ${counts.expired}:`,
   ];
 
   if (!rows.length) {
@@ -704,15 +764,35 @@ function sellOptions(resource) {
 
         const score = scoreSellOrder(order, room.name, sample);
         const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
-        const ready =
-          terminalReady(room) &&
-          terminalEnergy >= score.energyCost &&
-          available >= sample;
+        const maxByEnergy = maxAmountByTerminalEnergy(
+          room.name,
+          order.roomName,
+          terminalEnergy,
+          Math.min(order.amount, available),
+        );
+        const maxNow = terminalReady(room)
+          ? Math.min(order.amount, available, maxByEnergy)
+          : 0;
+        const blockedReasons = [];
+
+        if (!terminalReady(room)) {
+          blockedReasons.push(`cooldown ${room.terminal.cooldown}`);
+        }
+        if (terminalEnergy < score.energyCost) {
+          blockedReasons.push(
+            `energy short ${fmt(score.energyCost - terminalEnergy)}`,
+          );
+        }
+
+        const ready = maxNow > 0 && blockedReasons.length === 0;
 
         scored.push({
           order,
           room,
+          available,
           terminalEnergy,
+          maxNow,
+          blockedReasons,
           ready,
           energyCost: score.energyCost,
           effectivePrice: score.effectivePrice,
@@ -746,9 +826,14 @@ function sellOptions(resource) {
           ` | price ${item.order.price.toFixed(4)}` +
           ` | effective ${item.effectivePrice.toFixed(4)}` +
           ` | order amount ${fmt(item.order.amount)}` +
+          ` | terminal amount ${fmt(item.available)}` +
+          ` | maxNow ${fmt(item.maxNow)}` +
           ` | sell from ${item.room.name}` +
-          ` | energy need ${fmt(item.energyCost)}` +
-          ` | terminal energy ${fmt(item.terminalEnergy)}`,
+          ` | sample energy need ${fmt(item.energyCost)}` +
+          ` | terminal energy ${fmt(item.terminalEnergy)}` +
+          (item.blockedReasons.length
+            ? ` | reason ${item.blockedReasons.join(", ")}`
+            : ""),
       );
     }
   }
@@ -771,7 +856,9 @@ function buy(resource, amount, roomName) {
     );
   if (!resource || !amount || amount <= 0)
     return printLine(`${CONFIG.logPrefix} Invalid resource or amount.`);
-  if (terminalFreeCapacity(room) < amount)
+  const freeCapacity = terminalFreeCapacity(room);
+
+  if (freeCapacity <= 0)
     return printLine(`${CONFIG.logPrefix} Terminal lacks free capacity.`);
 
   const orders = Game.market
@@ -793,12 +880,19 @@ function buy(resource, amount, roomName) {
     .sort((a, b) => a.effectivePrice - b.effectivePrice);
 
   const selected = scored.find((item) => {
-    const dealAmount = Math.min(amount, item.order.amount);
+    const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+    const dealAmount = Math.min(amount, item.order.amount, freeCapacity);
     const totalPrice = dealAmount * item.order.price;
+    const energyCost = Game.market.calcTransactionCost(
+      dealAmount,
+      room.name,
+      item.order.roomName,
+    );
 
     return (
+      dealAmount > 0 &&
       Game.market.credits >= totalPrice &&
-      amountIn(room.terminal.store, RESOURCE_ENERGY) >= item.energyCost
+      terminalEnergy >= energyCost
     );
   });
 
@@ -808,15 +902,53 @@ function buy(resource, amount, roomName) {
     );
   }
 
-  const dealAmount = Math.min(amount, selected.order.amount);
+  const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+  const maxByCredits = Math.floor(Game.market.credits / selected.order.price);
+  const maxByEnergy = maxAmountByTerminalEnergy(
+    room.name,
+    selected.order.roomName,
+    terminalEnergy,
+    Math.min(amount, selected.order.amount, freeCapacity, maxByCredits),
+  );
+  const dealAmount = Math.min(
+    amount,
+    selected.order.amount,
+    freeCapacity,
+    maxByCredits,
+    maxByEnergy,
+  );
+  const energyCost = Game.market.calcTransactionCost(
+    dealAmount,
+    room.name,
+    selected.order.roomName,
+  );
+  const limitReasons = [];
+
+  if (dealAmount < amount) {
+    if (selected.order.amount < amount) limitReasons.push("order amount");
+    if (maxByCredits < Math.min(amount, selected.order.amount, freeCapacity)) {
+      limitReasons.push("credits");
+    }
+    if (freeCapacity < Math.min(amount, selected.order.amount, maxByCredits)) {
+      limitReasons.push("terminal capacity");
+    }
+    if (
+      maxByEnergy <
+      Math.min(amount, selected.order.amount, freeCapacity, maxByCredits)
+    ) {
+      limitReasons.push("terminal energy");
+    }
+  }
+
   const result = Game.market.deal(selected.order.id, dealAmount, room.name);
 
   return printLine(
-    `${CONFIG.logPrefix} buy ${resource} x${fmt(dealAmount)} into ${room.name}` +
+    `${CONFIG.logPrefix} buy ${resource} requested ${fmt(amount)} | bought ${fmt(dealAmount)} into ${room.name}` +
+      ` | ${formatLimitReasons(limitReasons)}` +
       ` | price ${selected.order.price.toFixed(4)}` +
       ` | effective ${selected.effectivePrice.toFixed(4)}` +
       ` | credits ${fmt(dealAmount * selected.order.price)}` +
-      ` | energy ${fmt(selected.energyCost)}` +
+      ` | energy ${fmt(energyCost)}` +
       ` | result ${result}`,
   );
 }
@@ -837,9 +969,12 @@ function sell(resource, amount, roomName) {
   if (!resource || !amount || amount <= 0)
     return printLine(`${CONFIG.logPrefix} Invalid resource or amount.`);
 
-  if (amountIn(room.terminal.store, resource) < amount) {
+  const available = amountIn(room.terminal.store, resource);
+  const terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+
+  if (available <= 0) {
     return printLine(
-      `${CONFIG.logPrefix} Terminal lacks ${resource}. Has ${fmt(amountIn(room.terminal.store, resource))}, needs ${fmt(amount)}.`,
+      `${CONFIG.logPrefix} Terminal lacks ${resource}. Has ${fmt(available)}, needs ${fmt(amount)}.`,
     );
   }
 
@@ -862,7 +997,13 @@ function sell(resource, amount, roomName) {
     .sort((a, b) => b.effectivePrice - a.effectivePrice);
 
   const selected = scored.find((item) => {
-    return amountIn(room.terminal.store, RESOURCE_ENERGY) >= item.energyCost;
+    const dealAmount = Math.min(amount, item.order.amount, available);
+    const energyCost = Game.market.calcTransactionCost(
+      dealAmount,
+      room.name,
+      item.order.roomName,
+    );
+    return dealAmount > 0 && terminalEnergy >= energyCost;
   });
 
   if (!selected) {
@@ -871,15 +1012,44 @@ function sell(resource, amount, roomName) {
     );
   }
 
-  const dealAmount = Math.min(amount, selected.order.amount);
+  const maxByEnergy = maxAmountByTerminalEnergy(
+    room.name,
+    selected.order.roomName,
+    terminalEnergy,
+    Math.min(amount, selected.order.amount, available),
+  );
+  const dealAmount = Math.min(
+    amount,
+    selected.order.amount,
+    available,
+    maxByEnergy,
+  );
+  const energyCost = Game.market.calcTransactionCost(
+    dealAmount,
+    room.name,
+    selected.order.roomName,
+  );
+  const limitReasons = [];
+
+  if (dealAmount < amount) {
+    if (selected.order.amount < amount) limitReasons.push("order amount");
+    if (available < Math.min(amount, selected.order.amount)) {
+      limitReasons.push("terminal resource");
+    }
+    if (maxByEnergy < Math.min(amount, selected.order.amount, available)) {
+      limitReasons.push("terminal energy");
+    }
+  }
+
   const result = Game.market.deal(selected.order.id, dealAmount, room.name);
 
   return printLine(
-    `${CONFIG.logPrefix} sell ${resource} x${fmt(dealAmount)} from ${room.name}` +
+    `${CONFIG.logPrefix} sell ${resource} requested ${fmt(amount)} | sold ${fmt(dealAmount)} from ${room.name}` +
+      ` | ${formatLimitReasons(limitReasons)}` +
       ` | price ${selected.order.price.toFixed(4)}` +
       ` | effective ${selected.effectivePrice.toFixed(4)}` +
       ` | credits ${fmt(dealAmount * selected.order.price)}` +
-      ` | energy ${fmt(selected.energyCost)}` +
+      ` | energy ${fmt(energyCost)}` +
       ` | result ${result}`,
   );
 }
