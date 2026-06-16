@@ -40,6 +40,29 @@ market.sellOptions("H")
 ops.requests()
 ```
 
+## Layer 3.3 Dry-Run Planning
+
+```js
+market.planSell("H", 10000, "W42N9")
+market.planBuy("energy", 5000, "W41N8")
+market.plans()
+market.plan("ms_223455_H_W42N9")
+market.deletePlan("ms_223455_H_W42N9")
+```
+
+Dry-run plans convert current market opportunities into saved operator review objects under `Memory.consoleTools.market.plans`. A plan records the selected order, executable amount, effective price, estimated credits, estimated terminal energy cost, terminal state, blockers, timestamps, and a short console-friendly id.
+
+Plans may be `ready`, `blocked`, `stale`, or `deleted`. `market.plan(id)` re-checks the selected order and terminal state and reports stale plans when the order disappeared, changed materially, or the terminal can no longer support the planned amount. `market.plans()` shows active non-deleted, non-expired plans; `market.plans("all")` includes history.
+
+Planning is not execution. A ready report prints the manual next command, such as:
+
+```js
+market.sell("H", 2580, "W42N9")
+market.buy("energy", 5000, "W41N8")
+```
+
+The operator must still run `market.buy` or `market.sell` manually after reviewing the plan.
+
 ## No-Execution Boundary
 
 Market intelligence commands do not:
@@ -52,4 +75,6 @@ Market intelligence commands do not:
 - schedule recurring jobs
 - perform autonomous buying, selling, balancing, or arbitrage
 
-Use existing manual commands when you choose to act on a report: `ops.clearTerminal`, `ops.fillTerminal`, `market.sellOptions`, `market.buyOptions`, `market.sell`, and `market.buy`.
+Dry-run planning commands follow the same safety boundary. They may read market orders, credits, and terminal state, and they may write plan objects to `Memory.consoleTools.market.plans`. They do not move resources, create ops logistics requests, send terminal resources, create orders, or execute deals.
+
+Use existing manual commands when you choose to act on a report: `ops.clearTerminal`, `ops.fillTerminal`, `market.sellOptions`, `market.buyOptions`, `market.planSell`, `market.planBuy`, `market.sell`, and `market.buy`.

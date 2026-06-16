@@ -7676,6 +7676,172 @@ function runMarketIntelligenceReportsScenario() {
   assert(JSON.stringify(Memory) === memoryBefore, "intelligence reports should not mutate Memory");
 }
 
+function getMarketPlanIdFromReport(report) {
+  const match = String(report).match(/\[MARKET\] (?:Sell|Buy) plan ([^:]+):/);
+  assert(match && match[1], `expected market plan id in report, got ${report}`);
+  return match[1];
+}
+
+function runMarketDryRunPlanningScenario() {
+  Memory.consoleTools = { market: { plans: {} } };
+  Memory.ops = { logistics: { requests: {} } };
+
+  const sellRoom = buildOpsLogisticsRoom("VAL_MARKET_PLAN_SELL", {
+    tick: 1360,
+    storageStore: { energy: 250000, H: 10000 },
+    terminalStore: { energy: 12000, H: 5000 },
+  });
+  const fakeMarketTrackers = [];
+  const installPlanMarket = function (orders, options) {
+    const tracker = installFakeMarket(orders, options);
+    fakeMarketTrackers.push(tracker);
+    return tracker;
+  };
+  const readyOrders = [
+    {
+      id: "buy_H_plan",
+      type: ORDER_BUY,
+      resourceType: "H",
+      amount: 3000,
+      price: 0.71,
+      roomName: "W42N9",
+    },
+    {
+      id: "sell_Z_plan",
+      type: ORDER_SELL,
+      resourceType: "Z",
+      amount: 4000,
+      price: 0.35,
+      roomName: "W42N9",
+    },
+  ];
+  installPlanMarket(readyOrders);
+  const requestCountBefore = opsLogisticsManager.listRequests().length;
+
+  let captured = captureConsoleLines(function () {
+    return marketConsole.help();
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("market.planSell(resource, amount, roomName)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.planBuy(resource, amount, roomName)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.plans()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.deletePlan(planId)") !== -1; }),
+    `market.help should include dry-run plan commands, got ${captured.lines.join(" / ")}`,
+  );
+
+  let report = marketConsole.planSell("H", 10000, sellRoom.name);
+  assert(typeof report === "string", "market.planSell should return a printable string");
+  assert(report.indexOf("READY") !== -1, `planSell should create a ready plan, got ${report}`);
+  assert(report.indexOf("next: market.sell(\"H\"") !== -1, `planSell should show manual next command, got ${report}`);
+  const sellPlanId = getMarketPlanIdFromReport(report);
+  let savedPlan = Memory.consoleTools.market.plans[sellPlanId];
+  assert(savedPlan.status === "ready", `expected ready sell plan, got ${savedPlan.status}`);
+  assert(savedPlan.type === "sell", `expected sell plan type, got ${savedPlan.type}`);
+  assert(savedPlan.selectedOrderId === "buy_H_plan", `expected selected buy order, got ${savedPlan.selectedOrderId}`);
+  assert(savedPlan.executableAmount === 3000, `expected sell executable 3000, got ${savedPlan.executableAmount}`);
+
+  report = marketConsole.planSell("Z", 1000, sellRoom.name);
+  assert(report.indexOf("BLOCKED") !== -1, `missing resource sell plan should be blocked, got ${report}`);
+  savedPlan = Memory.consoleTools.market.plans[getMarketPlanIdFromReport(report)];
+  assert(savedPlan.status === "blocked", `expected blocked sell plan, got ${savedPlan.status}`);
+  assert(savedPlan.blockers.indexOf("no resource in terminal") !== -1, `expected no-resource blocker, got ${savedPlan.blockers.join(",")}`);
+
+  const lowEnergyRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_LOW_ENERGY", {
+    storageStore: { energy: 250000, H: 10000 },
+    terminalStore: { energy: 0, H: 5000 },
+  });
+  installPlanMarket(readyOrders);
+  report = marketConsole.planSell("H", 1000, lowEnergyRoom.name);
+  assert(report.indexOf("BLOCKED") !== -1, `low-energy sell plan should be blocked, got ${report}`);
+  assert(report.indexOf("insufficient terminal energy") !== -1 || report.indexOf("low terminal energy") !== -1, `expected energy blocker, got ${report}`);
+
+  const buyRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_BUY", {
+    storageStore: { energy: 250000 },
+    terminalStore: { energy: 12000 },
+  });
+  installPlanMarket(readyOrders);
+  report = marketConsole.planBuy("Z", 5000, buyRoom.name);
+  assert(typeof report === "string", "market.planBuy should return a printable string");
+  assert(report.indexOf("READY") !== -1, `planBuy should create a ready plan, got ${report}`);
+  assert(report.indexOf("next: market.buy(\"Z\"") !== -1, `planBuy should show manual next command, got ${report}`);
+  const buyPlanId = getMarketPlanIdFromReport(report);
+  savedPlan = Memory.consoleTools.market.plans[buyPlanId];
+  assert(savedPlan.status === "ready", `expected ready buy plan, got ${savedPlan.status}`);
+  assert(savedPlan.type === "buy", `expected buy plan type, got ${savedPlan.type}`);
+  assert(savedPlan.selectedOrderId === "sell_Z_plan", `expected selected sell order, got ${savedPlan.selectedOrderId}`);
+  assert(savedPlan.executableAmount === 4000, `expected buy executable 4000, got ${savedPlan.executableAmount}`);
+
+  const fullRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_FULL", {
+    storageStore: { energy: 250000 },
+    terminalStore: { energy: 300000 },
+  });
+  installPlanMarket(readyOrders);
+  report = marketConsole.planBuy("Z", 1000, fullRoom.name);
+  assert(report.indexOf("BLOCKED") !== -1, `full terminal buy plan should be blocked, got ${report}`);
+  assert(report.indexOf("no terminal capacity") !== -1, `expected capacity blocker, got ${report}`);
+
+  const creditRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_CREDITS", {
+    storageStore: { energy: 250000 },
+    terminalStore: { energy: 12000 },
+  });
+  installPlanMarket([
+    {
+      id: "sell_Z_plan_expensive",
+      type: ORDER_SELL,
+      resourceType: "Z",
+      amount: 4000,
+      price: 100,
+      roomName: "W42N9",
+    },
+  ], { credits: 0 });
+  report = marketConsole.planBuy("Z", 1000, creditRoom.name);
+  assert(report.indexOf("BLOCKED") !== -1, `unaffordable buy plan should be blocked, got ${report}`);
+  assert(report.indexOf("insufficient credits") !== -1, `expected credits blocker, got ${report}`);
+
+  installPlanMarket([]);
+  report = marketConsole.planBuy("Z", 1000, creditRoom.name);
+  assert(report.indexOf("BLOCKED") !== -1, `missing order buy plan should be blocked, got ${report}`);
+  assert(report.indexOf("no sell orders") !== -1, `expected no-order blocker, got ${report}`);
+
+  installPlanMarket(readyOrders);
+  report = marketConsole.plans();
+  assert(typeof report === "string", "market.plans should return a printable string");
+  assert(report.indexOf(sellPlanId) !== -1 && report.indexOf(buyPlanId) !== -1, `market.plans should list active plans, got ${report}`);
+
+  installPlanMarket([]);
+  report = marketConsole.plan(sellPlanId);
+  assert(typeof report === "string", "market.plan should return a printable string");
+  assert(report.indexOf("STALE") !== -1, `market.plan should detect missing selected order as stale, got ${report}`);
+  assert(Memory.consoleTools.market.plans[sellPlanId].status === "stale", "market.plan should mark stale plans stale");
+
+  report = marketConsole.deletePlan(buyPlanId);
+  assert(report.indexOf("deleted plan") !== -1, `deletePlan should return a printable deletion report, got ${report}`);
+  assert(Memory.consoleTools.market.plans[buyPlanId].status === "deleted", "deletePlan should soft-delete plans");
+  report = marketConsole.plans();
+  assert(
+    !report.split("\n").some(function (line) { return line.indexOf(`  ${buyPlanId} |`) === 0; }),
+    `default market.plans should hide deleted plans, got ${report}`,
+  );
+  report = marketConsole.plans("all");
+  assert(
+    report.split("\n").some(function (line) { return line.indexOf(`  ${buyPlanId} |`) === 0; }),
+    `market.plans(all) should include deleted plans, got ${report}`,
+  );
+
+  const dealCount = fakeMarketTrackers.reduce(function (total, tracker) {
+    return total + tracker.length;
+  }, 0);
+  const createdOrderCount = fakeMarketTrackers.reduce(function (total, tracker) {
+    return total + tracker.createdOrders.length;
+  }, 0);
+  assert(dealCount === 0, `dry-run plans must not execute Game.market.deal, got ${dealCount}`);
+  assert(createdOrderCount === 0, `dry-run plans must not create market orders, got ${createdOrderCount}`);
+  assert(
+    opsLogisticsManager.listRequests().length === requestCountBefore,
+    "dry-run plans must not create ops logistics requests",
+  );
+}
+
 function buildEmpireMineralRooms(options) {
   const settings = options || {};
   const donor = buildRoomScenario("VAL_MINERAL_DONOR", {
@@ -10160,6 +10326,7 @@ function main() {
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
     ["operator_report_cleanup", runOperatorReportCleanupScenario],
     ["market_intelligence_reports", runMarketIntelligenceReportsScenario],
+    ["market_dry_run_planning", runMarketDryRunPlanningScenario],
     ["hauler_execution_order_coverage", runHaulerExecutionOrderCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],

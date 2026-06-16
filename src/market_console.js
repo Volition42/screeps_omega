@@ -20,6 +20,7 @@ const CONFIG = {
   congestedFreeCapacity: 20000,
   sellableMineralMinimum: 1000,
   intelligenceLimit: 8,
+  planTtl: 5000,
   logPrefix: "[MARKET]",
 };
 
@@ -70,6 +71,12 @@ function getMemoryRoot() {
   if (!Memory.consoleTools) Memory.consoleTools = {};
   if (!Memory.consoleTools.market) Memory.consoleTools.market = {};
   return Memory.consoleTools.market;
+}
+
+function getPlanStore() {
+  const memory = getMemoryRoot();
+  if (!memory.plans) memory.plans = {};
+  return memory.plans;
 }
 
 function touchMemory() {
@@ -698,6 +705,430 @@ function scoreSellOrder(order, roomName, amount) {
   };
 }
 
+function cleanPlanToken(value) {
+  return String(value || "unknown").replace(/[^A-Za-z0-9]/g, "").slice(0, 12) || "unknown";
+}
+
+function makePlanId(type, resource, roomName) {
+  const prefix = type === "buy" ? "mb" : "ms";
+  const base =
+    `${prefix}_${Game.time}_${cleanPlanToken(resource)}_${cleanPlanToken(roomName)}`;
+  const plans = getPlanStore();
+
+  if (!plans[base]) return base;
+
+  let suffix = 2;
+  while (plans[`${base}_${suffix}`]) suffix += 1;
+  return `${base}_${suffix}`;
+}
+
+function uniqueReasons(reasons) {
+  return reasons.filter((reason, index, list) => reason && list.indexOf(reason) === index);
+}
+
+function buildBasePlan(type, resource, amount, roomName) {
+  const requestedAmount = Math.max(0, Math.floor(Number(amount) || 0));
+  return {
+    id: makePlanId(type, resource, roomName),
+    type,
+    status: "blocked",
+    resourceType: resource,
+    roomName,
+    requestedAmount,
+    executableAmount: 0,
+    selectedOrderId: null,
+    selectedOrderType: type === "buy" ? ORDER_SELL : ORDER_BUY,
+    selectedOrderRoomName: null,
+    selectedOrderPrice: 0,
+    effectivePrice: 0,
+    estimatedCredits: 0,
+    estimatedEnergyCost: 0,
+    terminalEnergy: 0,
+    terminalResourceAmount: type === "sell" ? 0 : undefined,
+    terminalFreeCapacity: type === "buy" ? 0 : undefined,
+    blockers: [],
+    createdAt: Game.time,
+    updatedAt: Game.time,
+    expiresAt: Game.time + CONFIG.planTtl,
+  };
+}
+
+function savePlan(plan) {
+  const plans = getPlanStore();
+  plan.updatedAt = Game.time;
+  plans[plan.id] = plan;
+  return plan;
+}
+
+function findSelectedOrder(plan) {
+  if (!plan || !plan.selectedOrderId) return null;
+
+  const orders = Game.market.getAllOrders({
+    type: plan.selectedOrderType,
+    resourceType: plan.resourceType,
+  });
+
+  return orders.find((order) => order.id === plan.selectedOrderId) || null;
+}
+
+function finalizePlan(plan, order, executableAmount, effectivePrice) {
+  const amount = Math.max(0, Math.floor(executableAmount || 0));
+  plan.executableAmount = amount;
+  plan.selectedOrderId = order ? order.id : null;
+  plan.selectedOrderRoomName = order ? order.roomName : null;
+  plan.selectedOrderPrice = order ? order.price : 0;
+  plan.effectivePrice = effectivePrice || 0;
+
+  if (order && amount > 0) {
+    plan.estimatedEnergyCost = Game.market.calcTransactionCost(
+      amount,
+      plan.roomName,
+      order.roomName,
+    );
+    plan.estimatedCredits = amount * order.price;
+  } else {
+    plan.estimatedEnergyCost = 0;
+    plan.estimatedCredits = 0;
+  }
+
+  plan.blockers = uniqueReasons(plan.blockers);
+  if (amount <= 0 && plan.blockers.indexOf("executable amount zero") === -1) {
+    plan.blockers.push("executable amount zero");
+  }
+  plan.status = plan.blockers.length ? "blocked" : "ready";
+  return savePlan(plan);
+}
+
+function formatPlanReport(plan, staleReasons) {
+  const headerStatus =
+    plan.status === "ready"
+      ? "READY"
+      : plan.status === "stale"
+        ? "STALE"
+        : plan.status === "deleted"
+          ? "DELETED"
+          : "BLOCKED";
+  const lines = [
+    `${CONFIG.logPrefix} ${plan.type === "buy" ? "Buy" : "Sell"} plan ${plan.id}: ${headerStatus}`,
+    `  resource ${plan.resourceType}`,
+    `  room ${plan.roomName}`,
+    `  requested ${fmt(plan.requestedAmount)}`,
+    `  executable ${fmt(plan.executableAmount)}`,
+    `  order ${plan.selectedOrderId || "none"}`,
+    `  price ${plan.selectedOrderId ? Number(plan.selectedOrderPrice).toFixed(4) : "n/a"}`,
+    `  effective ${plan.selectedOrderId ? Number(plan.effectivePrice).toFixed(4) : "n/a"}`,
+    `  estimated credits ${fmt(plan.estimatedCredits)}`,
+    `  estimated energy ${fmt(plan.estimatedEnergyCost)}`,
+  ];
+
+  if (plan.type === "sell") {
+    lines.push(`  terminal ${plan.resourceType} ${fmt(plan.terminalResourceAmount)}`);
+  } else {
+    lines.push(`  terminal free ${fmt(plan.terminalFreeCapacity)}`);
+  }
+
+  lines.push(`  terminal energy ${fmt(plan.terminalEnergy)}`);
+
+  if (plan.blockers && plan.blockers.length) {
+    lines.push(`  blockers ${plan.blockers.join(", ")}`);
+  }
+  if (staleReasons && staleReasons.length) {
+    lines.push(`  stale ${staleReasons.join(", ")}`);
+  }
+  if (plan.status === "ready") {
+    lines.push(
+      `  next: market.${plan.type}("${plan.resourceType}", ${plan.executableAmount}, "${plan.roomName}")`,
+    );
+  }
+
+  return printBlock(lines);
+}
+
+function selectSellPlanOrder(resource, room, requestedAmount, plan) {
+  const orders = Game.market
+    .getAllOrders({ type: ORDER_BUY, resourceType: resource })
+    .filter((order) => order.amount > 0 && order.roomName);
+
+  if (!orders.length) plan.blockers.push("no buy orders");
+
+  let best = null;
+  for (const order of orders) {
+    const candidateLimit = Math.min(
+      requestedAmount,
+      order.amount,
+      plan.terminalResourceAmount,
+    );
+    const sample = Math.min(CONFIG.sampleAmount, Math.max(1, candidateLimit));
+    const score = scoreSellOrder(order, room.name, sample);
+    const maxByEnergy = maxAmountByTerminalEnergy(
+      room.name,
+      order.roomName,
+      plan.terminalEnergy,
+      candidateLimit,
+    );
+    const executable = Math.min(candidateLimit, maxByEnergy);
+    const candidate = {
+      order,
+      limit: candidateLimit,
+      executable,
+      effectivePrice: score.effectivePrice,
+    };
+
+    if (
+      !best ||
+      (candidate.executable > 0 !== best.executable > 0
+        ? candidate.executable > 0
+        : candidate.effectivePrice > best.effectivePrice)
+    ) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
+function selectBuyPlanOrder(resource, room, requestedAmount, plan) {
+  const orders = Game.market
+    .getAllOrders({ type: ORDER_SELL, resourceType: resource })
+    .filter((order) => order.amount > 0 && order.roomName);
+
+  if (!orders.length) plan.blockers.push("no sell orders");
+
+  let best = null;
+  for (const order of orders) {
+    const maxByCredits = order.price > 0
+      ? Math.floor(Game.market.credits / order.price)
+      : 0;
+    const candidateLimit = Math.min(
+      requestedAmount,
+      order.amount,
+      plan.terminalFreeCapacity,
+      maxByCredits,
+    );
+    const sample = Math.min(CONFIG.sampleAmount, Math.max(1, candidateLimit));
+    const score = scoreBuyOrder(order, room.name, sample);
+    const maxByEnergy = maxAmountByTerminalEnergy(
+      room.name,
+      order.roomName,
+      plan.terminalEnergy,
+      candidateLimit,
+    );
+    const executable = Math.min(candidateLimit, maxByEnergy);
+    const candidate = {
+      order,
+      limit: candidateLimit,
+      executable,
+      effectivePrice: score.effectivePrice,
+      maxByCredits,
+    };
+
+    if (
+      !best ||
+      (candidate.executable > 0 !== best.executable > 0
+        ? candidate.executable > 0
+        : candidate.effectivePrice < best.effectivePrice)
+    ) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
+function planSell(resource, amount, roomName) {
+  const plan = buildBasePlan("sell", resource, amount, roomName);
+  const room = getOwnedRoom(roomName);
+
+  if (!room) plan.blockers.push("invalid room");
+  if (!resource || !isKnownResource(resource)) plan.blockers.push("invalid resource");
+  if (plan.requestedAmount <= 0) plan.blockers.push("invalid amount");
+
+  if (room && !terminalUsable(room)) plan.blockers.push("no terminal");
+  if (room && terminalUsable(room)) {
+    plan.terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+    plan.terminalResourceAmount = amountIn(room.terminal.store, resource);
+    if (!terminalReady(room)) plan.blockers.push("terminal cooldown");
+    if (plan.terminalResourceAmount <= 0) plan.blockers.push("no resource in terminal");
+  }
+
+  let selected = null;
+  if (room && terminalUsable(room) && resource && plan.requestedAmount > 0) {
+    selected = selectSellPlanOrder(resource, room, plan.requestedAmount, plan);
+    if (selected && selected.limit > 0 && selected.executable <= 0) {
+      plan.blockers.push("insufficient terminal energy");
+    }
+  }
+
+  return formatPlanReport(
+    finalizePlan(
+      plan,
+      selected ? selected.order : null,
+      selected && plan.blockers.length === 0 ? selected.executable : 0,
+      selected ? selected.effectivePrice : 0,
+    ),
+  );
+}
+
+function planBuy(resource, amount, roomName) {
+  const plan = buildBasePlan("buy", resource, amount, roomName);
+  const room = getOwnedRoom(roomName);
+
+  if (!room) plan.blockers.push("invalid room");
+  if (!resource || !isKnownResource(resource)) plan.blockers.push("invalid resource");
+  if (plan.requestedAmount <= 0) plan.blockers.push("invalid amount");
+
+  if (room && !terminalUsable(room)) plan.blockers.push("no terminal");
+  if (room && terminalUsable(room)) {
+    plan.terminalEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+    plan.terminalFreeCapacity = terminalFreeCapacity(room);
+    if (!terminalReady(room)) plan.blockers.push("terminal cooldown");
+    if (plan.terminalFreeCapacity <= 0) plan.blockers.push("no terminal capacity");
+  }
+
+  let selected = null;
+  if (room && terminalUsable(room) && resource && plan.requestedAmount > 0) {
+    selected = selectBuyPlanOrder(resource, room, plan.requestedAmount, plan);
+    if (selected) {
+      if (selected.maxByCredits <= 0) plan.blockers.push("insufficient credits");
+      if (selected.limit > 0 && selected.executable <= 0) {
+        plan.blockers.push("insufficient terminal energy");
+      }
+    }
+  }
+
+  return formatPlanReport(
+    finalizePlan(
+      plan,
+      selected ? selected.order : null,
+      selected && plan.blockers.length === 0 ? selected.executable : 0,
+      selected ? selected.effectivePrice : 0,
+    ),
+  );
+}
+
+function planIsExpired(plan) {
+  return plan && plan.expiresAt && plan.expiresAt <= Game.time;
+}
+
+function plans(mode) {
+  const includeAll = mode === "all" || mode === "history";
+  const rows = Object.values(getPlanStore())
+    .filter((plan) => includeAll || (plan.status !== "deleted" && !planIsExpired(plan)))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, CONFIG.intelligenceLimit);
+  const lines = [
+    `${CONFIG.logPrefix} Saved market plans${includeAll ? " (all)" : " (active)"}:`,
+  ];
+
+  if (!rows.length) {
+    lines.push("  none");
+    return printBlock(lines);
+  }
+
+  for (const item of rows) {
+    lines.push(
+      `  ${item.id} | ${item.status}` +
+        ` | ${item.type}` +
+        ` | ${item.resourceType}` +
+        ` | ${item.roomName}` +
+        ` | ${fmt(item.executableAmount)}/${fmt(item.requestedAmount)}` +
+        ` | price ${item.selectedOrderId ? Number(item.selectedOrderPrice).toFixed(4) : "n/a"}` +
+        ` | created ${item.createdAt}`,
+    );
+  }
+
+  return printBlock(lines);
+}
+
+function recheckPlan(plan) {
+  const staleReasons = [];
+
+  if (plan.status === "deleted") return staleReasons;
+
+  const order = findSelectedOrder(plan);
+  if (plan.selectedOrderId && !order) {
+    staleReasons.push("order missing");
+  }
+  if (order) {
+    if (order.amount < plan.executableAmount) staleReasons.push("order amount lower");
+    if (Number(order.price) !== Number(plan.selectedOrderPrice)) {
+      staleReasons.push("order price changed");
+    }
+  }
+
+  const room = getOwnedRoom(plan.roomName);
+  if (!room || !terminalUsable(room)) {
+    staleReasons.push("terminal unavailable");
+  } else if (plan.type === "sell") {
+    const currentResource = amountIn(room.terminal.store, plan.resourceType);
+    const currentEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+    if (currentResource < plan.executableAmount) staleReasons.push("terminal resource lower");
+    if (
+      order &&
+      maxAmountByTerminalEnergy(
+        room.name,
+        order.roomName,
+        currentEnergy,
+        Math.min(plan.executableAmount, order.amount, currentResource),
+      ) < plan.executableAmount
+    ) {
+      staleReasons.push("terminal energy lower");
+    }
+  } else {
+    const currentFree = terminalFreeCapacity(room);
+    const currentEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
+    if (currentFree < plan.executableAmount) staleReasons.push("terminal capacity lower");
+    if (
+      order &&
+      maxAmountByTerminalEnergy(
+        room.name,
+        order.roomName,
+        currentEnergy,
+        Math.min(plan.executableAmount, order.amount, currentFree),
+      ) < plan.executableAmount
+    ) {
+      staleReasons.push("terminal energy lower");
+    }
+  }
+
+  if (staleReasons.length && plan.status !== "stale") {
+    plan.status = "stale";
+    plan.updatedAt = Game.time;
+  }
+
+  return uniqueReasons(staleReasons);
+}
+
+function plan(planId) {
+  const saved = getPlanStore()[planId];
+  if (!saved) return printLine(`${CONFIG.logPrefix} Plan not found: ${planId}`);
+
+  const staleReasons = recheckPlan(saved);
+  return formatPlanReport(saved, staleReasons);
+}
+
+function deletePlan(planId) {
+  const saved = getPlanStore()[planId];
+  if (!saved) return printLine(`${CONFIG.logPrefix} Plan not found: ${planId}`);
+
+  saved.status = "deleted";
+  saved.deletedAt = Game.time;
+  saved.updatedAt = Game.time;
+
+  return printLine(`${CONFIG.logPrefix} deleted plan ${planId}`);
+}
+
+function clearPlans() {
+  const planRows = Object.values(getPlanStore()).filter((saved) => saved.status !== "deleted");
+  for (const saved of planRows) {
+    saved.status = "deleted";
+    saved.deletedAt = Game.time;
+    saved.updatedAt = Game.time;
+  }
+
+  return printLine(`${CONFIG.logPrefix} deleted ${fmt(planRows.length)} market plan(s)`);
+}
+
 function bestOwnedRoomForBuy(amount, order) {
   let best = null;
 
@@ -768,6 +1199,16 @@ function help() {
     "  market.opportunities()",
     "  market.opportunities(resource)",
     "  market.recommendations()",
+    "",
+    "[MARKET] Dry-run planning:",
+    "  market.planSell(resource, amount, roomName)",
+    "  market.planBuy(resource, amount, roomName)",
+    "  market.plans()",
+    '  market.plans("all"|"history")',
+    "  market.plan(planId)",
+    "  market.deletePlan(planId)",
+    "  market.removePlan(planId)",
+    "  market.clearPlans()",
     "",
     "[MARKET] Manual trading:",
     "  market.buy(resource, amount, roomName)",
@@ -1656,6 +2097,13 @@ function registerGlobals() {
     readiness: readinessCommand,
     opportunities,
     recommendations,
+    planSell,
+    planBuy,
+    plans,
+    plan,
+    deletePlan,
+    removePlan: deletePlan,
+    clearPlans,
     buy,
     sell,
 
@@ -1693,6 +2141,13 @@ module.exports = {
   readiness: readinessCommand,
   opportunities,
   recommendations,
+  planSell,
+  planBuy,
+  plans,
+  plan,
+  deletePlan,
+  removePlan: deletePlan,
+  clearPlans,
   buy,
   sell,
 
