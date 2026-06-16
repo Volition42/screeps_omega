@@ -1589,6 +1589,7 @@ const defenseLayout = require("defense_layout");
 const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
 const opsLogisticsManager = require("ops_logistics_manager");
+const terminalBalanceManager = require("terminal_balance_manager");
 const marketConsole = require("market_console");
 const kernelMemory = require("kernel_memory");
 const roleWorker = require("role_worker");
@@ -7447,6 +7448,129 @@ function runOpsLogisticsHarnessCoverageScenario() {
   );
 }
 
+function runTerminalBalanceManagerScenario() {
+  let room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE", {
+    tick: 1320,
+    storageStore: {
+      energy: 160000,
+      H: 12000,
+      power: 900,
+      G: 9000,
+    },
+    terminalStore: {
+      energy: 10000,
+      H: 1000,
+      power: 100,
+      G: 1000,
+      O: 8000,
+    },
+  });
+  const sendsBefore = currentRuntime.terminalSends.length;
+  const deals = installFakeMarket([]);
+  const result = terminalBalanceManager.evaluate(room);
+  assert(result.ok, `expected terminal balance ok, got ${result.message}`);
+  assert(result.summary.state === "balancing", `expected balancing state, got ${result.summary.state}`);
+  assert(result.summary.terminalEnergy === 10000, `expected terminal energy in summary, got ${result.summary.terminalEnergy}`);
+  assert(
+    result.requests.some(function (entry) {
+      return entry.request &&
+        entry.request.resourceType === RESOURCE_ENERGY &&
+        entry.request.from === "storage" &&
+        entry.request.to === "terminal";
+    }),
+    "terminal balance should stage energy from storage",
+  );
+  assert(
+    result.requests.some(function (entry) {
+      return entry.request &&
+        entry.request.resourceType === "H" &&
+        entry.request.from === "storage" &&
+        entry.request.to === "terminal";
+    }),
+    "terminal balance should stage minerals already present in storage",
+  );
+  assert(
+    result.requests.some(function (entry) {
+      return entry.request &&
+        entry.request.resourceType === RESOURCE_POWER &&
+        entry.request.from === "storage" &&
+        entry.request.to === "terminal";
+    }),
+    "terminal balance should stage power already present in storage",
+  );
+  assert(
+    result.requests.some(function (entry) {
+      return entry.request &&
+        entry.request.resourceType === RESOURCE_GHODIUM &&
+        entry.request.from === "storage" &&
+        entry.request.to === "terminal";
+    }),
+    "terminal balance should stage ghodium already present in storage",
+  );
+  assert(
+    result.requests.some(function (entry) {
+      return entry.request &&
+        entry.request.resourceType === "O" &&
+        entry.request.from === "terminal" &&
+        entry.request.to === "storage";
+    }),
+    "terminal balance should return terminal mineral excess to storage",
+  );
+  assert(
+    currentRuntime.terminalSends.length === sendsBefore,
+    "terminal balance must not send resources between rooms",
+  );
+  assert(deals.length === 0 && deals.createdOrders.length === 0, "terminal balance must not use market automation");
+
+  const duplicate = terminalBalanceManager.evaluate(room);
+  assert(
+    duplicate.requests.length > 0 &&
+      duplicate.requests.every(function (entry) { return entry.skipped; }),
+    "terminal balance should skip duplicate open logistics requests",
+  );
+
+  const report = roomReporting.build(room, roomState.collect(room, null, null), {
+    updateProgress: false,
+  });
+  const resourceLines = roomReporting.getSectionLines(report, "resources");
+  assert(
+    resourceLines.some(function (line) { return line.indexOf("Terminal Energy 10,000/50,000") !== -1; }),
+    `resources report should expose terminal energy, got ${resourceLines.join(" / ")}`,
+  );
+  assert(
+    resourceLines.some(function (line) { return line.indexOf("Terminal Power 100/500") !== -1; }),
+    `resources report should expose terminal power, got ${resourceLines.join(" / ")}`,
+  );
+  assert(
+    resourceLines.some(function (line) { return line.indexOf("Balance State balancing") !== -1; }),
+    `resources report should expose balance state, got ${resourceLines.join(" / ")}`,
+  );
+
+  room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE_STORAGE_RESERVE", {
+    tick: 1321,
+    storageStore: { energy: 50000 },
+    terminalStore: { energy: 10000 },
+  });
+  const reserveResult = terminalBalanceManager.evaluate(room);
+  assert(
+    reserveResult.requests.length === 0,
+    "terminal balance should not drain storage below reserve for energy staging",
+  );
+
+  room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE_NO_DEMAND", {
+    tick: 1322,
+    storageStore: { energy: 200000, Z: 5000 },
+    terminalStore: { energy: 50000 },
+  });
+  const noDemandResult = terminalBalanceManager.evaluate(room);
+  assert(
+    !noDemandResult.requests.some(function (entry) {
+      return entry.request && entry.request.resourceType === "O";
+    }),
+    "terminal balance should not create demand for minerals absent from storage",
+  );
+}
+
 function runOperatorReportCleanupScenario() {
   let room = buildOpsLogisticsRoom("VAL_OPERATOR_REPORTS", {
     tick: 1340,
@@ -11056,6 +11180,7 @@ function main() {
     ["lab_targets_met", runLabTargetsMetScenario],
     ["lab_tight_replan", runLabTightReplanScenario],
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
+    ["terminal_balance_manager", runTerminalBalanceManagerScenario],
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
     ["operator_report_cleanup", runOperatorReportCleanupScenario],
     ["market_intelligence_reports", runMarketIntelligenceReportsScenario],

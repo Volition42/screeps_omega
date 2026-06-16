@@ -13,6 +13,7 @@ const SECTION_ORDER = [
   "defense",
   "creeps",
   "sources",
+  "resources",
   "advanced",
   "cpu",
 ];
@@ -549,6 +550,22 @@ function getSafeModeLabel(room) {
 
 function getStorageEnergy(room) {
   return room.storage ? room.storage.store[RESOURCE_ENERGY] || 0 : 0;
+}
+
+function fmtAmount(value) {
+  return Math.round(value || 0).toLocaleString();
+}
+
+function formatTerminalMinerals(summary) {
+  const minerals = summary && summary.minerals ? summary.minerals : [];
+  if (minerals.length === 0) return "none";
+
+  return minerals
+    .slice(0, 4)
+    .map(function (row) {
+      return `${row.resourceType} ${fmtAmount(row.amount)}/${fmtAmount(row.target)}`;
+    })
+    .join(", ");
 }
 
 function getExpansionPlanForRoom(roomName) {
@@ -1241,6 +1258,7 @@ module.exports = {
     const alert = getAlertSummary(room, summaryState);
     const cpu = getCpuSummary(room);
     const advanced = getAdvancedSummary(room, summaryState);
+    const terminalBalance = summaryState.terminalBalance || {};
     const mineralMining = getMineralMiningSummary(room, summaryState);
     const mineralLine = formatMineralMiningLine(mineralMining);
     const mineralHudLine = formatMineralHudLine(mineralMining);
@@ -1363,6 +1381,14 @@ module.exports = {
           ? `Skip directives ${cpu.skipDirectives ? "yes" : "no"} | skip HUD ${cpu.skipHud ? "yes" : "no"}`
           : "Skip directives no | skip HUD no",
         cpu.available ? formatSchedulerSkipLine(cpu) : "Scheduler skips unknown",
+      ],
+      resources: [
+        `[OPS][${room.name}][RESOURCES]`,
+        `Storage Energy ${fmtAmount(getStorageEnergy(room))}`,
+        `Terminal Energy ${fmtAmount(terminalBalance.terminalEnergy)}/${fmtAmount(terminalBalance.terminalEnergyTarget)}`,
+        `Terminal Power ${fmtAmount(terminalBalance.terminalPower)}/${fmtAmount(terminalBalance.terminalPowerTarget)} | Ghodium ${fmtAmount(terminalBalance.terminalGhodium)}/${fmtAmount(terminalBalance.terminalGhodiumTarget)}`,
+        `Terminal Minerals ${formatTerminalMinerals(terminalBalance)} | target ${fmtAmount(terminalBalance.mineralTarget)}`,
+        `Balance State ${terminalBalance.state || "unknown"} | pending ${terminalBalance.pendingMoves || 0}`,
       ],
     };
 

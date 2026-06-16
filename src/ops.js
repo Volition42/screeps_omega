@@ -5,6 +5,7 @@ const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const invasionLog = require("invasion_log");
 const opsLogisticsManager = require("ops_logistics_manager");
+const terminalBalanceManager = require("terminal_balance_manager");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -341,8 +342,8 @@ function getConsoleCommandHelp() {
     {
       command: "ops.room([roomName], [section])",
       description:
-        "Show one room report. Defaults to the current room and all sections.",
-      example: 'ops.room("W5N5", "build")',
+        "Show one room report. Sections include resources for terminal balance status.",
+      example: 'ops.room("W5N5", "resources")',
     },
     {
       command: "ops.rooms()",
@@ -413,13 +414,13 @@ function getConsoleCommandHelp() {
     {
       command: "ops.balanceTerminal(roomName)",
       description:
-        "Create conservative terminal hygiene requests for one owned room.",
+        "Evaluate terminal balance targets and create conservative logistics requests.",
       example: 'ops.balanceTerminal("W42N9")',
     },
     {
       command: "ops.balanceTerminals()",
       description:
-        "Create conservative terminal hygiene requests for owned rooms with storage and terminal.",
+        "Evaluate terminal balance targets for owned rooms with storage and terminal.",
       example: "ops.balanceTerminals()",
     },
     {
@@ -687,7 +688,7 @@ module.exports = {
 
     if (!lines) {
       return printLine(
-        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, sources, advanced, cpu, or all.',
+        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, sources, resources, advanced, cpu, or all.',
       );
     }
 
@@ -1047,7 +1048,12 @@ module.exports = {
   },
 
   balanceTerminal(roomName) {
-    const result = opsLogisticsManager.balanceTerminal(roomName);
+    const room = resolveOwnedRoom(roomName);
+    if (!room) {
+      return printLine(`[OPS] balanceTerminal: owned room "${roomName}" not found.`);
+    }
+
+    const result = terminalBalanceManager.evaluate(room);
     printLine(result.message);
 
     if (result.requests && result.requests.length) {
@@ -1060,7 +1066,19 @@ module.exports = {
   },
 
   balanceTerminals() {
-    const result = opsLogisticsManager.balanceTerminals();
+    const rooms = getOwnedRooms().filter(function (room) {
+      return !!(room.storage && room.terminal);
+    });
+    const result = {
+      ok: true,
+      rooms: rooms.map(function (room) {
+        return terminalBalanceManager.evaluate(room);
+      }),
+      message:
+        "[OPS] terminal balance evaluated " +
+        rooms.length +
+        " owned room(s).",
+    };
     printLine(result.message);
 
     for (let i = 0; i < result.rooms.length; i++) {

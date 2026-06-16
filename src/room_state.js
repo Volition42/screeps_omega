@@ -33,6 +33,7 @@ const constructionStatus = require("construction_status");
 const roadmap = require("construction_roadmap");
 const defenseManager = require("defense_manager");
 const logisticsManager = require("logistics_manager");
+const terminalBalanceManager = require("terminal_balance_manager");
 
 module.exports = {
   collect(room, profiler, roomLabelPrefix) {
@@ -136,6 +137,7 @@ module.exports = {
 
     finalState.defense = defenseManager.collect(room, finalState);
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
+    finalState.terminalBalance = terminalBalanceManager.getStatus(room);
 
     return finalState;
   },

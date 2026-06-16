@@ -310,6 +310,27 @@ module.exports = {
 
   /*
   Developer Notes:
+  Terminal Balance Manager
+
+  Storage remains the room warehouse. The terminal is only kept as a
+  conservative logistics buffer for future factory, lab, power, nuker, empire,
+  and market operations. This does not buy, sell, or send resources.
+  */
+  TERMINAL_BALANCE: {
+    ENABLED: true,
+    RUN_INTERVAL: 25,
+    MIN_RCL: 6,
+    ENERGY_TARGET: 50000,
+    MINERAL_TARGET: 5000,
+    POWER_TARGET: 500,
+    GHODIUM_TARGET: 5000,
+    MIN_STORAGE_ENERGY: 50000,
+    MOVE_BATCH: 10000,
+    PRIORITY: 62,
+  },
+
+  /*
+  Developer Notes:
   Advanced Structure Operations
 
   These settings control the first runtime slice for late-game structures.

@@ -6,6 +6,7 @@ const spawnManager = require("spawn_manager");
 const creepManager = require("creep_manager");
 const towerManager = require("tower_manager");
 const advancedStructureManager = require("advanced_structure_manager");
+const terminalBalanceManager = require("terminal_balance_manager");
 const powerManager = require("power_manager");
 const controllerSigner = require("controller_signer");
 const directiveManager = require("directive_manager");
@@ -78,6 +79,30 @@ module.exports = {
       scheduler.recordSkip(advancedKey, advancedDecision.reason);
       state.advancedOps = advancedStructureManager.getStatus(room, state);
     }
+    const terminalBalanceKey = `room.${room.name}.terminalBalance`;
+    const terminalBalanceDecision = !statsManager.isPastSoftCpuLimit(1)
+      ? this.getOptionalDecision(
+          terminalBalanceKey,
+          this.getTerminalBalanceInterval(runtimeMode),
+          runtimeMode,
+        )
+      : { ok: false, reason: "soft_cpu" };
+    if (terminalBalanceDecision.ok) {
+      const beforeTerminalBalance = Game.cpu ? Game.cpu.getUsed() : 0;
+      state.terminalBalance = runStep(
+        "terminalBalance",
+        terminalBalanceManager.run,
+        terminalBalanceManager,
+        room,
+        state,
+      );
+      if (terminalBalanceDecision.reason !== "direct") {
+        scheduler.markOptionalRun(terminalBalanceKey, beforeTerminalBalance);
+      }
+    } else {
+      scheduler.recordSkip(terminalBalanceKey, terminalBalanceDecision.reason);
+      state.terminalBalance = terminalBalanceManager.getStatus(room);
+    }
     runStep("spawn", spawnManager.run, spawnManager, room, state);
     runStep(
       "creeps",
@@ -149,6 +174,15 @@ module.exports = {
     }
     if (runtimeMode.pressure === "tight") return Math.max(scaledInterval, 5);
     return Math.max(scaledInterval, 10);
+  },
+
+  getTerminalBalanceInterval(runtimeMode) {
+    const settings = terminalBalanceManager.getSettings();
+    const base = settings.RUN_INTERVAL || 25;
+
+    if (!runtimeMode || runtimeMode.pressure === "normal") return base;
+    if (runtimeMode.pressure === "tight") return Math.max(base, 50);
+    return Math.max(base, 100);
   },
 
   getOptionalDecision(key, interval, runtimeMode) {
