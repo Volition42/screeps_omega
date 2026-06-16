@@ -522,6 +522,16 @@ module.exports = {
   },
 
   STATS: {
+    ROOM_CPU: {
+      // Developer note:
+      // Keep room CPU measurement operator-facing and separate from debug
+      // console spam. This reuses the existing kernel profiler sections.
+      ENABLED: true,
+      AVERAGE_ALPHA: 0.2,
+      TOP_SECTION_LIMIT: 6,
+      MAX_ROOM_AGE: 1000,
+    },
+
     RUNTIME_POLICY: {
       SOFT_CPU_LIMIT: 0,
       TIGHT_CPU_RATIO: 0.8,

@@ -713,22 +713,113 @@ function getCpuSummary(room) {
   const last = Memory.stats.last;
   const averages = Memory.stats.averages || {};
   const runtime = Memory.stats.runtime || statsManager.getRuntimeMode();
+  const roomCpu =
+    Memory.stats.rooms &&
+    Memory.stats.rooms[room.name] &&
+    Memory.stats.rooms[room.name].cpu
+      ? Memory.stats.rooms[room.name].cpu
+      : null;
 
   return {
     available: true,
-    current: last.cpu.used,
+    current: roomCpu ? roomCpu.current : last.cpu.used,
     limit: last.cpu.limit,
-    average: averages.cpuUsed || last.cpu.used,
+    average: roomCpu ? roomCpu.average : averages.cpuUsed || last.cpu.used,
+    globalCurrent: last.cpu.used,
+    globalAverage: averages.cpuUsed || last.cpu.used,
     bucket: last.cpu.bucket,
-    pressure: runtime.pressure || "normal",
+    pressure: roomCpu && roomCpu.pressure
+      ? roomCpu.pressure
+      : runtime.pressure || "normal",
     thinkIntervalMultiplier: runtime.thinkIntervalMultiplier || 1,
     constructionIntervalMultiplier: runtime.constructionIntervalMultiplier || 1,
     advancedOpsInterval: runtime.advancedOpsInterval || 1,
     roomScaleActive: !!runtime.roomScaleActive,
     skipDirectives: !!runtime.skipDirectives,
     skipHud: !!runtime.skipHud,
+    sections: roomCpu && roomCpu.sections ? roomCpu.sections : [],
+    scheduler: roomCpu && roomCpu.scheduler ? roomCpu.scheduler : null,
+    tick: roomCpu ? roomCpu.tick : last.tick,
+    creepCount:
+      roomCpu && typeof roomCpu.creepCount === "number"
+        ? roomCpu.creepCount
+        : null,
+    phase: roomCpu ? roomCpu.phase : null,
+    rcl: roomCpu ? roomCpu.rcl : null,
     room: room.name,
   };
+}
+
+function getCpuTopSectionLimit() {
+  const settings = config.STATS && config.STATS.ROOM_CPU
+    ? config.STATS.ROOM_CPU
+    : {};
+
+  return typeof settings.TOP_SECTION_LIMIT === "number" &&
+    settings.TOP_SECTION_LIMIT > 0
+    ? settings.TOP_SECTION_LIMIT
+    : 6;
+}
+
+function formatCpuValue(value) {
+  return typeof value === "number" ? value.toFixed(3) : "--";
+}
+
+function formatCpuSectionLines(cpu) {
+  if (!cpu.sections || cpu.sections.length === 0) {
+    return ["Top sections unavailable"];
+  }
+
+  const measured = cpu.sections.filter(function (row) {
+    return typeof row.current === "number" || typeof row.average === "number";
+  });
+  const limit = Math.min(measured.length, getCpuTopSectionLimit());
+  const lines = [];
+
+  if (limit === 0) {
+    return ["Top sections unavailable"];
+  }
+
+  for (let i = 0; i < limit; i++) {
+    const row = measured[i];
+    const stale =
+      typeof row.lastTick === "number" && row.lastTick !== cpu.tick
+        ? ` | last ${row.lastTick}`
+        : "";
+
+    lines.push(
+      `${row.label} cur ${formatCpuValue(row.current)} avg ${formatCpuValue(row.average)}${stale}`,
+    );
+  }
+
+  return lines;
+}
+
+function formatSchedulerSkipLine(cpu) {
+  const scheduler = cpu.scheduler;
+  if (!scheduler || !scheduler.tasks || scheduler.tasks.length === 0) {
+    return "Scheduler skips none";
+  }
+
+  const skipped = scheduler.tasks.filter(function (task) {
+    return task.lastSkipped === cpu.tick;
+  });
+  const recent = skipped.length > 0 ? skipped : scheduler.tasks.filter(function (task) {
+    return task.lastSkipReason;
+  });
+  const parts = [];
+  const limit = Math.min(recent.length, 3);
+
+  for (let i = 0; i < limit; i++) {
+    const task = recent[i];
+    parts.push(
+      `${task.key}:${task.lastSkipReason || "ran"}${task.lastSkipped ? `@${task.lastSkipped}` : ""}`,
+    );
+  }
+
+  if (parts.length === 0) return "Scheduler skips none";
+
+  return `Scheduler skips ${scheduler.skippedThisTick || 0} now | ${parts.join(" | ")}`;
 }
 
 function getAdvancedSummary(room, state) {
@@ -1156,19 +1247,24 @@ module.exports = {
       cpu: [
         `[OPS][${room.name}][CPU]`,
         cpu.available
-          ? `Current ${cpu.current.toFixed(2)}/${cpu.limit} | Avg ${cpu.average.toFixed(2)} | Bucket ${cpu.bucket}`
+          ? `Room current ${cpu.current.toFixed(3)} | Avg ${cpu.average.toFixed(3)} | Global ${cpu.globalCurrent.toFixed(2)}/${cpu.limit} | Bucket ${cpu.bucket}`
           : "CPU stats unavailable",
         cpu.available
-          ? `Pressure ${cpu.pressure} | Shedding think x${cpu.thinkIntervalMultiplier} | build x${cpu.constructionIntervalMultiplier}`
+          ? `Pressure ${cpu.pressure} | Phase ${cpu.phase || summaryState.phase} | RCL ${cpu.rcl || (room.controller ? room.controller.level : 0)} | Creeps ${cpu.creepCount !== null ? cpu.creepCount : Object.keys(Game.creeps).length}`
           : "Pressure unknown",
         cpu.available
-          ? `Room scale ${cpu.roomScaleActive ? "on" : "off"} | advanced every ${cpu.advancedOpsInterval}t`
+          ? `Shedding think x${cpu.thinkIntervalMultiplier} | build x${cpu.constructionIntervalMultiplier} | advanced every ${cpu.advancedOpsInterval}t`
           : "Room scale off | advanced every 1t",
         cpu.available
           ? `Skip directives ${cpu.skipDirectives ? "yes" : "no"} | skip HUD ${cpu.skipHud ? "yes" : "no"}`
           : "Skip directives no | skip HUD no",
+        cpu.available ? formatSchedulerSkipLine(cpu) : "Scheduler skips unknown",
       ],
     };
+
+    if (cpu.available) {
+      Array.prototype.push.apply(sections.cpu, formatCpuSectionLines(cpu));
+    }
 
     for (let i = 0; i < sources.length; i++) {
       const source = sources[i];

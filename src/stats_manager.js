@@ -14,7 +14,22 @@ Memory.stats.last
 Memory.stats.history
 Memory.stats.averages
 Memory.stats.max
+Memory.stats.rooms
 */
+
+const ROOM_SECTION_LABELS = {
+  "state.collect": "room_state",
+  construction: "construction_manager",
+  links: "link_manager",
+  towers: "tower_manager",
+  advancedOps: "advanced_structure_manager",
+  spawn: "spawn_manager",
+  creeps: "creep_manager",
+  power: "power_manager",
+  sign: "controller_signer",
+  directives: "directive_manager",
+  hud: "hud",
+};
 
 module.exports = {
   record(snapshot) {
@@ -22,6 +37,7 @@ module.exports = {
     if (!Memory.stats.history) Memory.stats.history = [];
     if (!Memory.stats.averages) Memory.stats.averages = {};
     if (!Memory.stats.max) Memory.stats.max = {};
+    if (!Memory.stats.rooms) Memory.stats.rooms = {};
 
     const history = Memory.stats.history;
     const creepCount = Object.keys(Game.creeps).length;
@@ -55,11 +71,15 @@ module.exports = {
     Memory.stats.averages = averages;
     Memory.stats.max = this.computeMax(history);
     Memory.stats.runtime = runtime;
+    this.recordRoomCpu(snapshot, runtime);
 
     this.printDebugCpu(snapshot);
   },
 
   shouldProfileSections() {
+    const roomCpu = this.getRoomCpuSettings();
+    if (roomCpu.enabled) return true;
+
     const directives = config.DIRECTIVES || {};
 
     if (!directives.DEBUG_CPU_CONSOLE_ENABLED) return false;
@@ -71,6 +91,26 @@ module.exports = {
     }
 
     return true;
+  },
+
+  getRoomCpuSettings() {
+    const settings = config.STATS && config.STATS.ROOM_CPU
+      ? config.STATS.ROOM_CPU
+      : {};
+
+    return {
+      enabled: settings.ENABLED !== false,
+      averageAlpha:
+        typeof settings.AVERAGE_ALPHA === "number" &&
+        settings.AVERAGE_ALPHA > 0 &&
+        settings.AVERAGE_ALPHA <= 1
+          ? settings.AVERAGE_ALPHA
+          : 0.2,
+      maxRoomAge:
+        typeof settings.MAX_ROOM_AGE === "number" && settings.MAX_ROOM_AGE > 0
+          ? settings.MAX_ROOM_AGE
+          : 1000,
+    };
   },
 
   finalizeCpuMeasurement(snapshot) {
@@ -103,6 +143,196 @@ module.exports = {
     };
   },
 
+  recordRoomCpu(snapshot, runtime) {
+    const settings = this.getRoomCpuSettings();
+    if (!settings.enabled || !snapshot || !snapshot.sections) return;
+    if (!Memory.stats.rooms) Memory.stats.rooms = {};
+
+    const sections = snapshot.sections;
+    const activeRooms = {};
+
+    for (const label in sections) {
+      if (!Object.prototype.hasOwnProperty.call(sections, label)) continue;
+      if (label.indexOf("room.") !== 0) continue;
+
+      const parts = label.split(".");
+      const roomName = parts[1];
+      if (!roomName || parts.length < 2) continue;
+
+      activeRooms[roomName] = true;
+    }
+
+    for (const roomName in activeRooms) {
+      if (!Object.prototype.hasOwnProperty.call(activeRooms, roomName)) continue;
+      this.recordOneRoomCpu(roomName, snapshot, runtime, settings);
+    }
+
+    this.pruneRoomCpu(settings.maxRoomAge);
+  },
+
+  recordOneRoomCpu(roomName, snapshot, runtime, settings) {
+    const sections = snapshot.sections || {};
+    const roomLabel = `room.${roomName}`;
+    const total = sections[roomLabel] ? sections[roomLabel].total : 0;
+    const previous =
+      Memory.stats.rooms &&
+      Memory.stats.rooms[roomName] &&
+      Memory.stats.rooms[roomName].cpu
+        ? Memory.stats.rooms[roomName].cpu
+        : null;
+    const average = this.updateAverage(
+      previous ? previous.average : null,
+      total,
+      settings.averageAlpha,
+    );
+    const sectionRows = this.buildRoomSectionCpuRows(
+      roomName,
+      sections,
+      previous,
+      settings.averageAlpha,
+    );
+    const liveRoom =
+      Memory.runtime && Memory.runtime.rooms
+        ? Memory.runtime.rooms[roomName] || null
+        : null;
+    const scheduler = this.buildRoomSchedulerCpuSummary(roomName);
+
+    if (!Memory.stats.rooms[roomName]) Memory.stats.rooms[roomName] = {};
+    Memory.stats.rooms[roomName].cpu = {
+      tick: snapshot.tick,
+      current: Number(total.toFixed(3)),
+      average: average,
+      pressure: runtime && runtime.pressure ? runtime.pressure : "normal",
+      creepCount: this.countRoomCreeps(liveRoom),
+      phase: liveRoom ? liveRoom.phase : null,
+      rcl: liveRoom ? liveRoom.controllerLevel : null,
+      sections: sectionRows,
+      scheduler: scheduler,
+    };
+  },
+
+  buildRoomSectionCpuRows(roomName, sections, previous, alpha) {
+    const rows = [];
+    const previousByLabel = {};
+    const previousSections = previous && previous.sections ? previous.sections : [];
+
+    for (let i = 0; i < previousSections.length; i++) {
+      previousByLabel[previousSections[i].label] = previousSections[i];
+    }
+
+    for (const suffix in ROOM_SECTION_LABELS) {
+      if (!Object.prototype.hasOwnProperty.call(ROOM_SECTION_LABELS, suffix)) {
+        continue;
+      }
+
+      const label = ROOM_SECTION_LABELS[suffix];
+      const profilerLabel = `room.${roomName}.${suffix}`;
+      const measured = sections[profilerLabel] || null;
+      const previousRow = previousByLabel[label] || null;
+      const current = measured ? measured.total : null;
+      const average =
+        current === null
+          ? previousRow && typeof previousRow.average === "number"
+            ? previousRow.average
+            : null
+          : this.updateAverage(
+              previousRow ? previousRow.average : null,
+              current,
+              alpha,
+            );
+
+      rows.push({
+        label: label,
+        current: current === null ? null : Number(current.toFixed(3)),
+        average: average,
+        calls: measured ? measured.calls : 0,
+        lastTick: measured ? Game.time : previousRow ? previousRow.lastTick : null,
+      });
+    }
+
+    rows.sort(function (a, b) {
+      const aCost = typeof a.current === "number" ? a.current : -1;
+      const bCost = typeof b.current === "number" ? b.current : -1;
+      if (bCost !== aCost) return bCost - aCost;
+      return String(a.label).localeCompare(String(b.label));
+    });
+
+    return rows;
+  },
+
+  updateAverage(previous, current, alpha) {
+    const value = typeof current === "number" && isFinite(current) ? current : 0;
+    if (typeof previous !== "number" || !isFinite(previous)) {
+      return Number(value.toFixed(3));
+    }
+
+    return Number((previous * (1 - alpha) + value * alpha).toFixed(3));
+  },
+
+  countRoomCreeps(liveRoom) {
+    if (!liveRoom || !liveRoom.roleCounts) return 0;
+
+    let total = 0;
+    for (const role in liveRoom.roleCounts) {
+      if (!Object.prototype.hasOwnProperty.call(liveRoom.roleCounts, role)) {
+        continue;
+      }
+      total += liveRoom.roleCounts[role] || 0;
+    }
+
+    return total;
+  },
+
+  buildRoomSchedulerCpuSummary(roomName) {
+    const scheduler =
+      Memory.runtime && Memory.runtime.scheduler
+        ? Memory.runtime.scheduler
+        : null;
+    const tasks = scheduler && scheduler.tasks ? scheduler.tasks : {};
+    const prefix = `room.${roomName}.`;
+    const rows = [];
+    let skippedThisTick = 0;
+
+    for (const key in tasks) {
+      if (!Object.prototype.hasOwnProperty.call(tasks, key)) continue;
+      if (key.indexOf(prefix) !== 0) continue;
+
+      const task = tasks[key] || {};
+      if (task.lastSkipped === Game.time) skippedThisTick++;
+      rows.push({
+        key: key.slice(prefix.length),
+        lastRun: task.lastRun || null,
+        lastCpu: typeof task.lastCpu === "number" ? task.lastCpu : null,
+        lastSkipped: task.lastSkipped || null,
+        lastSkipReason: task.lastSkipReason || null,
+      });
+    }
+
+    rows.sort(function (a, b) {
+      return String(a.key).localeCompare(String(b.key));
+    });
+
+    return {
+      tick: Game.time,
+      skippedThisTick: skippedThisTick,
+      tasks: rows,
+    };
+  },
+
+  pruneRoomCpu(maxRoomAge) {
+    if (!Memory.stats || !Memory.stats.rooms) return;
+
+    for (const roomName in Memory.stats.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Memory.stats.rooms, roomName)) {
+        continue;
+      }
+      const cpu = Memory.stats.rooms[roomName].cpu;
+      if (!cpu || !cpu.tick || Game.time - cpu.tick > maxRoomAge) {
+        delete Memory.stats.rooms[roomName];
+      }
+    }
+  },
+
   printDebugCpu(snapshot) {
     if (!this.shouldDebugCpuConsole()) return;
     if (Game.time % this.getDebugCpuConsoleInterval() !== 0) return;
@@ -119,7 +349,7 @@ module.exports = {
         `avg=${avgCpu.toFixed(3)} bucket=${snapshot.cpu.bucket} creeps=${Object.keys(Game.creeps).length}`,
     );
 
-    if (!this.shouldProfileSections()) return;
+    if (!this.shouldPrintDebugCpuSections()) return;
 
     const sections = snapshot.sections || {};
     const overviewSections = this.getOverviewSections(sections);
@@ -139,6 +369,14 @@ module.exports = {
 
   shouldDebugCpuConsole() {
     return !!(config.DIRECTIVES && config.DIRECTIVES.DEBUG_CPU_CONSOLE_ENABLED);
+  },
+
+  shouldPrintDebugCpuSections() {
+    return !!(
+      config.DIRECTIVES &&
+      config.DIRECTIVES.DEBUG_CPU_CONSOLE_ENABLED &&
+      config.DIRECTIVES.DEBUG_CPU_SHOW_SECTIONS
+    );
   },
 
   getDebugCpuConsoleInterval() {

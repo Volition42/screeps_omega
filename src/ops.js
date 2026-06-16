@@ -365,6 +365,11 @@ function getConsoleCommandHelp() {
       example: 'ops.logClear("W43N6")',
     },
     {
+      command: "ops.cpu([roomName])",
+      description: "Show measured room CPU, top section costs, pressure, and scheduler skips.",
+      example: 'ops.cpu("W5N5")',
+    },
+    {
       command: "ops.tickRate([sampleTicks|status|cancel])",
       description:
         "Sample wall-clock ms per tick over a short window and auto-print the result.",
@@ -549,6 +554,9 @@ module.exports = {
       },
       room: function (arg1, arg2) {
         return module.exports.room(arg1, arg2);
+      },
+      cpu: function (roomName) {
+        return module.exports.cpu(roomName);
       },
       rooms: function () {
         return module.exports.rooms();
@@ -1214,6 +1222,10 @@ module.exports = {
   },
 
   cpuStatus(roomName) {
+    return this.room(roomName, "cpu");
+  },
+
+  cpu(roomName) {
     return this.room(roomName, "cpu");
   },
 
