@@ -7,6 +7,7 @@ const roomState = require("room_state");
 const statsManager = require("stats_manager");
 const observerManager = require("observer_manager");
 const opsLogisticsManager = require("ops_logistics_manager");
+const pclManager = require("pcl_manager");
 
 const SECTION_ORDER = [
   "overview",
@@ -1448,6 +1449,7 @@ module.exports = {
     const advanced = getAdvancedSummary(room, summaryState);
     const observer = getObserverSummary(room, summaryState);
     const power = getPowerSummary(room);
+    const powerEnablement = pclManager.getRoomEnablementReadiness(room.name);
     const powerRefillPending = getPowerRefillPendingSummary(room, power, advanced);
     const refillState =
       powerRefillPending.count > 0 &&
@@ -1561,6 +1563,7 @@ module.exports = {
         `[OPS][${room.name}][POWER]`,
         `Global process ${power.globalEnabled ? "on" : "off"} refill ${power.globalRefillEnabled ? "on" : "off"} | Override process ${formatPolicyValue(power.processingOverride)} refill ${formatPolicyValue(power.refillOverride)} | Effective process ${power.effectiveProcessingEnabled ? "on" : "off"} refill ${power.effectiveRefillEnabled ? "on" : "off"}`,
         `Readiness ${power.readiness} | Blocked ${power.blockedReason || "none"}`,
+        `Enablement ${powerEnablement.status} | Next ${powerEnablement.nextSteps[0] || "none"}`,
         `PowerSpawns ${power.powerSpawns} | Energy ${fmtAmount(power.powerSpawnEnergy)}/${fmtAmount(power.energyTarget)} | Power ${fmtAmount(power.powerSpawnPower)}/${fmtAmount(power.powerTarget)}`,
         `Storage Energy ${fmtAmount(power.storageEnergy)}/${fmtAmount(power.minStorageEnergy)} | Terminal Energy ${fmtAmount(power.terminalEnergy)}/${fmtAmount(power.minTerminalEnergy)}`,
         `Terminal Power ${fmtAmount(power.terminalPower)} | Balance ${terminalBalance.state || "unknown"} | pending ${terminalBalance.pendingMoves || 0}`,

@@ -7,6 +7,7 @@ const invasionLog = require("invasion_log");
 const opsLogisticsManager = require("ops_logistics_manager");
 const terminalBalanceManager = require("terminal_balance_manager");
 const powerManager = require("power_manager");
+const pclManager = require("pcl_manager");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -510,6 +511,21 @@ function getConsoleCommandHelp() {
       example: 'ops.power("W5N5", "process", "off")',
     },
     {
+      command: "ops.pcl([roomName])",
+      description: "Show GPL/PCL status and optional room enablement readiness.",
+      example: 'ops.pcl("W5N5")',
+    },
+    {
+      command: "ops.powerCreeps()",
+      description: "List friendly Power Creeps without controlling them.",
+      example: "ops.powerCreeps()",
+    },
+    {
+      command: 'ops.powerEnable(roomName, "check")',
+      description: "Dry-run room enablement readiness only.",
+      example: 'ops.powerEnable("W5N5", "check")',
+    },
+    {
       command: "ops.tickRate([sampleTicks|status|cancel])",
       description:
         "Sample wall-clock ms per tick over a short window and auto-print the result.",
@@ -719,6 +735,15 @@ module.exports = {
       power: function (roomName, arg1, arg2) {
         return module.exports.power(roomName, arg1, arg2);
       },
+      pcl: function (roomName) {
+        return module.exports.pcl(roomName);
+      },
+      powerCreeps: function () {
+        return module.exports.powerCreeps();
+      },
+      powerEnable: function (roomName, mode) {
+        return module.exports.powerEnable(roomName, mode);
+      },
       move: function (resource, amount, roomName, from, to) {
         return module.exports.move(resource, amount, roomName, from, to);
       },
@@ -893,6 +918,32 @@ module.exports = {
           : "global"
       }.`;
     return printLine(line);
+  },
+
+  pcl(roomName) {
+    const report = pclManager.formatGlobalStatus(roomName);
+    printBlock(report.split("\n"));
+    return report;
+  },
+
+  powerCreeps() {
+    const report = pclManager.formatPowerCreeps();
+    printBlock(report.split("\n"));
+    return report;
+  },
+
+  powerEnable(roomName, mode) {
+    const normalized = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
+    if (!roomName) {
+      return printLine('[OPS] powerEnable: roomName required. Use ops.powerEnable("ROOM", "check").');
+    }
+    if (normalized !== "check") {
+      return printLine('[OPS] powerEnable: dry-run only in this phase. Use "check".');
+    }
+
+    const report = pclManager.formatEnablementReadiness(roomName);
+    printBlock(report.split("\n"));
+    return report;
   },
 
   rooms() {

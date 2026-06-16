@@ -939,6 +939,13 @@ function createController(x, y, options) {
     my: !!spec.my,
     owner: spec.owner || null,
     reservation: spec.reservation || null,
+    enableRoom() {
+      currentRuntime.enableRoomActions.push({
+        roomName: this.room ? this.room.name : this.pos.roomName,
+        tick: Game.time,
+      });
+      return OK;
+    },
   };
 }
 
@@ -1173,6 +1180,7 @@ function resetRuntime(tick) {
     nextId: 0,
     rooms: {},
     objectsById: {},
+    enableRoomActions: [],
     spawnEvents: [],
     observerActions: [],
     terminalSends: [],
@@ -1185,6 +1193,7 @@ function resetRuntime(tick) {
   global.Game = {
     time: tick,
     creeps: {},
+    powerCreeps: {},
     rooms: currentRuntime.rooms,
     getObjectById(id) {
       return currentRuntime.objectsById[id] || null;
@@ -6662,6 +6671,188 @@ function runPowerOperatorControlsScenario() {
   });
 }
 
+function runPclReadinessCommandsScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, PROCESS_UNDER_CRITICAL_CPU: false }, function () {
+    const room = buildPowerProcessingRoom("VAL_PCL_READY", {
+      tick: 870,
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 10,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 250 },
+    });
+    const state = roomState.collect(room);
+    powerManager.run(room, state);
+
+    ops.registerGlobals();
+    assert(typeof global.ops.pcl === "function", "ops.pcl should be registered");
+    assert(typeof global.ops.powerCreeps === "function", "ops.powerCreeps should be registered");
+    assert(typeof global.ops.powerEnable === "function", "ops.powerEnable should be registered");
+
+    let captured = captureConsoleLines(function () {
+      return global.ops.pcl();
+    });
+    assert(typeof captured.result === "string", "ops.pcl should return a printable string");
+    assert(
+      captured.result.indexOf("[OPS][PCL] GPL 0") !== -1 &&
+        captured.result.indexOf("Game.gpl unavailable") !== -1,
+      `ops.pcl should handle missing Game.gpl safely, got ${captured.result}`,
+    );
+
+    Game.gpl = {
+      level: 3,
+      progress: 500,
+      progressTotal: 1000,
+    };
+    Game.powerCreeps = {
+      OperatorOne: {
+        name: "OperatorOne",
+        className: "operator",
+        level: 4,
+        ticksToLive: 1234,
+        room: room,
+        shard: { name: "shard0" },
+        powers: {
+          PWR_GENERATE_OPS: { level: 1 },
+          PWR_OPERATE_EXTENSION: { level: 2 },
+        },
+        store: createStore({ ops: 75 }, null, 100),
+      },
+      OperatorTwo: {
+        name: "OperatorTwo",
+        className: "operator",
+        level: 1,
+        powers: {},
+      },
+    };
+
+    captured = captureConsoleLines(function () {
+      return global.ops.pcl(room.name);
+    });
+    assert(
+      captured.result.indexOf("GPL 3 | 500/1,000 (50.0%)") !== -1 &&
+        captured.result.indexOf("known 2 spawned 1 unspawned 1 slots 1") !== -1,
+      `ops.pcl should report GPL/PCL counts, got ${captured.result}`,
+    );
+    assert(
+      captured.result.indexOf(`[OPS][${room.name}][POWER_ENABLE] READY_TO_ENABLE`) !== -1,
+      `ops.pcl(room) should include room enablement summary, got ${captured.result}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreeps();
+    });
+    assert(typeof captured.result === "string", "ops.powerCreeps should return a printable string");
+    assert(
+      captured.result.indexOf("known 2 spawned 1") !== -1 &&
+        captured.result.indexOf("OperatorOne | operator L4 | spawned") !== -1 &&
+        captured.result.indexOf("ttl 1234") !== -1 &&
+        captured.result.indexOf("ops 75") !== -1 &&
+        captured.result.indexOf("PWR_GENERATE_OPS") !== -1 &&
+        captured.result.indexOf("OperatorTwo | operator L1 | unspawned") !== -1,
+      `ops.powerCreeps should list friendly Power Creeps, got ${captured.result}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerEnable(room.name, "check");
+    });
+    assert(typeof captured.result === "string", "ops.powerEnable check should return a printable string");
+    assert(
+      captured.result.indexOf("READY_TO_ENABLE") !== -1 &&
+        captured.result.indexOf("OK owned room") !== -1 &&
+        captured.result.indexOf("OK RCL8") !== -1 &&
+        captured.result.indexOf("OK Power Spawn processing healthy") !== -1 &&
+        captured.result.indexOf("dry run only; enableRoom not called") !== -1,
+      `ops.powerEnable should print readiness checklist, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.enableRoomActions.length === 0,
+      `powerEnable check must not call enableRoom, got ${JSON.stringify(currentRuntime.enableRoomActions)}`,
+    );
+
+    const missingRoomReport = global.ops.powerEnable("VAL_PCL_MISSING", "check");
+    assert(
+      missingRoomReport.indexOf("BLOCKED_NOT_OWNED") !== -1,
+      `missing room should report BLOCKED_NOT_OWNED, got ${missingRoomReport}`,
+    );
+
+    const noPowerCreepsMemory = JSON.stringify(Memory);
+    Game.powerCreeps = {};
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreeps();
+    });
+    assert(
+      captured.result.indexOf("known 0 spawned 0") !== -1 &&
+        captured.result.indexOf("none") !== -1,
+      `zero Power Creeps should be safe, got ${captured.result}`,
+    );
+    assert(JSON.stringify(Memory) === noPowerCreepsMemory, "Power Creep reporting should not mutate Memory");
+  });
+}
+
+function runPclBlockedReadinessScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, PROCESS_UNDER_CRITICAL_CPU: false }, function () {
+    let room = buildPowerProcessingRoom("VAL_PCL_BLOCK_RCL", {
+      tick: 875,
+      controllerLevel: 7,
+      storageEnergy: 200000,
+    });
+    room.controller.level = 7;
+    ops.registerGlobals();
+    let report = global.ops.powerEnable(room.name, "check");
+    assert(report.indexOf("BLOCKED_RCL") !== -1, `RCL block should report BLOCKED_RCL, got ${report}`);
+
+    room = buildRoomScenario("VAL_PCL_BLOCK_NO_PS", {
+      tick: 876,
+      controllerLevel: 8,
+      spawnEnergy: 1300,
+      energyAvailable: 1300,
+      energyCapacityAvailable: 1300,
+      sourceContainers: true,
+      supportContainers: true,
+      foundationRoads: true,
+      backboneRoads: true,
+    });
+    room.controller.my = true;
+    room.controller.owner = { username: "tester" };
+    satisfyDevelopmentRequirements(room);
+    room.storage.store.energy = 200000;
+    report = global.ops.powerEnable(room.name, "check");
+    assert(
+      report.indexOf("BLOCKED_NO_POWER_SPAWN") !== -1,
+      `missing Power Spawn should report BLOCKED_NO_POWER_SPAWN, got ${report}`,
+    );
+
+    room = buildPowerProcessingRoom("VAL_PCL_BLOCK_THREAT", {
+      tick: 877,
+      storageEnergy: 200000,
+      hostiles: [
+        {
+          name: "pclHostile",
+          x: 25,
+          y: 26,
+          body: [{ type: ATTACK }, { type: MOVE }],
+        },
+      ],
+    });
+    powerManager.run(room, roomState.collect(room));
+    report = global.ops.powerEnable(room.name, "check");
+    assert(report.indexOf("BLOCKED_THREAT") !== -1, `threat should block enablement, got ${report}`);
+
+    room = buildPowerProcessingRoom("VAL_PCL_BLOCK_CPU", {
+      tick: 878,
+      storageEnergy: 200000,
+    });
+    Memory.stats.runtime = { pressure: "critical" };
+    powerManager.run(room, roomState.collect(room));
+    report = global.ops.powerEnable(room.name, "check");
+    assert(
+      report.indexOf("BLOCKED_CPU_PRESSURE") !== -1,
+      `critical CPU should block enablement, got ${report}`,
+    );
+    assert(currentRuntime.enableRoomActions.length === 0, "blocked readiness checks should not call enableRoom");
+  });
+}
+
 function runPowerSpawnRefillVisibilityScenario() {
   withPowerSettings({ MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
     const room = buildPowerProcessingRoom("VAL_POWER_REFILL", {
@@ -11863,6 +12054,8 @@ function main() {
     ["power_spawn_cpu_block", runPowerSpawnCpuBlockScenario],
     ["power_reporting", runPowerReportingScenario],
     ["power_operator_controls", runPowerOperatorControlsScenario],
+    ["pcl_readiness_commands", runPclReadinessCommandsScenario],
+    ["pcl_blocked_readiness", runPclBlockedReadinessScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
     ["power_spawn_refill_energy_request", runPowerSpawnEnergyRefillRequestScenario],
     ["power_spawn_refill_power_request", runPowerSpawnPowerRefillRequestScenario],
