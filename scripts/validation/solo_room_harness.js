@@ -852,6 +852,18 @@ function createStructure(structureType, x, y, options) {
     };
   }
 
+  if (structureType === STRUCTURE_POWER_SPAWN) {
+    structure.processPower = function () {
+      if (!this.store) return ERR_NOT_ENOUGH_RESOURCES;
+      if ((this.store[RESOURCE_POWER] || 0) < 1) return ERR_NOT_ENOUGH_RESOURCES;
+      if ((this.store[RESOURCE_ENERGY] || 0) < 50) return ERR_NOT_ENOUGH_RESOURCES;
+
+      this.store[RESOURCE_POWER] -= 1;
+      this.store[RESOURCE_ENERGY] -= 50;
+      return OK;
+    };
+  }
+
   if (structureType === STRUCTURE_TOWER) {
     structure.attack = function (target) {
       currentRuntime.towerActions.push({
@@ -1623,6 +1635,7 @@ const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const ops = require("ops");
+const powerManager = require("power_manager");
 const invasionLog = require("invasion_log");
 const creepManager = require("creep_manager");
 const hud = require("hud");
@@ -6368,6 +6381,173 @@ function runFactoryOpsScenario() {
     task && task.label === "factory_energy",
     `expected factory_energy advanced haul task, got ${task ? task.label : "none"} with summary ${JSON.stringify(summary)}`,
   );
+}
+
+function withPowerSettings(overrides, fn) {
+  const previous = Object.assign({}, config.POWER);
+  config.POWER = Object.assign({}, config.POWER, overrides || {});
+
+  try {
+    fn();
+  } finally {
+    config.POWER = previous;
+  }
+}
+
+function buildPowerProcessingRoom(name, options) {
+  const settings = options || {};
+  const room = buildRoomScenario(name, {
+    tick: settings.tick || 840,
+    controllerLevel: settings.controllerLevel || 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    hostiles: settings.hostiles || null,
+    extraStructures: [
+      {
+        type: STRUCTURE_POWER_SPAWN,
+        x: 27,
+        y: 31,
+        options: {
+          store: {
+            energy: settings.powerSpawnEnergy !== undefined ? settings.powerSpawnEnergy : 500,
+            power: settings.powerSpawnPower !== undefined ? settings.powerSpawnPower : 10,
+          },
+          storeCapacity: 5000,
+          hits: 5000,
+          hitsMax: 5000,
+        },
+      },
+    ],
+  });
+
+  room.controller.my = true;
+  satisfyDevelopmentRequirements(room);
+  room.storage.store.energy =
+    settings.storageEnergy !== undefined ? settings.storageEnergy : 200000;
+  room.addStructure(
+    createStructure(STRUCTURE_TERMINAL, 25, 32, {
+      roomName: room.name,
+      store: settings.terminalStore || { energy: 10000, power: 250 },
+      storeCapacity: 300000,
+      hits: 3000,
+      hitsMax: 3000,
+    }),
+  );
+
+  return room;
+}
+
+function runPowerSpawnProcessingScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, MIN_TERMINAL_ENERGY: 0 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_READY");
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const memory = Memory.rooms[room.name].power;
+    assert(memory.readiness === "PROCESSED", `expected PROCESSED, got ${memory.readiness}`);
+    assert(memory.lastProcessed === Game.time, `expected lastProcessed ${Game.time}, got ${memory.lastProcessed}`);
+    assert(memory.totalProcessed === 1, `expected totalProcessed 1, got ${memory.totalProcessed}`);
+    assert(memory.powerSpawnEnergy === 500, "memory should report pre-process Power Spawn energy");
+    assert(memory.powerSpawnPower === 10, "memory should report pre-process Power Spawn power");
+
+    const powerSpawn = state.structuresByType[STRUCTURE_POWER_SPAWN][0];
+    assert(powerSpawn.store.energy === 450, `expected processPower to consume energy, got ${powerSpawn.store.energy}`);
+    assert(powerSpawn.store.power === 9, `expected processPower to consume power, got ${powerSpawn.store.power}`);
+  });
+}
+
+function runPowerSpawnReserveBlockScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_RESERVE", {
+      storageEnergy: 49999,
+    });
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const memory = Memory.rooms[room.name].power;
+    assert(
+      memory.readiness === "BLOCKED_STORAGE_RESERVE",
+      `expected storage reserve block, got ${memory.readiness}`,
+    );
+    assert(memory.lastProcessed === undefined, "storage reserve block should not process power");
+  });
+}
+
+function runPowerSpawnThreatBlockScenario() {
+  withPowerSettings({ PROCESS_UNDER_THREAT: false }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_THREAT", {
+      hostiles: [
+        {
+          name: "hostile_power_block",
+          x: 26,
+          y: 25,
+          body: [{ type: ATTACK }, { type: MOVE }],
+        },
+      ],
+    });
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const memory = Memory.rooms[room.name].power;
+    assert(memory.readiness === "BLOCKED_THREAT", `expected threat block, got ${memory.readiness}`);
+    assert(memory.lastProcessed === undefined, "threat block should not process power");
+  });
+}
+
+function runPowerSpawnCpuBlockScenario() {
+  withPowerSettings({ PROCESS_UNDER_CRITICAL_CPU: false }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_CPU");
+    Memory.stats = {
+      runtime: {
+        pressure: "critical",
+      },
+    };
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const memory = Memory.rooms[room.name].power;
+    assert(
+      memory.readiness === "BLOCKED_CPU_PRESSURE",
+      `expected CPU pressure block, got ${memory.readiness}`,
+    );
+    assert(memory.lastProcessed === undefined, "CPU pressure block should not process power");
+  });
+}
+
+function runPowerReportingScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REPORT");
+    const state = roomState.collect(room);
+    powerManager.run(room, state);
+
+    ops.registerGlobals();
+    const captured = captureConsoleLines(function () {
+      return global.ops.room(room.name, "power");
+    });
+
+    assert(
+      captured.lines.some(function (line) { return line === `[OPS][${room.name}][POWER]`; }),
+      `expected power report header, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Readiness PROCESSED") !== -1; }),
+      `expected readiness in power report, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Terminal Power 250") !== -1; }),
+      `expected terminal power staging in report, got ${captured.lines.join(" / ")}`,
+    );
+    assert(roomReporting.normalizeSection("power") === "power", "power section should normalize");
+  });
 }
 
 function withBoostTargets(targets, fn) {
@@ -11343,6 +11523,11 @@ function main() {
     ["command_links", runCommandUtilityLinksScenario],
     ["multi_spawn_balance", runMultiSpawnBalancingScenario],
     ["factory_ops", runFactoryOpsScenario],
+    ["power_spawn_processing", runPowerSpawnProcessingScenario],
+    ["power_spawn_reserve_block", runPowerSpawnReserveBlockScenario],
+    ["power_spawn_threat_block", runPowerSpawnThreatBlockScenario],
+    ["power_spawn_cpu_block", runPowerSpawnCpuBlockScenario],
+    ["power_reporting", runPowerReportingScenario],
     ["lab_boost_direct", runLabBoostDirectScenario],
     ["lab_boost_intermediate", runLabBoostIntermediateScenario],
     ["lab_loaded_reaction_preserved", runLabLoadedReactionPreservedScenario],

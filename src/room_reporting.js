@@ -16,6 +16,7 @@ const SECTION_ORDER = [
   "sources",
   "resources",
   "advanced",
+  "power",
   "observer",
   "cpu",
 ];
@@ -972,6 +973,48 @@ function getObserverSummary(room, state) {
   return observerManager.getStatus(room);
 }
 
+function getPowerSummary(room) {
+  const power =
+    Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].power
+      ? Memory.rooms[room.name].power
+      : {};
+  const terminal = room.terminal || null;
+
+  return {
+    powerSpawns: power.powerSpawns || 0,
+    powerSpawnEnergy: power.powerSpawnEnergy || power.energy || 0,
+    powerSpawnPower: power.powerSpawnPower || power.power || 0,
+    storageEnergy: typeof power.storageEnergy === "number"
+      ? power.storageEnergy
+      : getStorageEnergy(room),
+    terminalEnergy: typeof power.terminalEnergy === "number"
+      ? power.terminalEnergy
+      : terminal && terminal.store
+        ? terminal.store[RESOURCE_ENERGY] || 0
+        : 0,
+    terminalPower: typeof power.terminalPower === "number"
+      ? power.terminalPower
+      : terminal && terminal.store
+        ? terminal.store[RESOURCE_POWER] || 0
+        : 0,
+    lastProcessed: typeof power.lastProcessed === "number"
+      ? power.lastProcessed
+      : null,
+    totalProcessed: power.totalProcessed || 0,
+    readiness: power.readiness || "UNKNOWN",
+    blockedReason: power.blockedReason || power.reason || "none",
+    lastSeen: typeof power.lastSeen === "number" ? power.lastSeen : null,
+    minStorageEnergy: power.minStorageEnergy ||
+      (config.POWER ? config.POWER.MIN_STORAGE_ENERGY || 0 : 0),
+    minTerminalEnergy: power.minTerminalEnergy ||
+      (config.POWER ? config.POWER.MIN_TERMINAL_ENERGY || 0 : 0),
+    energyTarget: power.energyTarget ||
+      (config.POWER ? config.POWER.POWER_SPAWN_ENERGY_TARGET || 0 : 0),
+    powerTarget: power.powerTarget ||
+      (config.POWER ? config.POWER.POWER_SPAWN_POWER_TARGET || 0 : 0),
+  };
+}
+
 function formatIntelAge(age) {
   return typeof age === "number" ? `${age}t` : "--";
 }
@@ -1281,6 +1324,7 @@ module.exports = {
     const cpu = getCpuSummary(room);
     const advanced = getAdvancedSummary(room, summaryState);
     const observer = getObserverSummary(room, summaryState);
+    const power = getPowerSummary(room);
     const terminalBalance = summaryState.terminalBalance || {};
     const mineralMining = getMineralMiningSummary(room, summaryState);
     const mineralLine = formatMineralMiningLine(mineralMining);
@@ -1384,6 +1428,14 @@ module.exports = {
         `[OPS][${room.name}][SOURCES]`,
       ],
       advanced: advancedLines,
+      power: [
+        `[OPS][${room.name}][POWER]`,
+        `Readiness ${power.readiness} | Blocked ${power.blockedReason || "none"}`,
+        `PowerSpawns ${power.powerSpawns} | Energy ${fmtAmount(power.powerSpawnEnergy)}/${fmtAmount(power.energyTarget)} | Power ${fmtAmount(power.powerSpawnPower)}/${fmtAmount(power.powerTarget)}`,
+        `Storage Energy ${fmtAmount(power.storageEnergy)}/${fmtAmount(power.minStorageEnergy)} | Terminal Energy ${fmtAmount(power.terminalEnergy)}/${fmtAmount(power.minTerminalEnergy)}`,
+        `Terminal Power ${fmtAmount(power.terminalPower)} | Balance ${terminalBalance.state || "unknown"} | pending ${terminalBalance.pendingMoves || 0}`,
+        `Last processed ${power.lastProcessed !== null ? power.lastProcessed : "--"} | Total ${fmtAmount(power.totalProcessed)} | Last seen ${power.lastSeen !== null ? power.lastSeen : "--"}`,
+      ],
       observer: [
         `[OPS][${room.name}][OBSERVER]`,
         `Enabled ${observer.enabled ? "yes" : "no"} | Observers ${observer.observerCount || 0}`,

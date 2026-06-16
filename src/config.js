@@ -186,13 +186,16 @@ module.exports = {
     ENABLED: true,
     MIN_RCL: 8,
 
-    PROCESS_POWER_COST: 1,
-    PROCESS_ENERGY_COST: 50,
-
-    // Reserved for the next phase where haulers refill the Power Spawn.
     MIN_STORAGE_ENERGY: 50000,
+    MIN_TERMINAL_ENERGY: 0,
+    PROCESS_UNDER_THREAT: false,
+    PROCESS_UNDER_CRITICAL_CPU: false,
     POWER_SPAWN_ENERGY_TARGET: 5000,
     POWER_SPAWN_POWER_TARGET: 100,
+    REPORT_INTERVAL: 100,
+
+    PROCESS_POWER_COST: 1,
+    PROCESS_ENERGY_COST: 50,
   },
 
   /*
