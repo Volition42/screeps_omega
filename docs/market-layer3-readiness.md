@@ -83,6 +83,37 @@ Plan review turns saved dry-run plans into an operator workflow before any execu
 
 Use `market.clearPlan(id)` to soft-delete one plan and `market.clearPlan("all")` to soft-delete active plans while preserving audit history. The older `market.deletePlan(id)`, `market.removePlan(id)`, and `market.clearPlans()` commands remain as deprecated aliases that route to `market.clearPlan`.
 
+## Layer 3.5 Execution Design & Safety Framework
+
+```js
+market.executionStatus()
+market.executionLimits()
+market.setExecutionLimit("maxSellAmount", 5000)
+market.executionDryRun("ms_223455_H_W42N9")
+market.clearExecutionLimit("maxSellAmount")
+```
+
+Layer 3.5 prepares the execution preflight model without exposing an execution command. `market.executionStatus()` reports that the execution engine is disabled, actual deal execution is unavailable, dry-run preflight is available, limits are available, and history schema metadata is prepared for a later phase.
+
+`market.executionDryRun(planId)` reloads a saved plan from `Memory.consoleTools.market.plans`, re-checks the selected order and current room terminal state, applies configured execution limits, calculates the final executable amount, estimates credits and terminal transaction energy, and returns `READY`, `BLOCKED`, `STALE`, or `LIMIT_BLOCKED`. The report includes plan id, type, resource, room, requested amount, planned and final executable amounts, selected order, price, effective price when available, estimated credits, estimated transaction energy, blockers, limit blockers, and `No execution performed.`
+
+Execution limits live under `Memory.consoleTools.market.executionLimits` and default to:
+
+```js
+{
+  maxSellAmount: 10000,
+  maxBuyAmount: 10000,
+  maxCreditsPerBuy: 1000000,
+  minSellEffectivePrice: 0,
+  maxBuyEffectivePrice: null,
+  minTerminalEnergyReserve: 0
+}
+```
+
+Use `market.executionLimits()` to print current limits and defaults, `market.setExecutionLimit(name, value)` to set a numeric limit, and `market.clearExecutionLimit(name)` to reset one limit to its default. `maxBuyEffectivePrice` may be set to `null` or `"null"` to keep it unlimited. Short aliases are available as `market.limits()`, `market.setLimit(name, value)`, and `market.clearLimit(name)`.
+
+Actual execution remains intentionally unavailable until a later phase. Layer 3.5 does not add `market.executePlan`, does not call `Game.market.deal`, does not create market orders, does not create ops logistics requests, and does not call `terminal.send`.
+
 ## No-Execution Boundary
 
 Market intelligence commands do not:

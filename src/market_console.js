@@ -24,6 +24,17 @@ const CONFIG = {
   logPrefix: "[MARKET]",
 };
 
+const DEFAULT_EXECUTION_LIMITS = {
+  maxSellAmount: 10000,
+  maxBuyAmount: 10000,
+  maxCreditsPerBuy: 1000000,
+  minSellEffectivePrice: 0,
+  maxBuyEffectivePrice: null,
+  minTerminalEnergyReserve: 0,
+};
+
+const EXECUTION_LIMIT_NAMES = Object.keys(DEFAULT_EXECUTION_LIMITS);
+
 const BASE_RESOURCES = [
   RESOURCE_ENERGY,
   RESOURCE_POWER,
@@ -77,6 +88,19 @@ function getPlanStore() {
   const memory = getMemoryRoot();
   if (!memory.plans) memory.plans = {};
   return memory.plans;
+}
+
+function getExecutionLimitStore() {
+  const memory = getMemoryRoot();
+  if (!memory.executionLimits) memory.executionLimits = {};
+
+  for (const name of EXECUTION_LIMIT_NAMES) {
+    if (!Object.prototype.hasOwnProperty.call(memory.executionLimits, name)) {
+      memory.executionLimits[name] = DEFAULT_EXECUTION_LIMITS[name];
+    }
+  }
+
+  return memory.executionLimits;
 }
 
 function touchMemory() {
@@ -1203,6 +1227,297 @@ function planReview(planId) {
   return printBlock(lines);
 }
 
+function executionStatus() {
+  return printBlock([
+    `${CONFIG.logPrefix} Execution Status`,
+    "  Engine: DISABLED",
+    "  Game.market.deal: not called by this layer",
+    "  Actual Deal Execution: unavailable",
+    "  Dry Run: available",
+    "  Limits: available",
+    "  History Schema: prepared",
+    "  Next: review market.executionDryRun(planId)",
+  ]);
+}
+
+function executionLimits() {
+  const limits = getExecutionLimitStore();
+  const lines = [
+    `${CONFIG.logPrefix} Execution Limits`,
+    "  defaults:",
+  ];
+
+  for (const name of EXECUTION_LIMIT_NAMES) {
+    lines.push(`    ${name}: ${formatLimitValue(DEFAULT_EXECUTION_LIMITS[name])}`);
+  }
+
+  lines.push("  current:");
+  for (const name of EXECUTION_LIMIT_NAMES) {
+    lines.push(`    ${name}: ${formatLimitValue(limits[name])}`);
+  }
+
+  return printBlock(lines);
+}
+
+function formatLimitValue(value) {
+  if (value === null) return "unlimited";
+  return Number.isInteger(value) ? fmt(value) : String(value);
+}
+
+function parseExecutionLimitValue(name, value) {
+  if (name === "maxBuyEffectivePrice" && value === "null") return { ok: true, value: null };
+  if (name === "maxBuyEffectivePrice" && value === null) return { ok: true, value: null };
+
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return { ok: false, message: `invalid value for ${name}: ${value}` };
+  }
+
+  return { ok: true, value: numeric };
+}
+
+function setExecutionLimit(name, value) {
+  if (EXECUTION_LIMIT_NAMES.indexOf(name) === -1) {
+    return printLine(`${CONFIG.logPrefix} Invalid execution limit: ${name}`);
+  }
+
+  const parsed = parseExecutionLimitValue(name, value);
+  if (!parsed.ok) return printLine(`${CONFIG.logPrefix} ${parsed.message}`);
+
+  const limits = getExecutionLimitStore();
+  limits[name] = parsed.value;
+
+  return printLine(`${CONFIG.logPrefix} Execution limit ${name} set to ${formatLimitValue(parsed.value)}.`);
+}
+
+function clearExecutionLimit(name) {
+  if (EXECUTION_LIMIT_NAMES.indexOf(name) === -1) {
+    return printLine(`${CONFIG.logPrefix} Invalid execution limit: ${name}`);
+  }
+
+  const limits = getExecutionLimitStore();
+  limits[name] = DEFAULT_EXECUTION_LIMITS[name];
+
+  return printLine(`${CONFIG.logPrefix} Execution limit ${name} reset to ${formatLimitValue(DEFAULT_EXECUTION_LIMITS[name])}.`);
+}
+
+function computeEffectivePrice(plan, order, amount, energyCost) {
+  const energyPerUnit = amount > 0 ? energyCost / amount : 0;
+  if (!order) return 0;
+  if (plan.type === "buy") return order.price + energyPerUnit * CONFIG.energyCreditValue;
+  return order.price - energyPerUnit * CONFIG.energyCreditValue;
+}
+
+function preflightExecution(planId) {
+  const limits = getExecutionLimitStore();
+  const plans = getPlanStore();
+  const plan = plans[planId];
+  const blockers = [];
+  const staleReasons = [];
+  const limitBlockers = [];
+  let room = null;
+  let terminal = null;
+  let order = null;
+  let plannedAmount = 0;
+  let finalAmount = 0;
+  let estimatedEnergy = 0;
+  let estimatedCredits = 0;
+  let effectivePrice = 0;
+
+  if (!plan) {
+    blockers.push("plan missing");
+    return {
+      plan: null,
+      status: "BLOCKED",
+      blockers,
+      staleReasons,
+      limitBlockers,
+      plannedAmount,
+      finalAmount,
+      estimatedEnergy,
+      estimatedCredits,
+      effectivePrice,
+      order,
+    };
+  }
+
+  plannedAmount = Math.max(
+    0,
+    Math.floor(plan.executableAmount > 0 ? plan.executableAmount : plan.requestedAmount || 0),
+  );
+
+  if (plan.status === "deleted") blockers.push("plan deleted");
+  if (plan.type !== "sell" && plan.type !== "buy") blockers.push("invalid plan type");
+
+  room = getOwnedRoom(plan.roomName);
+  if (!room) {
+    blockers.push("room unavailable or not owned");
+  } else if (!terminalUsable(room)) {
+    blockers.push("terminal unavailable");
+  } else {
+    terminal = room.terminal;
+    if ((terminal.cooldown || 0) !== 0) blockers.push("terminal cooldown");
+  }
+
+  order = findSelectedOrder(plan);
+  if (!plan.selectedOrderId || !order) {
+    staleReasons.push("order missing");
+  } else if (plan.type === "sell" && order.type !== ORDER_BUY) {
+    staleReasons.push("selected order is not buy");
+  } else if (plan.type === "buy" && order.type !== ORDER_SELL) {
+    staleReasons.push("selected order is not sell");
+  }
+
+  if (plan.type === "sell" && terminal) {
+    const available = amountIn(terminal.store, plan.resourceType);
+    if (available <= 0) blockers.push("terminal resource missing");
+    plannedAmount = Math.min(plannedAmount, available);
+  }
+
+  if (plan.type === "buy" && terminal) {
+    const freeCapacity = terminalFreeCapacity(room);
+    if (freeCapacity <= 0) blockers.push("terminal capacity unavailable");
+    plannedAmount = Math.min(plannedAmount, freeCapacity);
+  }
+
+  if (order) plannedAmount = Math.min(plannedAmount, order.amount || 0);
+  plannedAmount = Math.max(0, Math.floor(plannedAmount));
+
+  if (terminal && order && plannedAmount > 0) {
+    const terminalEnergy = amountIn(terminal.store, RESOURCE_ENERGY);
+    const energyReserve = Math.max(0, limits.minTerminalEnergyReserve || 0);
+    const energyAvailableForDeal = Math.max(0, terminalEnergy - energyReserve);
+    const maxByEnergy = maxAmountByTerminalEnergy(
+      room.name,
+      order.roomName,
+      energyAvailableForDeal,
+      plannedAmount,
+    );
+
+    if (maxByEnergy <= 0) blockers.push("terminal energy too low");
+    if (energyReserve > 0 && maxByEnergy < plannedAmount) {
+      limitBlockers.push("minTerminalEnergyReserve");
+    }
+    finalAmount = Math.min(plannedAmount, maxByEnergy);
+  } else {
+    finalAmount = plannedAmount;
+  }
+
+  if (plan.type === "sell") {
+    finalAmount = Math.min(finalAmount, Math.max(0, Math.floor(limits.maxSellAmount || 0)));
+    if (plannedAmount > (limits.maxSellAmount || 0)) limitBlockers.push("maxSellAmount");
+  }
+
+  if (plan.type === "buy") {
+    finalAmount = Math.min(finalAmount, Math.max(0, Math.floor(limits.maxBuyAmount || 0)));
+    if (plannedAmount > (limits.maxBuyAmount || 0)) limitBlockers.push("maxBuyAmount");
+
+    if (order && order.price > 0) {
+      const maxByCreditsLimit = Math.floor((limits.maxCreditsPerBuy || 0) / order.price);
+      if (plannedAmount * order.price > (limits.maxCreditsPerBuy || 0)) limitBlockers.push("maxCreditsPerBuy");
+      finalAmount = Math.min(finalAmount, maxByCreditsLimit);
+
+      const maxByAccountCredits = Math.floor((Game.market.credits || 0) / order.price);
+      if (maxByAccountCredits <= 0 || (plannedAmount > 0 && Game.market.credits < Math.min(plannedAmount, finalAmount || plannedAmount) * order.price)) {
+        blockers.push("credits too low");
+      }
+      finalAmount = Math.min(finalAmount, maxByAccountCredits);
+    }
+  }
+
+  finalAmount = Math.max(0, Math.floor(finalAmount));
+
+  if (terminal && order && finalAmount > 0) {
+    estimatedEnergy = Game.market.calcTransactionCost(
+      finalAmount,
+      room.name,
+      order.roomName,
+    );
+    estimatedCredits = finalAmount * order.price;
+    effectivePrice = computeEffectivePrice(plan, order, finalAmount, estimatedEnergy);
+
+    const terminalEnergy = amountIn(terminal.store, RESOURCE_ENERGY);
+    if (terminalEnergy - estimatedEnergy < (limits.minTerminalEnergyReserve || 0)) {
+      limitBlockers.push("minTerminalEnergyReserve");
+    }
+
+    if (plan.type === "sell" && effectivePrice < (limits.minSellEffectivePrice || 0)) {
+      limitBlockers.push("minSellEffectivePrice");
+    }
+
+    if (
+      plan.type === "buy" &&
+      limits.maxBuyEffectivePrice !== null &&
+      effectivePrice > limits.maxBuyEffectivePrice
+    ) {
+      limitBlockers.push("maxBuyEffectivePrice");
+    }
+  }
+
+  if (finalAmount <= 0 && staleReasons.length === 0) {
+    blockers.push("final executable amount zero");
+  }
+
+  const uniqueStale = uniqueReasons(staleReasons);
+  const uniqueBlockers = uniqueReasons(blockers);
+  const uniqueLimitBlockers = uniqueReasons(limitBlockers);
+  const status = uniqueStale.length
+    ? "STALE"
+    : uniqueLimitBlockers.length
+      ? "LIMIT_BLOCKED"
+      : uniqueBlockers.length
+        ? "BLOCKED"
+        : "READY";
+
+  return {
+    plan,
+    status,
+    blockers: uniqueBlockers,
+    staleReasons: uniqueStale,
+    limitBlockers: uniqueLimitBlockers,
+    plannedAmount,
+    finalAmount,
+    estimatedEnergy,
+    estimatedCredits,
+    effectivePrice,
+    order,
+  };
+}
+
+function executionDryRun(planId) {
+  const result = preflightExecution(planId);
+  const plan = result.plan;
+  const lines = [
+    `${CONFIG.logPrefix} Execution Dry Run ${planId}: ${result.status}`,
+  ];
+
+  if (!plan) {
+    lines.push("  blockers plan missing");
+    lines.push("  No execution performed.");
+    return printBlock(lines);
+  }
+
+  lines.push(`  plan id ${plan.id}`);
+  lines.push(`  type ${plan.type}`);
+  lines.push(`  resource ${plan.resourceType}`);
+  lines.push(`  room ${plan.roomName}`);
+  lines.push(`  requested amount ${fmt(plan.requestedAmount)}`);
+  lines.push(`  planned executable amount ${fmt(result.plannedAmount)}`);
+  lines.push(`  final executable amount ${fmt(result.finalAmount)}`);
+  lines.push(`  selected order ${result.order ? result.order.id : plan.selectedOrderId || "none"}`);
+  lines.push(`  price ${result.order ? Number(result.order.price).toFixed(4) : "n/a"}`);
+  lines.push(`  effective price ${result.order && result.finalAmount > 0 ? Number(result.effectivePrice).toFixed(4) : "n/a"}`);
+  lines.push(`  estimated credits ${fmt(result.estimatedCredits)}`);
+  lines.push(`  estimated transaction energy ${fmt(result.estimatedEnergy)}`);
+  lines.push(`  status ${result.status}`);
+  lines.push(`  blockers ${result.blockers.length ? result.blockers.join(", ") : "none"}`);
+  if (result.staleReasons.length) lines.push(`  stale ${result.staleReasons.join(", ")}`);
+  lines.push(`  limit blockers ${result.limitBlockers.length ? result.limitBlockers.join(", ") : "none"}`);
+  lines.push("  No execution performed.");
+
+  return printBlock(lines);
+}
+
 function clearPlan(planId) {
   if (planId === "all") {
     const planRows = activePlanRows();
@@ -1446,6 +1761,16 @@ function help() {
     "  market.deletePlan(planId) [deprecated: use market.clearPlan(planId)]",
     "  market.removePlan(planId) [deprecated: use market.clearPlan(planId)]",
     '  market.clearPlans() [deprecated: use market.clearPlan("all")]',
+    "",
+    "[MARKET] Execution design and safety:",
+    "  market.executionStatus()",
+    "  market.executionDryRun(planId)",
+    "  market.executionLimits()",
+    "  market.setExecutionLimit(name, value)",
+    "  market.clearExecutionLimit(name)",
+    "  market.limits()",
+    "  market.setLimit(name, value)",
+    "  market.clearLimit(name)",
     "",
     "[MARKET] Manual trading:",
     "  market.buy(resource, amount, roomName)",
@@ -2345,6 +2670,14 @@ function registerGlobals() {
     deletePlan,
     removePlan,
     clearPlans,
+    executionStatus,
+    executionDryRun,
+    executionLimits,
+    setExecutionLimit,
+    clearExecutionLimit,
+    limits: executionLimits,
+    setLimit: setExecutionLimit,
+    clearLimit: clearExecutionLimit,
     buy,
     sell,
 
@@ -2393,6 +2726,14 @@ module.exports = {
   deletePlan,
   removePlan,
   clearPlans,
+  executionStatus,
+  executionDryRun,
+  executionLimits,
+  setExecutionLimit,
+  clearExecutionLimit,
+  limits: executionLimits,
+  setLimit: setExecutionLimit,
+  clearLimit: clearExecutionLimit,
   buy,
   sell,
 

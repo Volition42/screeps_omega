@@ -7728,13 +7728,43 @@ function runMarketDryRunPlanningScenario() {
       captured.lines.some(function (line) { return line.indexOf("market.planSummary()") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("market.planReview(planId)") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("market.planAudit()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.executionStatus()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.executionDryRun(planId)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.executionLimits()") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("market.clearPlan(planId)") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf('market.clearPlan("all")') !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("market.deletePlan(planId) [deprecated") !== -1; }),
     `market.help should include dry-run plan commands, got ${captured.lines.join(" / ")}`,
   );
 
-  let report = marketConsole.planSell("H", 10000, sellRoom.name);
+  let report = marketConsole.executionStatus();
+  assert(typeof report === "string", "market.executionStatus should return a printable string");
+  assert(report.indexOf("Engine: DISABLED") !== -1, `executionStatus should state disabled engine, got ${report}`);
+  assert(report.indexOf("Game.market.deal: not called by this layer") !== -1, `executionStatus should state no deal calls, got ${report}`);
+
+  report = marketConsole.executionLimits();
+  assert(typeof report === "string", "market.executionLimits should return a printable string");
+  assert(report.indexOf("maxSellAmount") !== -1, `executionLimits should list sell amount limit, got ${report}`);
+  assert(report.indexOf("maxBuyEffectivePrice") !== -1, `executionLimits should list buy effective price limit, got ${report}`);
+
+  report = marketConsole.setExecutionLimit("maxSellAmount", "5000");
+  assert(report.indexOf("maxSellAmount set to 5,000") !== -1, `setExecutionLimit should set numeric strings, got ${report}`);
+  assert(Memory.consoleTools.market.executionLimits.maxSellAmount === 5000, "setExecutionLimit should write numeric limit");
+  report = marketConsole.clearExecutionLimit("maxSellAmount");
+  assert(report.indexOf("maxSellAmount reset to 10,000") !== -1, `clearExecutionLimit should restore default, got ${report}`);
+  assert(Memory.consoleTools.market.executionLimits.maxSellAmount === 10000, "clearExecutionLimit should restore maxSellAmount default");
+  report = marketConsole.setExecutionLimit("maxBuyEffectivePrice", 0.5);
+  assert(report.indexOf("maxBuyEffectivePrice set to 0.5") !== -1, `setExecutionLimit should set maxBuyEffectivePrice, got ${report}`);
+  assert(Memory.consoleTools.market.executionLimits.maxBuyEffectivePrice === 0.5, "setExecutionLimit should store maxBuyEffectivePrice");
+  report = marketConsole.setExecutionLimit("maxBuyEffectivePrice", "null");
+  assert(report.indexOf("maxBuyEffectivePrice set to unlimited") !== -1, `setExecutionLimit should clear maxBuyEffectivePrice with null, got ${report}`);
+  assert(Memory.consoleTools.market.executionLimits.maxBuyEffectivePrice === null, "setExecutionLimit null should store unlimited maxBuyEffectivePrice");
+  report = marketConsole.setExecutionLimit("notALimit", 10);
+  assert(report.indexOf("Invalid execution limit") !== -1, `invalid limit names should be rejected, got ${report}`);
+  report = marketConsole.setExecutionLimit("maxSellAmount", "not-a-number");
+  assert(report.indexOf("invalid value") !== -1, `invalid limit values should be rejected, got ${report}`);
+
+  report = marketConsole.planSell("H", 10000, sellRoom.name);
   assert(typeof report === "string", "market.planSell should return a printable string");
   assert(report.indexOf("READY") !== -1, `planSell should create a ready plan, got ${report}`);
   assert(report.indexOf("next: market.sell(\"H\"") !== -1, `planSell should show manual next command, got ${report}`);
@@ -7764,6 +7794,10 @@ function runMarketDryRunPlanningScenario() {
   assert(report.indexOf("BLOCKED") !== -1, `low-energy sell plan should be blocked, got ${report}`);
   assert(report.indexOf("insufficient terminal energy") !== -1 || report.indexOf("low terminal energy") !== -1, `expected energy blocker, got ${report}`);
   const lowEnergyPlanId = getMarketPlanIdFromReport(report);
+  report = marketConsole.executionDryRun(lowEnergyPlanId);
+  assert(report.indexOf("BLOCKED") !== -1, `executionDryRun should block no-energy sell plans, got ${report}`);
+  assert(report.indexOf("terminal energy") !== -1, `executionDryRun should explain no terminal energy, got ${report}`);
+  assert(report.indexOf("No execution performed.") !== -1, `executionDryRun should state no execution, got ${report}`);
 
   const buyRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_BUY", {
     storageStore: { energy: 250000 },
@@ -7781,6 +7815,53 @@ function runMarketDryRunPlanningScenario() {
   assert(savedPlan.selectedOrderId === "sell_Z_plan", `expected selected sell order, got ${savedPlan.selectedOrderId}`);
   assert(savedPlan.executableAmount === 4000, `expected buy executable 4000, got ${savedPlan.executableAmount}`);
 
+  report = marketConsole.executionDryRun(sellPlanId);
+  assert(report.indexOf("READY") !== -1, `ready sell plan executionDryRun should return READY, got ${report}`);
+  assert(report.indexOf("final executable amount 3,000") !== -1, `sell executionDryRun should show final amount, got ${report}`);
+  assert(report.indexOf("selected order buy_H_plan") !== -1, `sell executionDryRun should show selected order, got ${report}`);
+  assert(report.indexOf("No execution performed.") !== -1, `sell executionDryRun should state no execution, got ${report}`);
+
+  marketConsole.setExecutionLimit("maxSellAmount", 1000);
+  report = marketConsole.executionDryRun(sellPlanId);
+  assert(report.indexOf("LIMIT_BLOCKED") !== -1, `maxSellAmount overage should limit-block sell dry run, got ${report}`);
+  assert(report.indexOf("maxSellAmount") !== -1, `sell dry run should name maxSellAmount blocker, got ${report}`);
+  marketConsole.clearExecutionLimit("maxSellAmount");
+
+  marketConsole.setExecutionLimit("minSellEffectivePrice", 99);
+  report = marketConsole.executionDryRun(sellPlanId);
+  assert(report.indexOf("LIMIT_BLOCKED") !== -1, `minSellEffectivePrice violation should limit-block sell dry run, got ${report}`);
+  assert(report.indexOf("minSellEffectivePrice") !== -1, `sell dry run should name minSellEffectivePrice blocker, got ${report}`);
+  marketConsole.clearExecutionLimit("minSellEffectivePrice");
+
+  marketConsole.setExecutionLimit("minTerminalEnergyReserve", 11901);
+  report = marketConsole.executionDryRun(sellPlanId);
+  assert(report.indexOf("LIMIT_BLOCKED") !== -1, `minTerminalEnergyReserve violation should limit-block sell dry run, got ${report}`);
+  assert(report.indexOf("minTerminalEnergyReserve") !== -1, `sell dry run should name minTerminalEnergyReserve blocker, got ${report}`);
+  marketConsole.clearExecutionLimit("minTerminalEnergyReserve");
+
+  report = marketConsole.executionDryRun(buyPlanId);
+  assert(report.indexOf("READY") !== -1, `ready buy plan executionDryRun should return READY, got ${report}`);
+  assert(report.indexOf("final executable amount 4,000") !== -1, `buy executionDryRun should show final amount, got ${report}`);
+  assert(report.indexOf("selected order sell_Z_plan") !== -1, `buy executionDryRun should show selected order, got ${report}`);
+
+  marketConsole.setExecutionLimit("maxBuyAmount", 1000);
+  report = marketConsole.executionDryRun(buyPlanId);
+  assert(report.indexOf("LIMIT_BLOCKED") !== -1, `maxBuyAmount overage should limit-block buy dry run, got ${report}`);
+  assert(report.indexOf("maxBuyAmount") !== -1, `buy dry run should name maxBuyAmount blocker, got ${report}`);
+  marketConsole.clearExecutionLimit("maxBuyAmount");
+
+  marketConsole.setExecutionLimit("maxCreditsPerBuy", 100);
+  report = marketConsole.executionDryRun(buyPlanId);
+  assert(report.indexOf("LIMIT_BLOCKED") !== -1, `maxCreditsPerBuy violation should limit-block buy dry run, got ${report}`);
+  assert(report.indexOf("maxCreditsPerBuy") !== -1, `buy dry run should name maxCreditsPerBuy blocker, got ${report}`);
+  marketConsole.clearExecutionLimit("maxCreditsPerBuy");
+
+  marketConsole.setExecutionLimit("maxBuyEffectivePrice", 0.01);
+  report = marketConsole.executionDryRun(buyPlanId);
+  assert(report.indexOf("LIMIT_BLOCKED") !== -1, `maxBuyEffectivePrice violation should limit-block buy dry run, got ${report}`);
+  assert(report.indexOf("maxBuyEffectivePrice") !== -1, `buy dry run should name maxBuyEffectivePrice blocker, got ${report}`);
+  marketConsole.clearExecutionLimit("maxBuyEffectivePrice");
+
   const fullRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_FULL", {
     storageStore: { energy: 250000 },
     terminalStore: { energy: 300000 },
@@ -7789,6 +7870,11 @@ function runMarketDryRunPlanningScenario() {
   report = marketConsole.planBuy("Z", 1000, fullRoom.name);
   assert(report.indexOf("BLOCKED") !== -1, `full terminal buy plan should be blocked, got ${report}`);
   assert(report.indexOf("no terminal capacity") !== -1, `expected capacity blocker, got ${report}`);
+  const fullPlanId = getMarketPlanIdFromReport(report);
+  report = marketConsole.executionDryRun(fullPlanId);
+  assert(report.indexOf("BLOCKED") !== -1, `executionDryRun should block no-capacity buy plans, got ${report}`);
+  assert(report.indexOf("capacity") !== -1, `executionDryRun should explain no capacity, got ${report}`);
+  assert(report.indexOf("final executable amount 0") !== -1, `no-capacity buy dry run should have final amount 0, got ${report}`);
 
   const creditRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_CREDITS", {
     storageStore: { energy: 250000 },
@@ -7807,6 +7893,10 @@ function runMarketDryRunPlanningScenario() {
   report = marketConsole.planBuy("Z", 1000, creditRoom.name);
   assert(report.indexOf("BLOCKED") !== -1, `unaffordable buy plan should be blocked, got ${report}`);
   assert(report.indexOf("insufficient credits") !== -1, `expected credits blocker, got ${report}`);
+  const creditPlanId = getMarketPlanIdFromReport(report);
+  report = marketConsole.executionDryRun(creditPlanId);
+  assert(report.indexOf("BLOCKED") !== -1, `executionDryRun should block insufficient-credit buy plans, got ${report}`);
+  assert(report.indexOf("credits") !== -1, `executionDryRun should explain insufficient credits, got ${report}`);
 
   installPlanMarket([]);
   report = marketConsole.planBuy("Z", 1000, creditRoom.name);
@@ -7844,6 +7934,9 @@ function runMarketDryRunPlanningScenario() {
   assert(report.indexOf("Sell Plans: 4") !== -1, `planSummary should count sell plans, got ${report}`);
 
   installPlanMarket([]);
+  report = marketConsole.executionDryRun(sellPlanId);
+  assert(report.indexOf("STALE") !== -1, `executionDryRun should mark missing selected order stale, got ${report}`);
+  assert(report.indexOf("order missing") !== -1, `executionDryRun should explain missing order, got ${report}`);
   report = marketConsole.plan(sellPlanId);
   assert(typeof report === "string", "market.plan should return a printable string");
   assert(report.indexOf("STALE") !== -1, `market.plan should detect missing selected order as stale, got ${report}`);
