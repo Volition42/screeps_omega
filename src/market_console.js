@@ -34,6 +34,8 @@ const DEFAULT_EXECUTION_LIMITS = {
 };
 
 const EXECUTION_LIMIT_NAMES = Object.keys(DEFAULT_EXECUTION_LIMITS);
+const DEFAULT_HISTORY_LIMIT = 100;
+const MIN_HISTORY_LIMIT = 10;
 
 const BASE_RESOURCES = [
   RESOURCE_ENERGY,
@@ -94,6 +96,30 @@ function getHistoryStore() {
   const memory = getMemoryRoot();
   if (!memory.history) memory.history = [];
   return memory.history;
+}
+
+function getHistoryLimitValue() {
+  const memory = getMemoryRoot();
+  const limit = Math.floor(Number(memory.historyLimit));
+
+  if (!Number.isFinite(limit) || limit < MIN_HISTORY_LIMIT) {
+    memory.historyLimit = DEFAULT_HISTORY_LIMIT;
+    return DEFAULT_HISTORY_LIMIT;
+  }
+
+  memory.historyLimit = limit;
+  return limit;
+}
+
+function trimHistoryToLimit() {
+  const history = getHistoryStore();
+  const limit = getHistoryLimitValue();
+
+  if (history.length > limit) {
+    history.splice(0, history.length - limit);
+  }
+
+  return history;
 }
 
 function getExecutionLimitStore() {
@@ -1571,10 +1597,7 @@ function executionReason(result, dealResult) {
 function appendExecutionHistory(entry) {
   const history = getHistoryStore();
   history.push(entry);
-
-  if (history.length > 100) {
-    history.splice(0, history.length - 100);
-  }
+  trimHistoryToLimit();
 
   return entry;
 }
@@ -1741,6 +1764,187 @@ function history(filter) {
   }
 
   return printBlock(lines);
+}
+
+function historySummary() {
+  const rows = getHistoryStore();
+  const counts = {
+    executed: 0,
+    partial: 0,
+    failed: 0,
+    blocked: 0,
+    stale: 0,
+    limit_blocked: 0,
+  };
+  let creditsGained = 0;
+  let creditsSpent = 0;
+  let energySpent = 0;
+
+  for (const entry of rows) {
+    if (Object.prototype.hasOwnProperty.call(counts, entry.status)) {
+      counts[entry.status] += 1;
+    }
+
+    if (entry.status === "executed" || entry.status === "partial") {
+      const credits = Number(entry.creditsDelta) || 0;
+      if (credits > 0) creditsGained += credits;
+      if (credits < 0) creditsSpent += Math.abs(credits);
+      energySpent += Number(entry.energyCost) || 0;
+    }
+  }
+
+  return printBlock([
+    `${CONFIG.logPrefix} History Summary`,
+    "",
+    `Entries: ${fmt(rows.length)}`,
+    "",
+    `Executed: ${fmt(counts.executed)}`,
+    `Partial: ${fmt(counts.partial)}`,
+    `Failed: ${fmt(counts.failed)}`,
+    `Blocked: ${fmt(counts.blocked)}`,
+    `Stale: ${fmt(counts.stale)}`,
+    `Limit Blocked: ${fmt(counts.limit_blocked)}`,
+    "",
+    `Credits Gained: ${fmt(creditsGained)}`,
+    `Credits Spent: ${fmt(creditsSpent)}`,
+    `Energy Spent: ${fmt(energySpent)}`,
+  ]);
+}
+
+function incrementCount(map, key) {
+  if (!key) return;
+  map[key] = (map[key] || 0) + 1;
+}
+
+function sortedRepeatedRows(map) {
+  return Object.keys(map)
+    .filter((key) => map[key] > 1)
+    .sort((a, b) => {
+      if (map[b] !== map[a]) return map[b] - map[a];
+      return a.localeCompare(b);
+    })
+    .slice(0, CONFIG.intelligenceLimit);
+}
+
+function pushAuditList(lines, title, map) {
+  const rows = sortedRepeatedRows(map);
+  lines.push("");
+  lines.push(`${title}:`);
+
+  if (!rows.length) {
+    lines.push("  none");
+    return;
+  }
+
+  for (const key of rows) {
+    lines.push(`  ${key} (${fmt(map[key])})`);
+  }
+}
+
+function historyAudit() {
+  const rows = getHistoryStore();
+  const failures = {};
+  const stale = {};
+  const limitBlocks = {};
+  const blocked = {};
+  const resources = {};
+  const rooms = {};
+  let healthy = 0;
+
+  for (const entry of rows) {
+    const descriptor = [
+      entry.roomName || "unknown",
+      entry.resourceType || "unknown",
+      entry.type || "plan",
+    ].join(" ");
+    const blockers = entry.blockers && entry.blockers.length
+      ? entry.blockers
+      : entry.reason && entry.reason !== "none"
+        ? [entry.reason]
+        : ["unspecified"];
+
+    if (entry.status === "failed") {
+      incrementCount(failures, `${entry.resourceType || "unknown"} ${entry.type || "plan"} plan`);
+    }
+    if (entry.status === "stale") {
+      incrementCount(stale, descriptor);
+    }
+    if (entry.status === "limit_blocked") {
+      for (const blocker of blockers) incrementCount(limitBlocks, blocker);
+    }
+    if (entry.status === "blocked") {
+      for (const blocker of blockers) incrementCount(blocked, blocker);
+    }
+    if (entry.status === "executed" || entry.status === "partial") {
+      healthy += 1;
+      incrementCount(resources, entry.resourceType || "unknown");
+      incrementCount(rooms, entry.roomName || "unknown");
+    }
+  }
+
+  const lines = [`${CONFIG.logPrefix} History Audit`];
+  pushAuditList(lines, "Repeated Failures", failures);
+  pushAuditList(lines, "Repeated Limit Blocks", limitBlocks);
+  pushAuditList(lines, "Repeated Stale Plans", stale);
+  pushAuditList(lines, "Repeated Blocked Executions", blocked);
+  pushAuditList(lines, "Top Traded Resources", resources);
+  pushAuditList(lines, "Most Active Rooms", rooms);
+  lines.push("");
+  lines.push(`Healthy Executions: ${fmt(healthy)}`);
+
+  return printBlock(lines);
+}
+
+function clearHistory(mode) {
+  const input = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  const supported = ["failed", "blocked", "stale", "deleted", "all"];
+
+  if (supported.indexOf(input) === -1) {
+    return printLine(`${CONFIG.logPrefix} Invalid history clear mode: ${mode}`);
+  }
+
+  const history = getHistoryStore();
+  const plans = getPlanStore();
+  const before = history.length;
+
+  if (input === "all") {
+    history.splice(0, history.length);
+  } else {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const entry = history[i];
+      const deletedPlan =
+        entry.planId &&
+        plans[entry.planId] &&
+        plans[entry.planId].status === "deleted";
+      const remove =
+        (input === "failed" && entry.status === "failed") ||
+        (input === "blocked" && (entry.status === "blocked" || entry.status === "limit_blocked")) ||
+        (input === "stale" && entry.status === "stale") ||
+        (input === "deleted" && deletedPlan);
+
+      if (remove) history.splice(i, 1);
+    }
+  }
+
+  return printLine(`${CONFIG.logPrefix} History entries removed: ${fmt(before - history.length)}.`);
+}
+
+function setHistoryLimit(limit) {
+  const parsed = Math.floor(Number(limit));
+
+  if (!Number.isFinite(parsed) || parsed < MIN_HISTORY_LIMIT) {
+    return printLine(`${CONFIG.logPrefix} Invalid history limit: ${limit}. Minimum is ${MIN_HISTORY_LIMIT}.`);
+  }
+
+  const memory = getMemoryRoot();
+  memory.historyLimit = parsed;
+  trimHistoryToLimit();
+
+  return printLine(`${CONFIG.logPrefix} History limit set to ${fmt(parsed)}.`);
+}
+
+function historyLimit() {
+  return printLine(`${CONFIG.logPrefix} History Limit: ${fmt(getHistoryLimitValue())}`);
 }
 
 function clearPlan(planId) {
@@ -2002,6 +2206,11 @@ function help() {
     "  market.history(resource)",
     "  market.history(roomName)",
     '  market.history("all")',
+    "  market.historySummary()",
+    "  market.historyAudit()",
+    "  market.clearHistory(mode)",
+    "  market.setHistoryLimit(limit)",
+    "  market.historyLimit()",
     "",
     "[MARKET] Manual trading:",
     "  market.buy(resource, amount, roomName)",
@@ -2912,6 +3121,11 @@ function registerGlobals() {
     executePlan,
     execute: executePlan,
     history,
+    historySummary,
+    historyAudit,
+    clearHistory,
+    setHistoryLimit,
+    historyLimit,
     buy,
     sell,
 
@@ -2971,6 +3185,11 @@ module.exports = {
   executePlan,
   execute: executePlan,
   history,
+  historySummary,
+  historyAudit,
+  clearHistory,
+  setHistoryLimit,
+  historyLimit,
   buy,
   sell,
 

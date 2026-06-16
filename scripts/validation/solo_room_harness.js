@@ -8197,6 +8197,197 @@ function runMarketApprovalGatedExecutionScenario() {
   );
 }
 
+function buildMarketHistoryEntry(overrides) {
+  const settings = overrides || {};
+  const status = settings.status || "executed";
+  const type = settings.type || "sell";
+  const resourceType = settings.resourceType || "H";
+  const roomName = settings.roomName || "W42N9";
+  const executedAmount = settings.executedAmount !== undefined
+    ? settings.executedAmount
+    : status === "executed" || status === "partial"
+      ? 1000
+      : 0;
+  const creditsDelta = settings.creditsDelta !== undefined
+    ? settings.creditsDelta
+    : type === "buy"
+      ? -350
+      : 720;
+
+  return {
+    id: settings.id || `mx_seed_${Game.time}_${settings.executedAt || 0}_${status}`,
+    planId: settings.planId || `plan_${resourceType}_${roomName}_${status}`,
+    type: type,
+    roomName: roomName,
+    resourceType: resourceType,
+    requestedAmount: settings.requestedAmount || 1000,
+    plannedExecutableAmount: settings.plannedExecutableAmount || 1000,
+    finalExecutableAmount: settings.finalExecutableAmount || 1000,
+    executedAmount: executedAmount,
+    orderId: settings.orderId || "seed_order",
+    price: settings.price || 0.72,
+    effectivePrice: settings.effectivePrice || 0.7,
+    creditsDelta: creditsDelta,
+    energyCost: settings.energyCost || 100,
+    resultCode: settings.resultCode !== undefined ? settings.resultCode : status === "failed" ? ERR_BUSY : OK,
+    resultLabel: settings.resultLabel || (status === "failed" ? "ERR_BUSY" : "OK"),
+    status: status,
+    reason: settings.reason || "none",
+    blockers: settings.blockers || [],
+    createdAt: settings.createdAt || Game.time,
+    executedAt: settings.executedAt || Game.time,
+  };
+}
+
+function seedMarketHistory() {
+  Memory.consoleTools = {
+    market: {
+      history: [
+        buildMarketHistoryEntry({ id: "hist_exec_1", status: "executed", executedAt: 1, creditsDelta: 720, energyCost: 100 }),
+        buildMarketHistoryEntry({ id: "hist_exec_2", status: "executed", executedAt: 2, resourceType: "Z", roomName: "W42N8", creditsDelta: 350, energyCost: 50 }),
+        buildMarketHistoryEntry({ id: "hist_partial_1", status: "partial", executedAt: 3, creditsDelta: -175, energyCost: 25, type: "buy" }),
+        buildMarketHistoryEntry({ id: "hist_failed_1", status: "failed", executedAt: 4, reason: "ERR_BUSY", resultLabel: "ERR_BUSY" }),
+        buildMarketHistoryEntry({ id: "hist_failed_2", status: "failed", executedAt: 5, reason: "ERR_BUSY", resultLabel: "ERR_BUSY" }),
+        buildMarketHistoryEntry({ id: "hist_blocked_1", status: "blocked", executedAt: 6, reason: "terminal energy too low", blockers: ["terminal energy too low"] }),
+        buildMarketHistoryEntry({ id: "hist_blocked_2", status: "blocked", executedAt: 7, reason: "terminal energy too low", blockers: ["terminal energy too low"] }),
+        buildMarketHistoryEntry({ id: "hist_stale_1", status: "stale", executedAt: 8, reason: "order missing", blockers: ["order missing"] }),
+        buildMarketHistoryEntry({ id: "hist_stale_2", status: "stale", executedAt: 9, reason: "order missing", blockers: ["order missing"] }),
+        buildMarketHistoryEntry({ id: "hist_limit_1", status: "limit_blocked", executedAt: 10, reason: "maxSellAmount", blockers: ["maxSellAmount"] }),
+        buildMarketHistoryEntry({ id: "hist_limit_2", status: "limit_blocked", executedAt: 11, reason: "maxSellAmount", blockers: ["maxSellAmount"] }),
+      ],
+      plans: {
+        deleted_plan: { id: "deleted_plan", status: "deleted" },
+      },
+    },
+  };
+  Memory.consoleTools.market.history.push(
+    buildMarketHistoryEntry({ id: "hist_deleted_1", status: "blocked", planId: "deleted_plan", executedAt: 12 }),
+  );
+  Memory.ops = { logistics: { requests: {} } };
+}
+
+function runMarketHistoryGovernanceScenario() {
+  seedMarketHistory();
+  const requestCountBefore = opsLogisticsManager.listRequests().length;
+  const dealTracker = installFakeMarket([]);
+  const sendsBefore = currentRuntime.terminalSends.length;
+
+  let captured = captureConsoleLines(function () {
+    return marketConsole.help();
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("market.historySummary()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.historyAudit()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.clearHistory(mode)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.setHistoryLimit(limit)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.historyLimit()") !== -1; }),
+    `market.help should include Layer 3.7 history governance commands, got ${captured.lines.join(" / ")}`,
+  );
+
+  let report = marketConsole.historySummary();
+  assert(typeof report === "string", "market.historySummary should return a printable string");
+  assert(report.indexOf("Entries: 12") !== -1, `historySummary should count total entries, got ${report}`);
+  assert(report.indexOf("Executed: 2") !== -1, `historySummary should count executed entries, got ${report}`);
+  assert(report.indexOf("Partial: 1") !== -1, `historySummary should count partial entries, got ${report}`);
+  assert(report.indexOf("Failed: 2") !== -1, `historySummary should count failed entries, got ${report}`);
+  assert(report.indexOf("Blocked: 3") !== -1, `historySummary should count blocked entries, got ${report}`);
+  assert(report.indexOf("Stale: 2") !== -1, `historySummary should count stale entries, got ${report}`);
+  assert(report.indexOf("Limit Blocked: 2") !== -1, `historySummary should count limit-blocked entries, got ${report}`);
+  assert(report.indexOf("Credits Gained: 1,070") !== -1, `historySummary should total gained credits, got ${report}`);
+  assert(report.indexOf("Credits Spent: 175") !== -1, `historySummary should total spent credits, got ${report}`);
+  assert(report.indexOf("Energy Spent: 175") !== -1, `historySummary should total execution energy, got ${report}`);
+
+  report = marketConsole.historyAudit();
+  assert(typeof report === "string", "market.historyAudit should return a printable string");
+  assert(report.indexOf("Repeated Failures:") !== -1 && report.indexOf("H sell plan (2)") !== -1, `historyAudit should identify repeated failures, got ${report}`);
+  assert(report.indexOf("Repeated Limit Blocks:") !== -1 && report.indexOf("maxSellAmount (2)") !== -1, `historyAudit should identify repeated limit blocks, got ${report}`);
+  assert(report.indexOf("Repeated Stale Plans:") !== -1 && report.indexOf("W42N9 H sell (2)") !== -1, `historyAudit should identify repeated stale plans, got ${report}`);
+  assert(report.indexOf("Repeated Blocked Executions:") !== -1 && report.indexOf("terminal energy too low (2)") !== -1, `historyAudit should identify repeated blocked executions, got ${report}`);
+  assert(report.indexOf("Healthy Executions: 3") !== -1, `historyAudit should count healthy executions, got ${report}`);
+
+  report = marketConsole.historyLimit();
+  assert(report.indexOf("History Limit: 100") !== -1, `historyLimit should show default limit, got ${report}`);
+  report = marketConsole.setHistoryLimit(9);
+  assert(report.indexOf("Invalid history limit") !== -1, `setHistoryLimit should reject limits below minimum, got ${report}`);
+  report = marketConsole.setHistoryLimit("not-a-number");
+  assert(report.indexOf("Invalid history limit") !== -1, `setHistoryLimit should reject invalid values, got ${report}`);
+  report = marketConsole.setHistoryLimit(10);
+  assert(report.indexOf("History limit set to 10") !== -1, `setHistoryLimit should accept valid values, got ${report}`);
+  assert(Memory.consoleTools.market.historyLimit === 10, "setHistoryLimit should write historyLimit memory");
+  assert(Memory.consoleTools.market.history.length === 10, "setHistoryLimit should trim existing history to the new limit");
+  assert(!Memory.consoleTools.market.history.some(function (entry) { return entry.id === "hist_exec_1"; }), "history trimming should remove oldest entries first");
+
+  Memory.consoleTools.market.history = [];
+  for (let i = 0; i < 10; i++) {
+    Memory.consoleTools.market.history.push(buildMarketHistoryEntry({ id: `trim_seed_${i}`, executedAt: i + 1 }));
+  }
+  const trimRoom = buildOpsLogisticsRoom("VAL_MARKET_HISTORY_TRIM", {
+    tick: 1380,
+    storageStore: { energy: 250000, H: 10000 },
+    terminalStore: { energy: 12000, H: 5000 },
+  });
+  installFakeMarket([
+    {
+      id: "buy_H_history_trim",
+      type: ORDER_BUY,
+      resourceType: "H",
+      amount: 1000,
+      price: 0.72,
+      roomName: "W42N9",
+    },
+  ]);
+  report = marketConsole.planSell("H", 1000, trimRoom.name);
+  const trimPlanId = getMarketPlanIdFromReport(report);
+  marketConsole.setHistoryLimit(10);
+  Memory.consoleTools.market.history = [];
+  for (let i = 0; i < 10; i++) {
+    Memory.consoleTools.market.history.push(buildMarketHistoryEntry({ id: `trim_seed_${i}`, executedAt: i + 1 }));
+  }
+  const trimDeals = installFakeMarket([
+    {
+      id: "buy_H_history_trim",
+      type: ORDER_BUY,
+      resourceType: "H",
+      amount: 1000,
+      price: 0.72,
+      roomName: "W42N9",
+    },
+  ]);
+  report = marketConsole.executePlan(trimPlanId);
+  assert(trimDeals.length === 1, `executePlan should still record one deal during trim check, got ${trimDeals.length}`);
+  assert(Memory.consoleTools.market.history.length === 10, "executePlan should trim history above configured limit");
+  assert(!Memory.consoleTools.market.history.some(function (entry) { return entry.id === "trim_seed_0"; }), "executePlan history trim should remove oldest entry first");
+  assert(Memory.consoleTools.market.history.some(function (entry) { return entry.planId === trimPlanId; }), "executePlan should retain the newest history entry");
+
+  seedMarketHistory();
+  report = marketConsole.clearHistory("failed");
+  assert(report.indexOf("History entries removed: 2") !== -1, `clearHistory(failed) should remove failed entries, got ${report}`);
+  assert(!Memory.consoleTools.market.history.some(function (entry) { return entry.status === "failed"; }), "clearHistory(failed) should remove failed entries only");
+  report = marketConsole.clearHistory("blocked");
+  assert(report.indexOf("History entries removed: 5") !== -1, `clearHistory(blocked) should remove blocked and limit-blocked entries, got ${report}`);
+  assert(!Memory.consoleTools.market.history.some(function (entry) { return entry.status === "blocked" || entry.status === "limit_blocked"; }), "clearHistory(blocked) should remove blocked and limit_blocked entries");
+  report = marketConsole.clearHistory("stale");
+  assert(report.indexOf("History entries removed: 2") !== -1, `clearHistory(stale) should remove stale entries, got ${report}`);
+  assert(!Memory.consoleTools.market.history.some(function (entry) { return entry.status === "stale"; }), "clearHistory(stale) should remove stale entries");
+  seedMarketHistory();
+  report = marketConsole.clearHistory("deleted");
+  assert(report.indexOf("History entries removed: 1") !== -1, `clearHistory(deleted) should remove entries tied to deleted plans, got ${report}`);
+  assert(!Memory.consoleTools.market.history.some(function (entry) { return entry.planId === "deleted_plan"; }), "clearHistory(deleted) should remove deleted-plan history entries");
+  report = marketConsole.clearHistory("invalid");
+  assert(report.indexOf("Invalid history clear mode") !== -1, `clearHistory should reject unsupported modes, got ${report}`);
+  report = marketConsole.clearHistory("all");
+  assert(report.indexOf("History entries removed: 11") !== -1, `clearHistory(all) should remove all remaining entries, got ${report}`);
+  assert(Memory.consoleTools.market.history.length === 0, "clearHistory(all) should clear all history");
+
+  assert(dealTracker.length === 0, `history governance commands must not execute Game.market.deal, got ${dealTracker.length}`);
+  assert(dealTracker.createdOrders.length === 0, `history governance commands must not create market orders, got ${JSON.stringify(dealTracker.createdOrders)}`);
+  assert(currentRuntime.terminalSends.length === sendsBefore, `history governance commands must not send terminal resources, got ${currentRuntime.terminalSends.length - sendsBefore}`);
+  assert(
+    opsLogisticsManager.listRequests().length === requestCountBefore,
+    "history governance commands must not create ops logistics requests",
+  );
+}
+
 function buildEmpireMineralRooms(options) {
   const settings = options || {};
   const donor = buildRoomScenario("VAL_MINERAL_DONOR", {
@@ -10683,6 +10874,7 @@ function main() {
     ["market_intelligence_reports", runMarketIntelligenceReportsScenario],
     ["market_dry_run_planning", runMarketDryRunPlanningScenario],
     ["market_approval_gated_execution", runMarketApprovalGatedExecutionScenario],
+    ["market_history_governance", runMarketHistoryGovernanceScenario],
     ["hauler_execution_order_coverage", runHaulerExecutionOrderCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],

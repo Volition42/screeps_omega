@@ -141,6 +141,38 @@ market.history("all")
 
 `market.history()` shows recent entries. Resource and room filters show matching entries, with owned room names preferred when an input is ambiguous. `market.history("all")` shows more entries while staying bounded for console safety.
 
+## Layer 3.7 History Governance
+
+```js
+market.historySummary()
+market.historyAudit()
+market.clearHistory("failed")
+market.clearHistory("blocked")
+market.clearHistory("stale")
+market.clearHistory("deleted")
+market.clearHistory("all")
+market.historyLimit()
+market.setHistoryLimit(100)
+```
+
+Layer 3.7 adds operator-facing governance around `Memory.consoleTools.market.history`. It does not add new market authority and does not add autonomous behavior.
+
+`market.historySummary()` prints a concise rollup of total entries plus `executed`, `partial`, `failed`, `blocked`, `stale`, and `limit_blocked` counts. When execution entries include accounting fields, the summary also totals credits gained, credits spent, and terminal transaction energy spent.
+
+`market.historyAudit()` reviews recent history for repeated operational issues: repeated failures, repeated stale plans, repeated limit blocks, and repeated blocked executions. It also shows bounded healthy-execution context such as top traded resources and most active rooms when available.
+
+`market.clearHistory(mode)` physically removes history entries for soft retention cleanup. Supported modes are:
+
+```js
+market.clearHistory("failed")  // failed entries only
+market.clearHistory("blocked") // blocked and limit_blocked entries
+market.clearHistory("stale")   // stale entries only
+market.clearHistory("deleted") // entries tied to deleted plans when detectable
+market.clearHistory("all")     // all history entries
+```
+
+`market.historyLimit()` shows the current maximum history size. `market.setHistoryLimit(limit)` stores the maximum at `Memory.consoleTools.market.historyLimit`, rejects values below `10`, and trims oldest entries beyond the limit. New execution history entries are also trimmed oldest-first after they are appended. The default limit is `100`.
+
 ## No-Execution Boundary
 
 Market intelligence, planning, review, audit, and dry-run commands do not:
