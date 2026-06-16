@@ -142,6 +142,7 @@ CPU notes:
 
 - `DIRECTIVES.DEBUG_CPU_*` controls opt-in CPU debug output.
 - Runtime pressure can reduce HUD, directives, planning cadence, and remote scan work.
+- `ops.cpu(roomName)` prints the live room CPU report; see `docs/cpu-live-sampling.md` for the mature-room sampling workflow.
 - `ops.tickRate([sampleTicks])` measures wall-clock tick speed over a short sample and auto-prints `ms/tick`.
 
 ## Config And Setup
