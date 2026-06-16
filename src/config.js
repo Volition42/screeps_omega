@@ -530,6 +530,7 @@ module.exports = {
       AVERAGE_ALPHA: 0.2,
       TOP_SECTION_LIMIT: 6,
       MAX_ROOM_AGE: 1000,
+      PRESSURE_HISTORY_WINDOW: 25,
     },
 
     RUNTIME_POLICY: {

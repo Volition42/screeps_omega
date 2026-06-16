@@ -725,6 +725,18 @@ function getCpuSummary(room) {
     current: roomCpu ? roomCpu.current : last.cpu.used,
     limit: last.cpu.limit,
     average: roomCpu ? roomCpu.average : averages.cpuUsed || last.cpu.used,
+    peak:
+      roomCpu && typeof roomCpu.peak === "number"
+        ? roomCpu.peak
+        : Memory.stats.max && typeof Memory.stats.max.cpuUsed === "number"
+          ? Memory.stats.max.cpuUsed
+          : last.cpu.used,
+    minimum:
+      roomCpu && typeof roomCpu.minimum === "number"
+        ? roomCpu.minimum
+        : roomCpu
+          ? roomCpu.current
+          : last.cpu.used,
     globalCurrent: last.cpu.used,
     globalAverage: averages.cpuUsed || last.cpu.used,
     bucket: last.cpu.bucket,
@@ -738,6 +750,11 @@ function getCpuSummary(room) {
     skipDirectives: !!runtime.skipDirectives,
     skipHud: !!runtime.skipHud,
     sections: roomCpu && roomCpu.sections ? roomCpu.sections : [],
+    hotspots: roomCpu && roomCpu.hotspots ? roomCpu.hotspots : [],
+    pressureCounts:
+      roomCpu && roomCpu.pressureCounts
+        ? roomCpu.pressureCounts
+        : null,
     scheduler: roomCpu && roomCpu.scheduler ? roomCpu.scheduler : null,
     tick: roomCpu ? roomCpu.tick : last.tick,
     creepCount:
@@ -763,6 +780,87 @@ function getCpuTopSectionLimit() {
 
 function formatCpuValue(value) {
   return typeof value === "number" ? value.toFixed(3) : "--";
+}
+
+function formatCpuRatio(value) {
+  return typeof value === "number" && isFinite(value) ? value.toFixed(3) : "--";
+}
+
+function getRemoteSiteCount(room) {
+  const roomMemory =
+    Memory.rooms && Memory.rooms[room.name] ? Memory.rooms[room.name] : null;
+  if (!roomMemory) return null;
+
+  const remoteSites = roomMemory.remoteSites || roomMemory.remoteMiningSites;
+  if (Array.isArray(remoteSites)) return remoteSites.length;
+  if (remoteSites && typeof remoteSites === "object") {
+    return Object.keys(remoteSites).length;
+  }
+
+  return null;
+}
+
+function formatTrendLine(cpu) {
+  return (
+    `Trend cur ${formatCpuValue(cpu.current)} | avg ${formatCpuValue(cpu.average)} | ` +
+    `peak ${formatCpuValue(cpu.peak)} | min ${formatCpuValue(cpu.minimum)}`
+  );
+}
+
+function formatPressureHistoryLine(cpu) {
+  const counts = cpu.pressureCounts || {};
+
+  return (
+    `Pressure history normal ${formatCpuRatio(counts.normal)} | ` +
+    `tight ${formatCpuRatio(counts.tight)} | critical ${formatCpuRatio(counts.critical)}`
+  );
+}
+
+function formatCpuEfficiencyLine(cpu, sourceCount, remoteSiteCount) {
+  const creepCount =
+    typeof cpu.creepCount === "number" && cpu.creepCount > 0
+      ? cpu.creepCount
+      : null;
+  const perCreep = creepCount ? cpu.average / creepCount : null;
+  const perRemote =
+    typeof remoteSiteCount === "number" && remoteSiteCount > 0
+      ? cpu.average / remoteSiteCount
+      : null;
+  const perSource =
+    typeof sourceCount === "number" && sourceCount > 0
+      ? cpu.average / sourceCount
+      : null;
+
+  return (
+    `Efficiency creep ${formatCpuRatio(perCreep)} | ` +
+    `remote ${formatCpuRatio(perRemote)} | source ${formatCpuRatio(perSource)}`
+  );
+}
+
+function formatCpuHotspotLines(cpu) {
+  const hotspots = cpu.hotspots && cpu.hotspots.length > 0
+    ? cpu.hotspots
+    : (cpu.sections || [])
+        .filter(function (row) {
+          return typeof row.average === "number";
+        })
+        .slice()
+        .sort(function (a, b) {
+          if (b.average !== a.average) return b.average - a.average;
+          return String(a.label).localeCompare(String(b.label));
+        });
+  const limit = Math.min(hotspots.length, getCpuTopSectionLimit());
+  const lines = [];
+
+  if (limit === 0) return ["Hotspots unavailable"];
+
+  lines.push("Hotspots by avg");
+  for (let i = 0; i < limit; i++) {
+    const row = hotspots[i];
+    lines.push(`${row.label.padEnd(24, ".")} ${formatCpuValue(row.average)}`);
+  }
+
+  return lines;
 }
 
 function formatCpuSectionLines(cpu) {
@@ -1152,6 +1250,7 @@ module.exports = {
     const infrastructure = summaryState.infrastructure || {};
     const roleCounts = summaryState.roleCounts || {};
     const sources = summaryState.sources || [];
+    const remoteSiteCount = getRemoteSiteCount(room);
     const shortBuild = formatBuildLine(summaryState.phase, buildStatus, 3);
     const progressLabel = progress && progress.targetLevel
       ? `RCL ${progress.level} ${progress.pct}%`
@@ -1249,9 +1348,14 @@ module.exports = {
         cpu.available
           ? `Room current ${cpu.current.toFixed(3)} | Avg ${cpu.average.toFixed(3)} | Global ${cpu.globalCurrent.toFixed(2)}/${cpu.limit} | Bucket ${cpu.bucket}`
           : "CPU stats unavailable",
+        cpu.available ? formatTrendLine(cpu) : "Trend unavailable",
         cpu.available
           ? `Pressure ${cpu.pressure} | Phase ${cpu.phase || summaryState.phase} | RCL ${cpu.rcl || (room.controller ? room.controller.level : 0)} | Creeps ${cpu.creepCount !== null ? cpu.creepCount : Object.keys(Game.creeps).length}`
           : "Pressure unknown",
+        cpu.available ? formatPressureHistoryLine(cpu) : "Pressure history unavailable",
+        cpu.available
+          ? formatCpuEfficiencyLine(cpu, sources.length, remoteSiteCount)
+          : "Efficiency unavailable",
         cpu.available
           ? `Shedding think x${cpu.thinkIntervalMultiplier} | build x${cpu.constructionIntervalMultiplier} | advanced every ${cpu.advancedOpsInterval}t`
           : "Room scale off | advanced every 1t",
@@ -1263,6 +1367,7 @@ module.exports = {
     };
 
     if (cpu.available) {
+      Array.prototype.push.apply(sections.cpu, formatCpuHotspotLines(cpu));
       Array.prototype.push.apply(sections.cpu, formatCpuSectionLines(cpu));
     }
 

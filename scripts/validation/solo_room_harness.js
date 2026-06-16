@@ -10534,6 +10534,146 @@ function runCpuSoftLimitScenario() {
   }
 }
 
+function runOpsCpuReportShapeScenario() {
+  const room = buildRoomScenario("VAL_CPU_REPORT", {
+    tick: 1075,
+    controllerLevel: 6,
+    spawnEnergy: 1300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "cpuWorker", role: "worker", x: 24, y: 25 },
+      { name: "cpuHauler", role: "hauler", x: 23, y: 25 },
+    ],
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  addRcl4StableStructures(room);
+
+  Memory.stats = {
+    last: {
+      tick: Game.time,
+      cpu: {
+        used: 12.34,
+        tickCost: 12.34,
+        limit: 20,
+        tickLimit: 500,
+        bucket: 9876,
+      },
+      creepCount: 2,
+      roomCount: 1,
+      pressure: "tight",
+    },
+    averages: { cpuUsed: 10.5 },
+    max: { cpuUsed: 14.75 },
+    runtime: {
+      pressure: "tight",
+      thinkIntervalMultiplier: 2,
+      constructionIntervalMultiplier: 3,
+      advancedOpsInterval: 5,
+      roomScaleActive: true,
+      skipDirectives: false,
+      skipHud: true,
+    },
+    rooms: {},
+  };
+  Memory.stats.rooms[room.name] = {
+    cpu: {
+      tick: Game.time,
+      current: 4.321,
+      average: 3.21,
+      peak: 5.432,
+      minimum: 2.1,
+      pressure: "tight",
+      pressureCounts: { normal: 0.6, tight: 0.3, critical: 0.1 },
+      creepCount: 2,
+      phase: "logistics",
+      rcl: 6,
+      sections: [
+        {
+          label: "spawn_manager",
+          current: 1.2,
+          average: 1.1,
+          lastTick: Game.time,
+        },
+        {
+          label: "creep_manager",
+          current: 2.3,
+          average: 1.8,
+          lastTick: Game.time,
+        },
+      ],
+      hotspots: [
+        { label: "creep_manager", average: 1.8 },
+        { label: "spawn_manager", average: 1.1 },
+      ],
+      scheduler: {
+        skippedThisTick: 1,
+        tasks: [
+          {
+            key: "room.cpu.construction",
+            lastSkipReason: "budget",
+            lastSkipped: Game.time,
+          },
+        ],
+      },
+    },
+  };
+
+  ops.registerGlobals();
+  assert(typeof global.ops.cpu === "function", "ops.cpu should be registered");
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.cpu(room.name);
+  });
+  assert(
+    typeof captured.result === "string",
+    `ops.cpu should return a printable string, got ${typeof captured.result}`,
+  );
+  assert(
+    captured.result === `[OPS][${room.name}][CPU] report generated`,
+    `ops.cpu should return a concise CPU status, got ${captured.result}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("Room current 4.321") !== -1 && line.indexOf("Avg 3.210") !== -1;
+    }),
+    `CPU report should include room current/average CPU, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return (
+        line.indexOf("Pressure tight") !== -1 &&
+        line.indexOf("Phase logistics") !== -1 &&
+        line.indexOf("RCL 6") !== -1 &&
+        line.indexOf("Creeps 2") !== -1
+      );
+    }),
+    `CPU report should include pressure/phase/RCL/creeps, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) { return line === "Hotspots by avg"; }) &&
+      captured.lines.some(function (line) { return line.indexOf("creep_manager") !== -1 && line.indexOf("1.800") !== -1; }),
+    `CPU report should include hotspot section lines, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "cpu");
+  });
+  assert(
+    typeof captured.result === "string",
+    `ops.room(room, "cpu") should return a printable string, got ${typeof captured.result}`,
+  );
+  assert(
+    captured.result === `[OPS][${room.name}][CPU] report generated`,
+    `ops.room(room, "cpu") should return a concise CPU status, got ${captured.result}`,
+  );
+}
+
 function runSchedulerStaggerScenario() {
   resetRuntime(1000);
 
@@ -10967,6 +11107,7 @@ function main() {
     ["expansion_threat_retreat", runExpansionThreatRetreatScenario],
     ["hud_config_controls", runHudConfigControlsScenario],
     ["cpu_soft_limit", runCpuSoftLimitScenario],
+    ["ops_cpu_report_shape", runOpsCpuReportShapeScenario],
     ["cpu_room_scale", runCpuRoomScaleScenario],
     ["scheduler_stagger", runSchedulerStaggerScenario],
     ["scheduler_budget", runSchedulerBudgetScenario],

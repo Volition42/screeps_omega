@@ -693,6 +693,10 @@ module.exports = {
 
     printBlock(lines);
 
+    if (parsed.section === "cpu") {
+      return `[OPS][${room.name}][CPU] report generated`;
+    }
+
     return {
       room: room.name,
       section: parsed.section,

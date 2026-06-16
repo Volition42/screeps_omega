@@ -110,6 +110,11 @@ module.exports = {
         typeof settings.MAX_ROOM_AGE === "number" && settings.MAX_ROOM_AGE > 0
           ? settings.MAX_ROOM_AGE
           : 1000,
+      pressureHistoryWindow:
+        typeof settings.PRESSURE_HISTORY_WINDOW === "number" &&
+        settings.PRESSURE_HISTORY_WINDOW > 1
+          ? Math.floor(settings.PRESSURE_HISTORY_WINDOW)
+          : 25,
     };
   },
 
@@ -185,6 +190,18 @@ module.exports = {
       total,
       settings.averageAlpha,
     );
+    const peak = this.updateRollingPeak(
+      previous ? previous.peak : null,
+      total,
+      settings.pressureHistoryWindow,
+    );
+    const minimum = this.updateRollingMinimum(
+      previous ? previous.minimum : null,
+      total,
+      settings.pressureHistoryWindow,
+    );
+    const pressure =
+      runtime && runtime.pressure ? runtime.pressure : "normal";
     const sectionRows = this.buildRoomSectionCpuRows(
       roomName,
       sections,
@@ -202,11 +219,19 @@ module.exports = {
       tick: snapshot.tick,
       current: Number(total.toFixed(3)),
       average: average,
-      pressure: runtime && runtime.pressure ? runtime.pressure : "normal",
+      peak: peak,
+      minimum: minimum,
+      pressure: pressure,
+      pressureCounts: this.updatePressureCounts(
+        previous ? previous.pressureCounts : null,
+        pressure,
+        settings.pressureHistoryWindow,
+      ),
       creepCount: this.countRoomCreeps(liveRoom),
       phase: liveRoom ? liveRoom.phase : null,
       rcl: liveRoom ? liveRoom.controllerLevel : null,
       sections: sectionRows,
+      hotspots: this.buildRoomHotspots(sectionRows, settings),
       scheduler: scheduler,
     };
   },
@@ -267,6 +292,83 @@ module.exports = {
     }
 
     return Number((previous * (1 - alpha) + value * alpha).toFixed(3));
+  },
+
+  updateRollingPeak(previous, current, window) {
+    const value = typeof current === "number" && isFinite(current) ? current : 0;
+    if (typeof previous !== "number" || !isFinite(previous)) {
+      return Number(value.toFixed(3));
+    }
+    if (value >= previous) return Number(value.toFixed(3));
+
+    const alpha = 1 / Math.max(2, window || 25);
+    return Number((previous * (1 - alpha) + value * alpha).toFixed(3));
+  },
+
+  updateRollingMinimum(previous, current, window) {
+    const value = typeof current === "number" && isFinite(current) ? current : 0;
+    if (typeof previous !== "number" || !isFinite(previous)) {
+      return Number(value.toFixed(3));
+    }
+    if (value <= previous) return Number(value.toFixed(3));
+
+    const alpha = 1 / Math.max(2, window || 25);
+    return Number((previous * (1 - alpha) + value * alpha).toFixed(3));
+  },
+
+  updatePressureCounts(previous, pressure, window) {
+    const counts = {
+      normal: 0,
+      tight: 0,
+      critical: 0,
+    };
+    const decay = (Math.max(2, window || 25) - 1) / Math.max(2, window || 25);
+
+    for (const key in counts) {
+      if (!Object.prototype.hasOwnProperty.call(counts, key)) continue;
+      const previousValue =
+        previous && typeof previous[key] === "number" && isFinite(previous[key])
+          ? previous[key]
+          : 0;
+      counts[key] = previousValue * decay;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(counts, pressure)) {
+      pressure = "normal";
+    }
+    counts[pressure] += 1;
+
+    for (const key in counts) {
+      if (!Object.prototype.hasOwnProperty.call(counts, key)) continue;
+      counts[key] = Number(counts[key].toFixed(1));
+    }
+
+    return counts;
+  },
+
+  buildRoomHotspots(sectionRows, settings) {
+    const limit =
+      settings && typeof settings.TOP_SECTION_LIMIT === "number"
+        ? Math.max(1, settings.TOP_SECTION_LIMIT)
+        : 6;
+    const rows = (sectionRows || [])
+      .filter(function (row) {
+        return typeof row.average === "number";
+      })
+      .slice()
+      .sort(function (a, b) {
+        if (b.average !== a.average) return b.average - a.average;
+        return String(a.label).localeCompare(String(b.label));
+      })
+      .slice(0, limit);
+
+    return rows.map(function (row) {
+      return {
+        label: row.label,
+        average: row.average,
+        current: typeof row.current === "number" ? row.current : null,
+      };
+    });
   },
 
   countRoomCreeps(liveRoom) {
