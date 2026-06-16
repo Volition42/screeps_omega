@@ -93,7 +93,7 @@ market.executionDryRun("ms_223455_H_W42N9")
 market.clearExecutionLimit("maxSellAmount")
 ```
 
-Layer 3.5 prepares the execution preflight model without exposing an execution command. `market.executionStatus()` reports that the execution engine is disabled, actual deal execution is unavailable, dry-run preflight is available, limits are available, and history schema metadata is prepared for a later phase.
+Layer 3.5 prepared the execution preflight model before approval-gated execution existed. In the completed Layer 3 system, `market.executionStatus()` reports the manual approval-gated engine, confirms dry-run preflight and limits, and points operators to `market.executionDryRun(planId)` followed by `market.executePlan(planId)` when they intentionally approve a saved plan.
 
 `market.executionDryRun(planId)` reloads a saved plan from `Memory.consoleTools.market.plans`, re-checks the selected order and current room terminal state, applies configured execution limits, calculates the final executable amount, estimates credits and terminal transaction energy, and returns `READY`, `BLOCKED`, `STALE`, or `LIMIT_BLOCKED`. The report includes plan id, type, resource, room, requested amount, planned and final executable amounts, selected order, price, effective price when available, estimated credits, estimated transaction energy, blockers, limit blockers, and `No execution performed.`
 
@@ -112,7 +112,7 @@ Execution limits live under `Memory.consoleTools.market.executionLimits` and def
 
 Use `market.executionLimits()` to print current limits and defaults, `market.setExecutionLimit(name, value)` to set a numeric limit, and `market.clearExecutionLimit(name)` to reset one limit to its default. `maxBuyEffectivePrice` may be set to `null` or `"null"` to keep it unlimited. Short aliases are available as `market.limits()`, `market.setLimit(name, value)`, and `market.clearLimit(name)`.
 
-Layer 3.5 itself does not execute. It does not call `Game.market.deal`, does not create market orders, does not create ops logistics requests, and does not call `terminal.send`.
+Layer 3.5 preflight itself does not execute. It does not call `Game.market.deal`, does not create market orders, does not create ops logistics requests, and does not call `terminal.send`.
 
 ## Layer 3.6 Approval-Gated Plan Execution and History
 
@@ -188,3 +188,52 @@ Market intelligence, planning, review, audit, and dry-run commands do not:
 Dry-run planning and plan review commands follow the same safety boundary. They may read market orders, credits, and terminal state, and they may write plan objects to `Memory.consoleTools.market.plans` by saving, reviewing, updating status, or soft-deleting plans. They do not move resources, create ops logistics requests, send terminal resources, create orders, or execute deals.
 
 Use existing manual commands when you choose to act on a report: `ops.clearTerminal`, `ops.fillTerminal`, `market.sellOptions`, `market.buyOptions`, `market.planSell`, `market.planBuy`, `market.executionDryRun`, and `market.executePlan`. Legacy direct manual `market.buy` and `market.sell` behavior is unchanged by Layer 3.6.
+
+## Layer 3.8 Completion Review
+
+Layer 3 is complete as an operator-driven market workflow. It provides visibility, intelligence, planning, review, audit, execution preflight, approval-gated execution, bounded execution history, and history governance.
+
+Current operator surface:
+
+```js
+market.stock()
+market.needs()
+market.surplus()
+market.stage(resource, amount, roomName)
+market.unstage(resource, amount, roomName)
+market.requests()
+market.cancel(requestId)
+market.readiness()
+market.opportunities()
+market.recommendations()
+market.planSell(resource, amount, roomName)
+market.planBuy(resource, amount, roomName)
+market.plans()
+market.plan(planId)
+market.planSummary()
+market.planReview(planId)
+market.planAudit()
+market.executionStatus()
+market.executionDryRun(planId)
+market.executionLimits()
+market.executePlan(planId)
+market.history()
+market.historySummary()
+market.historyAudit()
+market.clearHistory(mode)
+market.historyLimit()
+market.clearPlan(planId)
+market.clearPlan("all")
+```
+
+Deprecated compatibility aliases remain documented in `market.help()` and route to current commands:
+
+```js
+market.deletePlan(planId) // use market.clearPlan(planId)
+market.removePlan(planId) // use market.clearPlan(planId)
+market.clearPlans()       // use market.clearPlan("all")
+```
+
+Execution remains manual and approval-gated. Only `market.executePlan(planId)` may call `Game.market.deal`, and it does so only after re-running current-state preflight and configured limits. Layer 3 does not automate buying, selling, balancing, scheduling, recurring execution, arbitrage, market making, order creation, order repricing, or terminal sends.
+
+Layer 4 should remain separate from this completed layer. Logical Layer 4 themes would be automation policy, scheduling, recurring execution, portfolio management, cross-room balancing, and higher-level market operations strategy.

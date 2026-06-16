@@ -7682,6 +7682,51 @@ function getMarketPlanIdFromReport(report) {
   return match[1];
 }
 
+function assertLayer3CompletionHelpSurface() {
+  const captured = captureConsoleLines(function () {
+    return marketConsole.help();
+  });
+  const requiredHelpLines = [
+    "market.stock()",
+    "market.needs()",
+    "market.surplus()",
+    "market.stage(resource, amount, roomName)",
+    "market.unstage(resource, amount, roomName)",
+    "market.requests()",
+    "market.cancel(requestId)",
+    "market.readiness()",
+    "market.opportunities()",
+    "market.recommendations()",
+    "market.planSell(resource, amount, roomName)",
+    "market.planBuy(resource, amount, roomName)",
+    "market.plans()",
+    "market.plan(planId)",
+    "market.planSummary()",
+    "market.planReview(planId)",
+    "market.planAudit()",
+    "market.executionStatus()",
+    "market.executionDryRun(planId)",
+    "market.executionLimits()",
+    "market.executePlan(planId)",
+    "market.history()",
+    "market.historySummary()",
+    "market.historyAudit()",
+    "market.clearHistory(mode)",
+    "market.historyLimit()",
+    "market.clearPlan(planId)",
+    'market.clearPlan("all")',
+    "market.deletePlan(planId) [deprecated",
+    "market.removePlan(planId) [deprecated",
+    "market.clearPlans() [deprecated",
+  ];
+  const missing = requiredHelpLines.filter(function (expected) {
+    return !captured.lines.some(function (line) {
+      return line.indexOf(expected) !== -1;
+    });
+  });
+  assert(missing.length === 0, `market.help is missing Layer 3 completion commands: ${missing.join(", ")}`);
+}
+
 function runMarketDryRunPlanningScenario() {
   Memory.consoleTools = { market: { plans: {} } };
   Memory.ops = { logistics: { requests: {} } };
@@ -7717,6 +7762,8 @@ function runMarketDryRunPlanningScenario() {
   ];
   installPlanMarket(readyOrders);
   const requestCountBefore = opsLogisticsManager.listRequests().length;
+
+  assertLayer3CompletionHelpSurface();
 
   let captured = captureConsoleLines(function () {
     return marketConsole.help();
