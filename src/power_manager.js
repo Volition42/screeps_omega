@@ -22,6 +22,7 @@ Important Notes:
 */
 
 const config = require("config");
+const opsLogisticsManager = require("ops_logistics_manager");
 
 const READINESS = {
   READY: "READY",
@@ -49,6 +50,9 @@ const REFILL = {
   BLOCKED_THREAT: "REFILL_BLOCKED_THREAT",
   BLOCKED_CPU_PRESSURE: "REFILL_BLOCKED_CPU_PRESSURE",
   REQUEST_PENDING: "REFILL_REQUEST_PENDING",
+  REQUEST_CREATED: "REFILL_REQUEST_CREATED",
+  BLOCKED_DISABLED: "REFILL_BLOCKED_DISABLED",
+  BLOCKED_RCL: "REFILL_BLOCKED_RCL",
 };
 
 module.exports = {
@@ -119,6 +123,17 @@ module.exports = {
       result: null,
     });
 
+    this.runRefill(room, state, settings, mem, {
+      readiness: readiness,
+      powerSpawn: powerSpawn,
+      powerSpawnEnergy: powerSpawnEnergy,
+      powerSpawnPower: powerSpawnPower,
+      storageEnergy: storageEnergy,
+      storagePower: storagePower,
+      terminalEnergy: terminalEnergy,
+      terminalPower: terminalPower,
+    });
+
     if (readiness !== READINESS.READY) {
       return;
     }
@@ -151,6 +166,11 @@ module.exports = {
         PROCESS_UNDER_CRITICAL_CPU: false,
         POWER_SPAWN_ENERGY_TARGET: 5000,
         POWER_SPAWN_POWER_TARGET: 100,
+        REFILL_ENABLED: true,
+        REFILL_BATCH_ENERGY: 5000,
+        REFILL_BATCH_POWER: 100,
+        REFILL_INTERVAL: 25,
+        REFILL_PRIORITY: 64,
         PROCESS_POWER_COST: 1,
         PROCESS_ENERGY_COST: 50,
         REPORT_INTERVAL: 100,
@@ -208,6 +228,18 @@ module.exports = {
     mem.refillBlockedReason = refill.blockedReason;
     mem.refillPendingRequests = refill.pendingRequests;
     mem.refillPendingSummary = refill.pendingSummary;
+    mem.refillLastSource = status.refillLastSource || null;
+    mem.refillLastResource = status.refillLastResource || null;
+    mem.refillLastRequestTick =
+      typeof status.refillLastRequestTick === "number"
+        ? status.refillLastRequestTick
+        : mem.refillLastRequestTick || null;
+    mem.refillLastRequestId = status.refillLastRequestId || mem.refillLastRequestId || null;
+    mem.refillLastResult = status.refillLastResult || mem.refillLastResult || null;
+    mem.refillLastCreated =
+      typeof status.refillLastCreated === "boolean"
+        ? status.refillLastCreated
+        : false;
   },
 
   getRefillStatus(status) {
@@ -342,6 +374,255 @@ module.exports = {
     return READINESS.READY;
   },
 
+  runRefill(room, state, settings, mem, status) {
+    const decision = this.buildRefillDecision(room, state, settings, status);
+
+    mem.refillPendingRequests = decision.pendingRequests;
+    mem.refillPendingSummary = decision.pendingSummary;
+    mem.refillLastCreated = false;
+
+    if (!decision.ok) {
+      mem.refillBlockedReason = decision.reason;
+      if (decision.state) mem.refillState = decision.state;
+      return;
+    }
+
+    if (!this.shouldRunRefill(mem, settings)) {
+      mem.refillBlockedReason = null;
+      return;
+    }
+
+    let created = 0;
+    const summaries = decision.pendingSummary === "none" ? [] : [decision.pendingSummary];
+
+    for (let i = 0; i < decision.requests.length; i++) {
+      const request = decision.requests[i];
+      const result = opsLogisticsManager.createMoveRequest(
+        request.resourceType,
+        request.amount,
+        room.name,
+        request.from,
+        "powerSpawn",
+        {
+          priority: settings.REFILL_PRIORITY,
+          reason: request.reason,
+        },
+      );
+
+      mem.refillLastResult = result.message;
+      if (result.ok) {
+        mem.refillLastRequestTick = Game.time;
+        mem.refillLastRequestId = result.request ? result.request.id : null;
+        mem.refillLastSource = request.from;
+        mem.refillLastResource = request.resourceType;
+        if (!result.skipped) {
+          created += 1;
+          mem.refillLastCreated = true;
+        }
+        if (result.request) {
+          summaries.push(
+            [
+              result.request.id,
+              result.request.resourceType,
+              result.request.from,
+              fmtEndpoint(result.request.to),
+              result.request.remaining || result.request.amount || 0,
+            ].join(" "),
+          );
+        }
+      } else {
+        mem.refillBlockedReason = result.message;
+      }
+    }
+
+    mem.refillPendingRequests = decision.pendingRequests + created;
+    mem.refillPendingSummary = summaries.length > 0 ? summaries.slice(0, 2).join("; ") : "none";
+    mem.refillState = created > 0 ? REFILL.REQUEST_CREATED : REFILL.REQUEST_PENDING;
+    mem.refillBlockedReason = null;
+  },
+
+  shouldRunRefill(mem, settings) {
+    const interval = Math.max(1, settings.REFILL_INTERVAL || 25);
+    return !mem.refillLastEval || Game.time - mem.refillLastEval >= interval
+      ? ((mem.refillLastEval = Game.time), true)
+      : false;
+  },
+
+  buildRefillDecision(room, state, settings, status) {
+    if (!settings.ENABLED) {
+      return this.blockRefill(REFILL.BLOCKED_DISABLED);
+    }
+    if (!settings.REFILL_ENABLED) {
+      return this.blockRefill(REFILL.BLOCKED_DISABLED);
+    }
+    if (!room.controller || room.controller.level < settings.MIN_RCL) {
+      return this.blockRefill(REFILL.BLOCKED_RCL);
+    }
+    if (!status.powerSpawn) {
+      return this.blockRefill(REFILL.NOT_NEEDED);
+    }
+    if (!settings.PROCESS_UNDER_THREAT && this.hasActiveThreat(room, state)) {
+      return this.blockRefill(REFILL.BLOCKED_THREAT);
+    }
+    if (!settings.PROCESS_UNDER_CRITICAL_CPU && this.isCriticalCpuPressure(room)) {
+      return this.blockRefill(REFILL.BLOCKED_CPU_PRESSURE);
+    }
+
+    const pending = this.getPendingRefillRequests(room.name);
+    const pendingEnergy = pending.energy > 0;
+    const pendingPower = pending.power > 0;
+    const requests = [];
+
+    const energyNeeded = Math.max(
+      0,
+      settings.POWER_SPAWN_ENERGY_TARGET - status.powerSpawnEnergy,
+    );
+    if (energyNeeded > 0 && !pendingEnergy) {
+      const energySource = this.selectEnergyRefillSource(room, settings);
+      if (energySource) {
+        requests.push({
+          resourceType: RESOURCE_ENERGY,
+          from: energySource.from,
+          amount: Math.min(energyNeeded, energySource.available, settings.REFILL_BATCH_ENERGY),
+          reason: "power_spawn_energy",
+        });
+      }
+    }
+
+    const powerNeeded = Math.max(
+      0,
+      settings.POWER_SPAWN_POWER_TARGET - status.powerSpawnPower,
+    );
+    if (powerNeeded > 0 && !pendingPower) {
+      const powerSource = this.selectPowerRefillSource(room);
+      if (powerSource) {
+        requests.push({
+          resourceType: RESOURCE_POWER,
+          from: powerSource.from,
+          amount: Math.min(powerNeeded, powerSource.available, settings.REFILL_BATCH_POWER),
+          reason: "power_spawn_power",
+        });
+      }
+    }
+
+    if (requests.length === 0) {
+      if (pending.count > 0) {
+        return {
+          ok: false,
+          state: REFILL.REQUEST_PENDING,
+          reason: null,
+          pendingRequests: pending.count,
+          pendingSummary: pending.summary,
+        };
+      }
+      if (energyNeeded > 0) {
+        return this.blockRefill(REFILL.BLOCKED_STORAGE_RESERVE, pending);
+      }
+      if (powerNeeded > 0) {
+        return this.blockRefill(REFILL.BLOCKED_NO_TERMINAL, pending);
+      }
+      return this.blockRefill(REFILL.NOT_NEEDED, pending);
+    }
+
+    return {
+      ok: true,
+      requests: requests,
+      pendingRequests: pending.count,
+      pendingSummary: pending.summary,
+    };
+  },
+
+  blockRefill(reason, pending) {
+    return {
+      ok: false,
+      state: reason,
+      reason: reason,
+      pendingRequests: pending ? pending.count : 0,
+      pendingSummary: pending ? pending.summary : "none",
+    };
+  },
+
+  selectEnergyRefillSource(room, settings) {
+    const storageAvailable = room.storage
+      ? this.getStoredAmount(room.storage, RESOURCE_ENERGY) - settings.MIN_STORAGE_ENERGY
+      : 0;
+    if (storageAvailable > 0) {
+      return {
+        from: "storage",
+        available: storageAvailable,
+      };
+    }
+
+    const terminalAvailable = room.terminal
+      ? this.getStoredAmount(room.terminal, RESOURCE_ENERGY) - settings.MIN_TERMINAL_ENERGY
+      : 0;
+    if (terminalAvailable > 0) {
+      return {
+        from: "terminal",
+        available: terminalAvailable,
+      };
+    }
+
+    return null;
+  },
+
+  selectPowerRefillSource(room) {
+    const terminalPower = this.getStoredAmount(room.terminal, RESOURCE_POWER);
+    if (terminalPower > 0) {
+      return {
+        from: "terminal",
+        available: terminalPower,
+      };
+    }
+
+    const storagePower = this.getStoredAmount(room.storage, RESOURCE_POWER);
+    if (storagePower > 0) {
+      return {
+        from: "storage",
+        available: storagePower,
+      };
+    }
+
+    return null;
+  },
+
+  getPendingRefillRequests(roomName) {
+    const rows = opsLogisticsManager.listRequests(roomName);
+    const summaries = [];
+    let energy = 0;
+    let power = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (row.status !== "open") continue;
+      if (row.to !== "powerSpawn") continue;
+      if (row.resourceType !== RESOURCE_ENERGY && row.resourceType !== RESOURCE_POWER) {
+        continue;
+      }
+
+      if (row.resourceType === RESOURCE_ENERGY) energy += 1;
+      if (row.resourceType === RESOURCE_POWER) power += 1;
+      if (summaries.length < 2) {
+        summaries.push(
+          [
+            row.id,
+            row.resourceType,
+            row.from,
+            fmtEndpoint(row.to),
+            row.remaining || row.amount || 0,
+          ].join(" "),
+        );
+      }
+    }
+
+    return {
+      count: energy + power,
+      energy: energy,
+      power: power,
+      summary: summaries.length > 0 ? summaries.join("; ") : "none",
+    };
+  },
+
   getPowerSpawns(room, state) {
     if (
       state &&
@@ -418,3 +699,7 @@ module.exports = {
     }
   },
 };
+
+function fmtEndpoint(endpoint) {
+  return endpoint === "powerSpawn" ? "powerSpawn" : endpoint;
+}

@@ -1029,6 +1029,12 @@ function getPowerSummary(room) {
     refillBlockedReason: power.refillBlockedReason || "none",
     refillPendingRequests: power.refillPendingRequests || 0,
     refillPendingSummary: power.refillPendingSummary || "none",
+    refillLastSource: power.refillLastSource || "none",
+    refillLastResource: power.refillLastResource || "none",
+    refillLastRequestTick: typeof power.refillLastRequestTick === "number"
+      ? power.refillLastRequestTick
+      : null,
+    refillLastCreated: !!power.refillLastCreated,
   };
 }
 
@@ -1509,8 +1515,9 @@ module.exports = {
         `Storage Energy ${fmtAmount(power.storageEnergy)}/${fmtAmount(power.minStorageEnergy)} | Terminal Energy ${fmtAmount(power.terminalEnergy)}/${fmtAmount(power.minTerminalEnergy)}`,
         `Terminal Power ${fmtAmount(power.terminalPower)} | Balance ${terminalBalance.state || "unknown"} | pending ${terminalBalance.pendingMoves || 0}`,
         `Refill ${refillState} | Energy need ${fmtAmount(power.refillEnergyNeeded)} | Power need ${fmtAmount(power.refillPowerNeeded)}`,
-        `Refill sources energy storage ${fmtAmount(power.refillEnergyStorageAvailable)} terminal ${fmtAmount(power.refillEnergyTerminalAvailable)} | power storage ${fmtAmount(power.refillPowerStorageAvailable)} terminal ${fmtAmount(power.refillPowerTerminalAvailable)}`,
+        `Refill sources energy storage ${fmtAmount(power.refillEnergyStorageAvailable)} terminal ${fmtAmount(power.refillEnergyTerminalAvailable)} | power storage ${fmtAmount(power.refillPowerStorageAvailable)} terminal ${fmtAmount(power.refillPowerTerminalAvailable)} | selected ${power.refillLastResource} from ${power.refillLastSource}`,
         `Refill pending ${powerRefillPending.count} | ${powerRefillPending.summary} | blocked ${power.refillBlockedReason || "none"}`,
+        `Refill recent ${power.refillLastCreated ? "created" : "idle"} | tick ${power.refillLastRequestTick !== null ? power.refillLastRequestTick : "--"}`,
         `Last processed ${power.lastProcessed !== null ? power.lastProcessed : "--"} | Total ${fmtAmount(power.totalProcessed)} | Last seen ${power.lastSeen !== null ? power.lastSeen : "--"}`,
       ],
       observer: [

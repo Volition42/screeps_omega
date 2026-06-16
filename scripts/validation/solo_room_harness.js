@@ -6562,39 +6562,15 @@ function runPowerSpawnRefillVisibilityScenario() {
     const state = roomState.collect(room);
 
     powerManager.run(room, state);
-    advancedStructureManager.run(room, state);
-
-    const powerSpawn = state.structuresByType[STRUCTURE_POWER_SPAWN][0];
-    Memory.ops = {
-      logistics: {
-        requests: {
-          refill_power_spawn_energy: {
-            id: "refill_power_spawn_energy",
-            type: "move",
-            status: "open",
-            roomName: room.name,
-            resourceType: RESOURCE_ENERGY,
-            amount: 1000,
-            remaining: 1000,
-            from: "storage",
-            to: "powerSpawn",
-            targetId: powerSpawn.id,
-            priority: 70,
-            createdAt: Game.time,
-            updatedAt: Game.time,
-            claims: {},
-          },
-        },
-      },
-    };
 
     const memory = Memory.rooms[room.name].power;
-    assert(memory.refillState === "REFILL_NEEDS_BOTH", `expected refill needs both, got ${memory.refillState}`);
+    assert(memory.refillState === "REFILL_REQUEST_CREATED", `expected refill request created, got ${memory.refillState}`);
     assert(memory.refillEnergyNeeded === 4000, `expected energy need 4000, got ${memory.refillEnergyNeeded}`);
     assert(memory.refillPowerNeeded === 100, `expected power need 100, got ${memory.refillPowerNeeded}`);
     assert(memory.refillEnergyStorageAvailable === 150000, `expected storage energy available 150000, got ${memory.refillEnergyStorageAvailable}`);
     assert(memory.refillPowerStorageAvailable === 25, `expected storage power available 25, got ${memory.refillPowerStorageAvailable}`);
     assert(memory.refillPowerTerminalAvailable === 250, `expected terminal power available 250, got ${memory.refillPowerTerminalAvailable}`);
+    assert(memory.refillPendingRequests === 2, `expected two created refill requests, got ${memory.refillPendingRequests}`);
 
     ops.registerGlobals();
     const captured = captureConsoleLines(function () {
@@ -6603,7 +6579,7 @@ function runPowerSpawnRefillVisibilityScenario() {
 
     assert(
       captured.lines.some(function (line) { return line.indexOf("Refill REFILL_REQUEST_PENDING") !== -1; }),
-      `expected pending refill state in report, got ${captured.lines.join(" / ")}`,
+      `expected report to summarize created requests as pending refill, got ${captured.lines.join(" / ")}`,
     );
     assert(
       captured.lines.some(function (line) { return line.indexOf("Energy need 4,000") !== -1 && line.indexOf("Power need 100") !== -1; }),
@@ -6618,8 +6594,180 @@ function runPowerSpawnRefillVisibilityScenario() {
       `expected power source availability, got ${captured.lines.join(" / ")}`,
     );
     assert(
-      captured.lines.some(function (line) { return line.indexOf("Refill pending 2") !== -1 && line.indexOf("advanced:power_spawn_power") !== -1; }),
+      captured.lines.some(function (line) { return line.indexOf("Refill pending 2") !== -1 && line.indexOf("power") !== -1; }),
       `expected pending refill summary, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("selected power from terminal") !== -1; }),
+      `expected selected source in report, got ${captured.lines.join(" / ")}`,
+    );
+  });
+}
+
+function getOpenPowerSpawnRefillRequests(roomName, resourceType) {
+  return opsLogisticsManager.listRequests(roomName).filter(function (request) {
+    return (
+      request.status === "open" &&
+      request.to === "powerSpawn" &&
+      (!resourceType || request.resourceType === resourceType)
+    );
+  });
+}
+
+function runPowerSpawnEnergyRefillRequestScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_ENERGY", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 100,
+      storageEnergy: 54000,
+      terminalStore: { energy: 12000, power: 0 },
+    });
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const requests = getOpenPowerSpawnRefillRequests(room.name, RESOURCE_ENERGY);
+    assert(requests.length === 1, `expected one energy refill request, got ${requests.length}`);
+    assertOpsLogisticsRequestShape(requests[0], {
+      status: "open",
+      roomName: room.name,
+      resourceType: RESOURCE_ENERGY,
+      from: "storage",
+      to: "powerSpawn",
+    });
+    assert(requests[0].amount === 4000, `expected reserve-aware 4000 energy amount, got ${requests[0].amount}`);
+  });
+}
+
+function runPowerSpawnPowerRefillRequestScenario() {
+  withPowerSettings({ POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_POWER", {
+      powerSpawnEnergy: 5000,
+      powerSpawnPower: 20,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 250 },
+    });
+    room.storage.store.power = 500;
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const requests = getOpenPowerSpawnRefillRequests(room.name, RESOURCE_POWER);
+    assert(requests.length === 1, `expected one power refill request, got ${requests.length}`);
+    assertOpsLogisticsRequestShape(requests[0], {
+      status: "open",
+      roomName: room.name,
+      resourceType: RESOURCE_POWER,
+      from: "terminal",
+      to: "powerSpawn",
+    });
+    assert(requests[0].amount === 80, `expected target-bounded 80 power amount, got ${requests[0].amount}`);
+  });
+}
+
+function runPowerSpawnRefillReserveBlockScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, MIN_TERMINAL_ENERGY: 10000, POWER_SPAWN_ENERGY_TARGET: 5000 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_RESERVE_BLOCK", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 100,
+      storageEnergy: 50000,
+      terminalStore: { energy: 10000, power: 0 },
+    });
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const requests = getOpenPowerSpawnRefillRequests(room.name);
+    const memory = Memory.rooms[room.name].power;
+    assert(requests.length === 0, `reserve block should create no requests, got ${requests.length}`);
+    assert(
+      memory.refillBlockedReason === "REFILL_BLOCKED_STORAGE_RESERVE",
+      `expected reserve refill block, got ${memory.refillBlockedReason}`,
+    );
+  });
+}
+
+function runPowerSpawnRefillThreatBlockScenario() {
+  withPowerSettings({ PROCESS_UNDER_THREAT: false, POWER_SPAWN_ENERGY_TARGET: 5000 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_THREAT_BLOCK", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 100,
+      hostiles: [
+        {
+          name: "hostile_refill_block",
+          x: 26,
+          y: 25,
+          body: [{ type: ATTACK }, { type: MOVE }],
+        },
+      ],
+    });
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+
+    const requests = getOpenPowerSpawnRefillRequests(room.name);
+    const memory = Memory.rooms[room.name].power;
+    assert(requests.length === 0, `threat block should create no requests, got ${requests.length}`);
+    assert(
+      memory.refillBlockedReason === "REFILL_BLOCKED_THREAT",
+      `expected threat refill block, got ${memory.refillBlockedReason}`,
+    );
+  });
+}
+
+function runPowerSpawnRefillDuplicateSuppressionScenario() {
+  withPowerSettings({ POWER_SPAWN_ENERGY_TARGET: 5000, REFILL_INTERVAL: 1 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_DUPLICATE", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 100,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 0 },
+    });
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+    Game.time += 1;
+    powerManager.run(room, state);
+
+    const requests = getOpenPowerSpawnRefillRequests(room.name, RESOURCE_ENERGY);
+    assert(requests.length === 1, `duplicate refill should keep one request, got ${requests.length}`);
+    assert(
+      Memory.rooms[room.name].power.refillState === "REFILL_REQUEST_PENDING",
+      `expected duplicate pass to report pending, got ${Memory.rooms[room.name].power.refillState}`,
+    );
+  });
+}
+
+function runPowerSpawnRefillReportShapeScenario() {
+  withPowerSettings({ POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_REPORT_SHAPE", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 100,
+      storageEnergy: 200000,
+    });
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+    ops.registerGlobals();
+    const captured = captureConsoleLines(function () {
+      return global.ops.room(room.name, "power");
+    });
+
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Refill pending 1") !== -1; }),
+      `expected one pending refill in report, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("selected energy from storage") !== -1; }),
+      `expected selected refill source in report, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Refill recent created") !== -1; }),
+      `expected recent created line in report, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      !captured.lines.some(function (line) { return line.indexOf("{") !== -1 || line.indexOf("}") !== -1; }),
+      `power report should not dump raw request objects, got ${captured.lines.join(" / ")}`,
     );
   });
 }
@@ -11603,6 +11751,12 @@ function main() {
     ["power_spawn_cpu_block", runPowerSpawnCpuBlockScenario],
     ["power_reporting", runPowerReportingScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
+    ["power_spawn_refill_energy_request", runPowerSpawnEnergyRefillRequestScenario],
+    ["power_spawn_refill_power_request", runPowerSpawnPowerRefillRequestScenario],
+    ["power_spawn_refill_reserve_block", runPowerSpawnRefillReserveBlockScenario],
+    ["power_spawn_refill_threat_block", runPowerSpawnRefillThreatBlockScenario],
+    ["power_spawn_refill_duplicate_suppression", runPowerSpawnRefillDuplicateSuppressionScenario],
+    ["power_spawn_refill_report_shape", runPowerSpawnRefillReportShapeScenario],
     ["lab_boost_direct", runLabBoostDirectScenario],
     ["lab_boost_intermediate", runLabBoostIntermediateScenario],
     ["lab_loaded_reaction_preserved", runLabLoadedReactionPreservedScenario],

@@ -178,9 +178,10 @@ module.exports = {
   PROCESS_POWER_COST / PROCESS_ENERGY_COST
   Screeps processPower consumes 1 power and 50 energy per successful call.
 
-  This first phase only processes power already loaded into the Power Spawn.
-  It does not buy power, harvest Power Banks, spawn Power Creeps, or refill the
-  Power Spawn automatically.
+  REFILL_*
+  Power Spawn refill creates room-local ops logistics requests only. It does
+  not buy power, harvest Power Banks, spawn Power Creeps, or send resources
+  across rooms.
   */
   POWER: {
     ENABLED: true,
@@ -192,6 +193,10 @@ module.exports = {
     PROCESS_UNDER_CRITICAL_CPU: false,
     POWER_SPAWN_ENERGY_TARGET: 5000,
     POWER_SPAWN_POWER_TARGET: 100,
+    REFILL_ENABLED: true,
+    REFILL_BATCH_ENERGY: 5000,
+    REFILL_BATCH_POWER: 100,
+    REFILL_INTERVAL: 25,
     REPORT_INTERVAL: 100,
 
     PROCESS_POWER_COST: 1,

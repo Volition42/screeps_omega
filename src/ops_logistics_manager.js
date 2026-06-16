@@ -6,6 +6,7 @@ const CLAIM_TTL = 25;
 const ENDPOINTS = {
   storage: true,
   terminal: true,
+  powerSpawn: true,
 };
 
 const BALANCE = {
@@ -56,6 +57,23 @@ function ownedRooms() {
 
 function getEndpointStructure(room, endpoint) {
   if (!room || !isValidEndpoint(endpoint)) return null;
+  if (endpoint === "powerSpawn") {
+    if (
+      room.structuresByType &&
+      room.structuresByType[STRUCTURE_POWER_SPAWN] &&
+      room.structuresByType[STRUCTURE_POWER_SPAWN][0]
+    ) {
+      return room.structuresByType[STRUCTURE_POWER_SPAWN][0];
+    }
+
+    const spawns = room.find(FIND_MY_STRUCTURES, {
+      filter: function (structure) {
+        return structure.structureType === STRUCTURE_POWER_SPAWN;
+      },
+    });
+    return spawns.length > 0 ? spawns[0] : null;
+  }
+
   return room[endpoint] || null;
 }
 
