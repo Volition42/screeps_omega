@@ -560,6 +560,12 @@ function fmtAmount(value) {
   return Math.round(value || 0).toLocaleString();
 }
 
+function formatPolicyValue(value) {
+  if (value === true) return "on";
+  if (value === false) return "off";
+  return "global";
+}
+
 function formatTerminalMinerals(summary) {
   const minerals = summary && summary.minerals ? summary.minerals : [];
   if (minerals.length === 0) return "none";
@@ -979,9 +985,50 @@ function getPowerSummary(room) {
     Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].power
       ? Memory.rooms[room.name].power
       : {};
+  const policy =
+    Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].powerPolicy
+      ? Memory.rooms[room.name].powerPolicy
+      : {};
   const terminal = room.terminal || null;
+  const globalEnabled = typeof power.globalEnabled === "boolean"
+    ? power.globalEnabled
+    : !!(config.POWER && config.POWER.ENABLED);
+  const globalRefillEnabled = typeof power.globalRefillEnabled === "boolean"
+    ? power.globalRefillEnabled
+    : !!(config.POWER && config.POWER.REFILL_ENABLED);
+  const processingOverride = typeof policy.processingEnabled === "boolean"
+    ? policy.processingEnabled
+    : typeof power.processingOverride === "boolean"
+      ? power.processingOverride
+      : null;
+  const refillOverride = typeof policy.refillEnabled === "boolean"
+    ? policy.refillEnabled
+    : typeof power.refillOverride === "boolean"
+      ? power.refillOverride
+      : null;
+  const minStorageEnergyOverride =
+    typeof policy.minStorageEnergy === "number" && policy.minStorageEnergy >= 0
+      ? Math.floor(policy.minStorageEnergy)
+      : typeof power.minStorageEnergyOverride === "number"
+        ? power.minStorageEnergyOverride
+        : null;
 
   return {
+    globalEnabled: globalEnabled,
+    globalRefillEnabled: globalRefillEnabled,
+    processingOverride: processingOverride,
+    refillOverride: refillOverride,
+    effectiveProcessingEnabled: typeof power.effectiveProcessingEnabled === "boolean"
+      ? power.effectiveProcessingEnabled
+      : processingOverride === null
+        ? globalEnabled
+        : processingOverride,
+    effectiveRefillEnabled: typeof power.effectiveRefillEnabled === "boolean"
+      ? power.effectiveRefillEnabled
+      : refillOverride === null
+        ? globalRefillEnabled
+        : refillOverride,
+    minStorageEnergyOverride: minStorageEnergyOverride,
     powerSpawns: power.powerSpawns || 0,
     powerSpawnId: power.powerSpawnId || null,
     powerSpawnEnergy: power.powerSpawnEnergy || power.energy || 0,
@@ -1011,7 +1058,9 @@ function getPowerSummary(room) {
     readiness: power.readiness || "UNKNOWN",
     blockedReason: power.blockedReason || power.reason || "none",
     lastSeen: typeof power.lastSeen === "number" ? power.lastSeen : null,
-    minStorageEnergy: power.minStorageEnergy ||
+    minStorageEnergy: minStorageEnergyOverride !== null
+      ? minStorageEnergyOverride
+      : power.minStorageEnergy ||
       (config.POWER ? config.POWER.MIN_STORAGE_ENERGY || 0 : 0),
     minTerminalEnergy: power.minTerminalEnergy ||
       (config.POWER ? config.POWER.MIN_TERMINAL_ENERGY || 0 : 0),
@@ -1510,6 +1559,7 @@ module.exports = {
       advanced: advancedLines,
       power: [
         `[OPS][${room.name}][POWER]`,
+        `Global process ${power.globalEnabled ? "on" : "off"} refill ${power.globalRefillEnabled ? "on" : "off"} | Override process ${formatPolicyValue(power.processingOverride)} refill ${formatPolicyValue(power.refillOverride)} | Effective process ${power.effectiveProcessingEnabled ? "on" : "off"} refill ${power.effectiveRefillEnabled ? "on" : "off"}`,
         `Readiness ${power.readiness} | Blocked ${power.blockedReason || "none"}`,
         `PowerSpawns ${power.powerSpawns} | Energy ${fmtAmount(power.powerSpawnEnergy)}/${fmtAmount(power.energyTarget)} | Power ${fmtAmount(power.powerSpawnPower)}/${fmtAmount(power.powerTarget)}`,
         `Storage Energy ${fmtAmount(power.storageEnergy)}/${fmtAmount(power.minStorageEnergy)} | Terminal Energy ${fmtAmount(power.terminalEnergy)}/${fmtAmount(power.minTerminalEnergy)}`,

@@ -6550,6 +6550,118 @@ function runPowerReportingScenario() {
   });
 }
 
+function runPowerOperatorControlsScenario() {
+  withPowerSettings({ ENABLED: true, REFILL_ENABLED: true, MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100, REFILL_INTERVAL: 1 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_CONTROLS", {
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 20,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 250 },
+    });
+    const state = roomState.collect(room);
+
+    ops.registerGlobals();
+    assert(typeof global.ops.power === "function", "ops.power should be registered");
+
+    powerManager.run(room, state);
+
+    let captured = captureConsoleLines(function () {
+      return global.ops.power();
+    });
+    assert(typeof captured.result === "string", "ops.power summary should return a printable string");
+    assert(
+      captured.result.indexOf("[OPS] Power Spawn status") !== -1 &&
+        captured.result.indexOf(`[OPS][${room.name}][POWER]`) !== -1,
+      `ops.power summary should include room power status, got ${captured.result}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.power(room.name);
+    });
+    assert(
+      captured.result === `[OPS][${room.name}][POWER] report generated`,
+      `ops.power(room) should return concise detail status, got ${captured.result}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Global process on refill on") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("Effective process on refill on") !== -1; }),
+      `ops.power(room) should show policy state, got ${captured.lines.join(" / ")}`,
+    );
+
+    let result = global.ops.power(room.name, "process", "off");
+    assert(typeof result === "string" && result.indexOf("process off") !== -1, `process off should print policy, got ${result}`);
+    Game.time += 1;
+    powerManager.run(room, state);
+    assert(
+      Memory.rooms[room.name].power.readiness === "BLOCKED_DISABLED",
+      `processing override off should block processing, got ${Memory.rooms[room.name].power.readiness}`,
+    );
+    assert(
+      Memory.rooms[room.name].power.effectiveRefillEnabled === true,
+      "processing override should not disable refill",
+    );
+
+    result = global.ops.power(room.name, "process", "on");
+    assert(typeof result === "string" && result.indexOf("process on") !== -1, `process on should print policy, got ${result}`);
+    result = global.ops.power(room.name, "refill", "off");
+    assert(typeof result === "string" && result.indexOf("refill off") !== -1, `refill off should print policy, got ${result}`);
+
+    Memory.ops = { logistics: { requests: {} } };
+    Game.time += 1;
+    powerManager.run(room, state);
+    assert(
+      Memory.rooms[room.name].power.effectiveProcessingEnabled === true,
+      "refill override should not disable processing",
+    );
+    assert(
+      Memory.rooms[room.name].power.refillState === "REFILL_BLOCKED_DISABLED",
+      `refill override off should block refill, got ${Memory.rooms[room.name].power.refillState}`,
+    );
+    assert(
+      getOpenPowerSpawnRefillRequests(room.name).length === 0,
+      "refill off should create no refill requests",
+    );
+
+    result = global.ops.power(room.name, "off");
+    assert(
+      typeof result === "string" && result.indexOf("process off refill off") !== -1,
+      `power off should disable both toggles, got ${result}`,
+    );
+    Game.time += 1;
+    powerManager.run(room, state);
+    assert(
+      Memory.rooms[room.name].power.effectiveProcessingEnabled === false &&
+        Memory.rooms[room.name].power.effectiveRefillEnabled === false,
+      "power off should disable both effective controls",
+    );
+
+    result = global.ops.power(room.name, "on");
+    assert(
+      typeof result === "string" && result.indexOf("process on refill on") !== -1,
+      `power on should enable both toggles, got ${result}`,
+    );
+    result = global.ops.power(room.name, "reserve", 75000);
+    assert(
+      typeof result === "string" && result.indexOf("reserve 75,000") !== -1,
+      `reserve override should be printable, got ${result}`,
+    );
+    Game.time += 1;
+    powerManager.run(room, state);
+    assert(
+      Memory.rooms[room.name].power.minStorageEnergy === 75000,
+      `reserve override should update effective reserve, got ${Memory.rooms[room.name].power.minStorageEnergy}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.room(room.name, "power");
+    });
+    assert(
+      captured.lines.some(function (line) { return line === `[OPS][${room.name}][POWER]`; }),
+      `ops.room(room, power) should still print power section, got ${captured.lines.join(" / ")}`,
+    );
+  });
+}
+
 function runPowerSpawnRefillVisibilityScenario() {
   withPowerSettings({ MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
     const room = buildPowerProcessingRoom("VAL_POWER_REFILL", {
@@ -11750,6 +11862,7 @@ function main() {
     ["power_spawn_threat_block", runPowerSpawnThreatBlockScenario],
     ["power_spawn_cpu_block", runPowerSpawnCpuBlockScenario],
     ["power_reporting", runPowerReportingScenario],
+    ["power_operator_controls", runPowerOperatorControlsScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
     ["power_spawn_refill_energy_request", runPowerSpawnEnergyRefillRequestScenario],
     ["power_spawn_refill_power_request", runPowerSpawnPowerRefillRequestScenario],

@@ -34,6 +34,7 @@ const READINESS = {
   BLOCKED_TERMINAL_ENERGY: "BLOCKED_TERMINAL_ENERGY",
   BLOCKED_THREAT: "BLOCKED_THREAT",
   BLOCKED_CPU_PRESSURE: "BLOCKED_CPU_PRESSURE",
+  BLOCKED_DISABLED: "BLOCKED_DISABLED",
   PROCESSED: "PROCESSED",
 };
 
@@ -60,10 +61,9 @@ module.exports = {
   REFILL: REFILL,
 
   run(room, state) {
-    if (!config.POWER || !config.POWER.ENABLED) return;
     if (!room.controller || !room.controller.my) return;
 
-    const settings = this.getSettings();
+    const settings = this.getEffectiveSettings(room);
     const mem = this.getRoomMemory(room);
     if (room.controller.level < settings.MIN_RCL) {
       this.writeStatus(mem, {
@@ -80,6 +80,13 @@ module.exports = {
         minTerminalEnergy: settings.MIN_TERMINAL_ENERGY,
         energyTarget: settings.POWER_SPAWN_ENERGY_TARGET,
         powerTarget: settings.POWER_SPAWN_POWER_TARGET,
+        globalEnabled: settings.GLOBAL_ENABLED,
+        globalRefillEnabled: settings.GLOBAL_REFILL_ENABLED,
+        processingOverride: settings.PROCESSING_OVERRIDE,
+        refillOverride: settings.REFILL_OVERRIDE,
+        effectiveProcessingEnabled: settings.EFFECTIVE_PROCESSING_ENABLED,
+        effectiveRefillEnabled: settings.EFFECTIVE_REFILL_ENABLED,
+        minStorageEnergyOverride: settings.MIN_STORAGE_ENERGY_OVERRIDE,
         result: null,
       });
       return;
@@ -119,6 +126,13 @@ module.exports = {
       minTerminalEnergy: settings.MIN_TERMINAL_ENERGY,
       energyTarget: settings.POWER_SPAWN_ENERGY_TARGET,
       powerTarget: settings.POWER_SPAWN_POWER_TARGET,
+      globalEnabled: settings.GLOBAL_ENABLED,
+      globalRefillEnabled: settings.GLOBAL_REFILL_ENABLED,
+      processingOverride: settings.PROCESSING_OVERRIDE,
+      refillOverride: settings.REFILL_OVERRIDE,
+      effectiveProcessingEnabled: settings.EFFECTIVE_PROCESSING_ENABLED,
+      effectiveRefillEnabled: settings.EFFECTIVE_REFILL_ENABLED,
+      minStorageEnergyOverride: settings.MIN_STORAGE_ENERGY_OVERRIDE,
       processed: false,
       result: null,
     });
@@ -186,6 +200,68 @@ module.exports = {
     return Memory.rooms[room.name].power;
   },
 
+  getRoomPolicy(roomName) {
+    const roomMemory =
+      Memory.rooms && Memory.rooms[roomName] ? Memory.rooms[roomName] : null;
+    return roomMemory && roomMemory.powerPolicy ? roomMemory.powerPolicy : {};
+  },
+
+  getEffectiveSettings(room) {
+    const settings = this.getSettings();
+    const policy = this.getRoomPolicy(room.name);
+
+    settings.GLOBAL_ENABLED = !!settings.ENABLED;
+    settings.GLOBAL_REFILL_ENABLED = !!settings.REFILL_ENABLED;
+    settings.PROCESSING_OVERRIDE =
+      typeof policy.processingEnabled === "boolean"
+        ? policy.processingEnabled
+        : null;
+    settings.REFILL_OVERRIDE =
+      typeof policy.refillEnabled === "boolean" ? policy.refillEnabled : null;
+    settings.MIN_STORAGE_ENERGY_OVERRIDE =
+      typeof policy.minStorageEnergy === "number" && policy.minStorageEnergy >= 0
+        ? Math.floor(policy.minStorageEnergy)
+        : null;
+
+    settings.EFFECTIVE_PROCESSING_ENABLED =
+      settings.PROCESSING_OVERRIDE === null
+        ? !!settings.ENABLED
+        : settings.PROCESSING_OVERRIDE;
+    settings.EFFECTIVE_REFILL_ENABLED =
+      settings.REFILL_OVERRIDE === null
+        ? !!settings.REFILL_ENABLED
+        : settings.REFILL_OVERRIDE;
+
+    if (settings.MIN_STORAGE_ENERGY_OVERRIDE !== null) {
+      settings.MIN_STORAGE_ENERGY = settings.MIN_STORAGE_ENERGY_OVERRIDE;
+    }
+
+    return settings;
+  },
+
+  setRoomPolicy(roomName, updates) {
+    if (!Memory.rooms) Memory.rooms = {};
+    if (!Memory.rooms[roomName]) Memory.rooms[roomName] = {};
+    if (!Memory.rooms[roomName].powerPolicy) Memory.rooms[roomName].powerPolicy = {};
+
+    const policy = Memory.rooms[roomName].powerPolicy;
+    const keys = ["processingEnabled", "refillEnabled", "minStorageEnergy"];
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+
+      if (updates[key] === null || typeof updates[key] === "undefined") {
+        delete policy[key];
+      } else {
+        policy[key] = updates[key];
+      }
+    }
+
+    policy.updated = Game.time;
+    return policy;
+  },
+
   writeStatus(mem, status) {
     mem.lastSeen = Game.time;
     mem.readiness = status.readiness;
@@ -206,6 +282,18 @@ module.exports = {
     mem.minTerminalEnergy = status.minTerminalEnergy;
     mem.energyTarget = status.energyTarget;
     mem.powerTarget = status.powerTarget;
+    mem.globalEnabled = !!status.globalEnabled;
+    mem.globalRefillEnabled = !!status.globalRefillEnabled;
+    mem.processingOverride =
+      typeof status.processingOverride === "boolean" ? status.processingOverride : null;
+    mem.refillOverride =
+      typeof status.refillOverride === "boolean" ? status.refillOverride : null;
+    mem.effectiveProcessingEnabled = !!status.effectiveProcessingEnabled;
+    mem.effectiveRefillEnabled = !!status.effectiveRefillEnabled;
+    mem.minStorageEnergyOverride =
+      typeof status.minStorageEnergyOverride === "number"
+        ? status.minStorageEnergyOverride
+        : null;
     mem.processed = false;
     mem.result = status.result;
     this.writeRefillStatus(mem, status);
@@ -347,6 +435,10 @@ module.exports = {
       return READINESS.BLOCKED_NO_POWER_SPAWN;
     }
 
+    if (!settings.EFFECTIVE_PROCESSING_ENABLED) {
+      return READINESS.BLOCKED_DISABLED;
+    }
+
     if (!settings.PROCESS_UNDER_THREAT && this.hasActiveThreat(room, state)) {
       return READINESS.BLOCKED_THREAT;
     }
@@ -449,10 +541,7 @@ module.exports = {
   },
 
   buildRefillDecision(room, state, settings, status) {
-    if (!settings.ENABLED) {
-      return this.blockRefill(REFILL.BLOCKED_DISABLED);
-    }
-    if (!settings.REFILL_ENABLED) {
+    if (!settings.EFFECTIVE_REFILL_ENABLED) {
       return this.blockRefill(REFILL.BLOCKED_DISABLED);
     }
     if (!room.controller || room.controller.level < settings.MIN_RCL) {

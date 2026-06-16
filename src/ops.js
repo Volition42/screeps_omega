@@ -6,6 +6,7 @@ const attackManager = require("attack_manager");
 const invasionLog = require("invasion_log");
 const opsLogisticsManager = require("ops_logistics_manager");
 const terminalBalanceManager = require("terminal_balance_manager");
+const powerManager = require("power_manager");
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -112,6 +113,12 @@ function fmt(value) {
   return Math.round(value || 0).toLocaleString();
 }
 
+function formatOverride(value) {
+  if (value === true) return "on";
+  if (value === false) return "off";
+  return "global";
+}
+
 function getStoredAmount(target, resourceType) {
   if (!target || !target.store) return 0;
 
@@ -210,6 +217,132 @@ function buildTerminalStatus(room) {
     energy: getStoredAmount(terminal, RESOURCE_ENERGY),
     status: getTerminalCongestionStatus(free),
     resources: resources,
+  };
+}
+
+function getPowerMemory(roomName) {
+  return Memory.rooms && Memory.rooms[roomName] && Memory.rooms[roomName].power
+    ? Memory.rooms[roomName].power
+    : {};
+}
+
+function getPowerSpawnCount(room) {
+  if (!room) return 0;
+  const spawns = room.find(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return structure.structureType === STRUCTURE_POWER_SPAWN;
+    },
+  });
+  return spawns.length;
+}
+
+function getPowerSummaryLine(room) {
+  const power = getPowerMemory(room.name);
+  const policy = powerManager.getRoomPolicy(room.name);
+  const globalProcess = typeof power.globalEnabled === "boolean"
+    ? power.globalEnabled
+    : !!(powerManager.getSettings().ENABLED);
+  const globalRefill = typeof power.globalRefillEnabled === "boolean"
+    ? power.globalRefillEnabled
+    : !!(powerManager.getSettings().REFILL_ENABLED);
+  const processOverride = typeof policy.processingEnabled === "boolean"
+    ? policy.processingEnabled
+    : null;
+  const refillOverride = typeof policy.refillEnabled === "boolean"
+    ? policy.refillEnabled
+    : null;
+  const effectiveProcess = typeof power.effectiveProcessingEnabled === "boolean"
+    ? power.effectiveProcessingEnabled
+    : processOverride === null
+      ? globalProcess
+      : processOverride;
+  const effectiveRefill = typeof power.effectiveRefillEnabled === "boolean"
+    ? power.effectiveRefillEnabled
+    : refillOverride === null
+      ? globalRefill
+      : refillOverride;
+
+  return (
+    `[OPS][${room.name}][POWER] ` +
+    `PS ${power.powerSpawns || getPowerSpawnCount(room)} | ` +
+    `process ${effectiveProcess ? "on" : "off"} (${formatOverride(processOverride)}) | ` +
+    `refill ${effectiveRefill ? "on" : "off"} (${formatOverride(refillOverride)}) | ` +
+    `ready ${power.readiness || "UNKNOWN"} | refill ${power.refillState || "REFILL_UNKNOWN"} | ` +
+    `E ${fmt(power.powerSpawnEnergy || power.energy || 0)}/${fmt(power.energyTarget || (powerManager.getSettings().POWER_SPAWN_ENERGY_TARGET || 0))} | ` +
+    `P ${fmt(power.powerSpawnPower || power.power || 0)}/${fmt(power.powerTarget || (powerManager.getSettings().POWER_SPAWN_POWER_TARGET || 0))} | ` +
+    `pending ${power.refillPendingRequests || 0} | last ${typeof power.lastProcessed === "number" ? power.lastProcessed : "--"} total ${fmt(power.totalProcessed || 0)}`
+  );
+}
+
+function parsePowerCommand(roomName, arg1, arg2) {
+  if (typeof roomName === "undefined" || roomName === null || roomName === "") {
+    return {
+      mode: "summary",
+    };
+  }
+
+  const normalized = typeof arg1 === "string" ? arg1.trim().toLowerCase() : arg1;
+  if (typeof arg1 === "undefined") {
+    return {
+      mode: "detail",
+      roomName: roomName,
+    };
+  }
+
+  if (normalized === "process" || normalized === "processing") {
+    const enabled = parseToggleMode(arg2, true);
+    return {
+      mode: "set",
+      roomName: roomName,
+      updates: {
+        processingEnabled: enabled === null ? undefined : enabled,
+      },
+      label: "processing",
+    };
+  }
+
+  if (normalized === "refill") {
+    const enabled = parseToggleMode(arg2, true);
+    return {
+      mode: "set",
+      roomName: roomName,
+      updates: {
+        refillEnabled: enabled === null ? undefined : enabled,
+      },
+      label: "refill",
+    };
+  }
+
+  if (normalized === "reserve") {
+    const reserve =
+      arg2 === null ||
+      (typeof arg2 === "string" && ["clear", "default", "global", "null"].indexOf(arg2.trim().toLowerCase()) !== -1)
+        ? null
+        : Number(arg2);
+    return {
+      mode: "set",
+      roomName: roomName,
+      updates: {
+        minStorageEnergy:
+          reserve === null
+            ? null
+            : typeof reserve === "number" && isFinite(reserve) && reserve >= 0
+              ? Math.floor(reserve)
+              : undefined,
+      },
+      label: "reserve",
+    };
+  }
+
+  const enabled = parseToggleMode(arg1, true);
+  return {
+    mode: "set",
+    roomName: roomName,
+    updates: {
+      processingEnabled: enabled === null ? undefined : enabled,
+      refillEnabled: enabled === null ? undefined : enabled,
+    },
+    label: "power",
   };
 }
 
@@ -369,6 +502,12 @@ function getConsoleCommandHelp() {
       command: "ops.cpu([roomName])",
       description: "Show measured room CPU, top section costs, pressure, and scheduler skips.",
       example: 'ops.cpu("W5N5")',
+    },
+    {
+      command: "ops.power([roomName], [mode], [on|off])",
+      description:
+        "Show or set room-local Power Spawn processing and refill policy.",
+      example: 'ops.power("W5N5", "process", "off")',
     },
     {
       command: "ops.tickRate([sampleTicks|status|cancel])",
@@ -577,6 +716,9 @@ module.exports = {
       tickSpeed: function (sampleTicks) {
         return module.exports.tickRate(sampleTicks);
       },
+      power: function (roomName, arg1, arg2) {
+        return module.exports.power(roomName, arg1, arg2);
+      },
       move: function (resource, amount, roomName, from, to) {
         return module.exports.move(resource, amount, roomName, from, to);
       },
@@ -704,6 +846,53 @@ module.exports = {
       nextTask: report.nextTask,
       lines: lines,
     };
+  },
+
+  power(roomName, arg1, arg2) {
+    const parsed = parsePowerCommand(roomName, arg1, arg2);
+
+    if (parsed.mode === "summary") {
+      const ownedRooms = getOwnedRooms();
+      if (ownedRooms.length === 0) {
+        return printLine("[OPS] power: no owned rooms available.");
+      }
+
+      const lines = ["[OPS] Power Spawn status"];
+      for (let i = 0; i < ownedRooms.length; i++) {
+        lines.push(getPowerSummaryLine(ownedRooms[i]));
+      }
+      return printBlock(lines);
+    }
+
+    const room = getTargetRoomOrPrintError(parsed.roomName, "power");
+    if (!room) return null;
+    opsState.setCurrentRoomName(room.name);
+
+    if (parsed.mode === "detail") {
+      const report = roomReporting.build(room, null, { updateProgress: true });
+      const lines = roomReporting.getSectionLines(report, "power");
+      printBlock(lines);
+      return `[OPS][${room.name}][POWER] report generated`;
+    }
+
+    const updates = parsed.updates || {};
+    const keys = Object.keys(updates);
+    for (let i = 0; i < keys.length; i++) {
+      if (typeof updates[keys[i]] === "undefined") {
+        return printLine('[OPS] power: invalid mode. Use "on", "off", "process", "refill", or reserve amount.');
+      }
+    }
+
+    const policy = powerManager.setRoomPolicy(room.name, updates);
+    const line =
+      `[OPS] Power ${room.name}: process ${formatOverride(policy.processingEnabled)} ` +
+      `refill ${formatOverride(policy.refillEnabled)} ` +
+      `reserve ${
+        typeof policy.minStorageEnergy === "number"
+          ? fmt(policy.minStorageEnergy)
+          : "global"
+      }.`;
+    return printLine(line);
   },
 
   rooms() {
