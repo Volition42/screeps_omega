@@ -1041,14 +1041,54 @@ function plans(mode) {
 }
 
 function recheckPlan(plan) {
-  const staleReasons = [];
+  const review = reviewPlanState(plan);
 
-  if (plan.status === "deleted") return staleReasons;
+  if (review.statusChanged) {
+    plan.status = review.status;
+    plan.updatedAt = Game.time;
+  }
+
+  return review.staleReasons;
+}
+
+function activePlanRows() {
+  return Object.values(getPlanStore()).filter((saved) => saved.status !== "deleted");
+}
+
+function reviewPlanState(plan) {
+  const staleReasons = [];
+  const blockedReasons = [];
+  const categories = [];
+
+  if (!plan) {
+    return {
+      status: "blocked",
+      staleReasons,
+      blockedReasons: ["plan missing"],
+      categories: ["blocked"],
+      statusChanged: false,
+    };
+  }
+
+  if (plan.status === "deleted") {
+    return {
+      status: "deleted",
+      staleReasons,
+      blockedReasons,
+      categories,
+      statusChanged: false,
+    };
+  }
+
+  if (planIsExpired(plan)) staleReasons.push("plan expired");
+  if (plan.executableAmount <= 0) blockedReasons.push("executable amount zero");
 
   const order = findSelectedOrder(plan);
-  if (plan.selectedOrderId && !order) {
+  if (!plan.selectedOrderId || !order) {
     staleReasons.push("order missing");
+    categories.push("missing-order");
   }
+
   if (order) {
     if (order.amount < plan.executableAmount) staleReasons.push("order amount lower");
     if (Number(order.price) !== Number(plan.selectedOrderPrice)) {
@@ -1058,45 +1098,69 @@ function recheckPlan(plan) {
 
   const room = getOwnedRoom(plan.roomName);
   if (!room || !terminalUsable(room)) {
-    staleReasons.push("terminal unavailable");
-  } else if (plan.type === "sell") {
-    const currentResource = amountIn(room.terminal.store, plan.resourceType);
-    const currentEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
-    if (currentResource < plan.executableAmount) staleReasons.push("terminal resource lower");
-    if (
-      order &&
-      maxAmountByTerminalEnergy(
-        room.name,
-        order.roomName,
-        currentEnergy,
-        Math.min(plan.executableAmount, order.amount, currentResource),
-      ) < plan.executableAmount
-    ) {
-      staleReasons.push("terminal energy lower");
-    }
+    blockedReasons.push("terminal unavailable");
   } else {
-    const currentFree = terminalFreeCapacity(room);
     const currentEnergy = amountIn(room.terminal.store, RESOURCE_ENERGY);
-    if (currentFree < plan.executableAmount) staleReasons.push("terminal capacity lower");
-    if (
-      order &&
-      maxAmountByTerminalEnergy(
+    const cooldown = room.terminal.cooldown || 0;
+
+    if (cooldown > 0) {
+      blockedReasons.push("terminal cooldown");
+      categories.push("cooldown-blocked");
+    }
+
+    if (order) {
+      const checkAmount = Math.min(
+        plan.executableAmount > 0 ? plan.executableAmount : plan.requestedAmount,
+        order.amount,
+      );
+      const energyCost = Game.market.calcTransactionCost(
+        checkAmount,
         room.name,
         order.roomName,
-        currentEnergy,
-        Math.min(plan.executableAmount, order.amount, currentFree),
-      ) < plan.executableAmount
-    ) {
-      staleReasons.push("terminal energy lower");
+      );
+
+      if (currentEnergy < energyCost) {
+        blockedReasons.push("terminal energy too low");
+      }
     }
   }
 
-  if (staleReasons.length && plan.status !== "stale") {
-    plan.status = "stale";
-    plan.updatedAt = Game.time;
+  if (room && terminalUsable(room) && plan.type === "sell") {
+    const currentResource = amountIn(room.terminal.store, plan.resourceType);
+    const checkAmount = order
+      ? Math.min(plan.executableAmount > 0 ? plan.executableAmount : plan.requestedAmount, order.amount)
+      : plan.executableAmount;
+    if (currentResource < checkAmount) {
+      blockedReasons.push("terminal resource too low");
+      categories.push("insufficient-resource");
+    }
+  } else if (room && terminalUsable(room) && plan.type === "buy") {
+    const currentFree = terminalFreeCapacity(room);
+    const checkAmount = order
+      ? Math.min(plan.executableAmount > 0 ? plan.executableAmount : plan.requestedAmount, order.amount)
+      : plan.executableAmount;
+    if (currentFree < checkAmount) {
+      blockedReasons.push("terminal capacity too low");
+    }
+
+    if (order && Game.market.credits < checkAmount * order.price) {
+      blockedReasons.push("credits too low");
+      categories.push("unaffordable-buy");
+    }
   }
 
-  return uniqueReasons(staleReasons);
+  const uniqueStale = uniqueReasons(staleReasons);
+  const uniqueBlocked = uniqueReasons(blockedReasons);
+  const uniqueCategories = uniqueReasons(categories);
+  const status = uniqueStale.length ? "stale" : uniqueBlocked.length ? "blocked" : "ready";
+
+  return {
+    status,
+    staleReasons: uniqueStale,
+    blockedReasons: uniqueBlocked,
+    categories: uniqueCategories,
+    statusChanged: plan.status !== status,
+  };
 }
 
 function plan(planId) {
@@ -1107,7 +1171,50 @@ function plan(planId) {
   return formatPlanReport(saved, staleReasons);
 }
 
-function deletePlan(planId) {
+function planReview(planId) {
+  const saved = getPlanStore()[planId];
+  if (!saved) return printLine(`${CONFIG.logPrefix} Plan not found: ${planId}`);
+
+  const review = reviewPlanState(saved);
+  if (review.statusChanged) {
+    saved.status = review.status;
+    saved.updatedAt = Game.time;
+  }
+
+  const lines = [
+    `${CONFIG.logPrefix} Plan Review ${planId}: ${review.status.toUpperCase()}`,
+    `  type ${saved.type}`,
+    `  resource ${saved.resourceType}`,
+    `  room ${saved.roomName}`,
+    `  order ${saved.selectedOrderId || "none"}`,
+    `  executable ${fmt(saved.executableAmount)}/${fmt(saved.requestedAmount)}`,
+  ];
+
+  if (review.status === "ready") {
+    lines.push("  Plan still executable.");
+  }
+  if (review.staleReasons.length) {
+    lines.push(`  stale ${review.staleReasons.join(", ")}`);
+  }
+  if (review.blockedReasons.length) {
+    lines.push(`  blocked ${review.blockedReasons.join(", ")}`);
+  }
+
+  return printBlock(lines);
+}
+
+function clearPlan(planId) {
+  if (planId === "all") {
+    const planRows = activePlanRows();
+    for (const saved of planRows) {
+      saved.status = "deleted";
+      saved.deletedAt = Game.time;
+      saved.updatedAt = Game.time;
+    }
+
+    return printLine(`${CONFIG.logPrefix} ${fmt(planRows.length)} plans deleted.`);
+  }
+
   const saved = getPlanStore()[planId];
   if (!saved) return printLine(`${CONFIG.logPrefix} Plan not found: ${planId}`);
 
@@ -1115,18 +1222,143 @@ function deletePlan(planId) {
   saved.deletedAt = Game.time;
   saved.updatedAt = Game.time;
 
-  return printLine(`${CONFIG.logPrefix} deleted plan ${planId}`);
+  return printLine(`${CONFIG.logPrefix} Plan ${planId} deleted.`);
+}
+
+function deletePlan(planId) {
+  console.log(`${CONFIG.logPrefix} deletePlan() is deprecated. Use market.clearPlan().`);
+  return clearPlan(planId);
+}
+
+function removePlan(planId) {
+  console.log(`${CONFIG.logPrefix} removePlan() is deprecated. Use market.clearPlan().`);
+  return clearPlan(planId);
 }
 
 function clearPlans() {
-  const planRows = Object.values(getPlanStore()).filter((saved) => saved.status !== "deleted");
-  for (const saved of planRows) {
-    saved.status = "deleted";
-    saved.deletedAt = Game.time;
-    saved.updatedAt = Game.time;
+  console.log(`${CONFIG.logPrefix} clearPlans() is deprecated. Use market.clearPlan("all").`);
+  return clearPlan("all");
+}
+
+function planSummary() {
+  const rows = Object.values(getPlanStore());
+  const counts = {
+    ready: 0,
+    blocked: 0,
+    stale: 0,
+    deleted: 0,
+    buy: 0,
+    sell: 0,
+  };
+
+  for (const saved of rows) {
+    if (saved.status === "deleted") {
+      counts.deleted += 1;
+      continue;
+    }
+
+    const review = reviewPlanState(saved);
+    if (review.statusChanged) {
+      saved.status = review.status;
+      saved.updatedAt = Game.time;
+    }
+
+    counts[review.status] = (counts[review.status] || 0) + 1;
+    if (saved.type === "buy") counts.buy += 1;
+    if (saved.type === "sell") counts.sell += 1;
   }
 
-  return printLine(`${CONFIG.logPrefix} deleted ${fmt(planRows.length)} market plan(s)`);
+  return printBlock([
+    `${CONFIG.logPrefix} Plan Summary`,
+    "",
+    `Ready: ${fmt(counts.ready)}`,
+    `Blocked: ${fmt(counts.blocked)}`,
+    `Stale: ${fmt(counts.stale)}`,
+    `Deleted: ${fmt(counts.deleted)}`,
+    "",
+    `Buy Plans: ${fmt(counts.buy)}`,
+    `Sell Plans: ${fmt(counts.sell)}`,
+  ]);
+}
+
+function duplicatePlanPairs(rows) {
+  const byKey = {};
+  const pairs = [];
+
+  for (const saved of rows) {
+    if (!saved.selectedOrderId) continue;
+
+    const key = [
+      saved.type,
+      saved.roomName,
+      saved.resourceType,
+      saved.selectedOrderId,
+    ].join("|");
+
+    if (byKey[key]) {
+      pairs.push([byKey[key].id, saved.id]);
+    } else {
+      byKey[key] = saved;
+    }
+  }
+
+  return pairs;
+}
+
+function planAudit() {
+  const rows = activePlanRows();
+  const ready = [];
+  const stale = [];
+  const blocked = [];
+  const missingOrder = [];
+  const unaffordableBuy = [];
+  const insufficientResource = [];
+  const cooldownBlocked = [];
+
+  for (const saved of rows) {
+    const review = reviewPlanState(saved);
+    if (review.statusChanged) {
+      saved.status = review.status;
+      saved.updatedAt = Game.time;
+    }
+
+    if (review.status === "ready") ready.push(saved.id);
+    if (review.status === "stale") stale.push(saved.id);
+    if (review.status === "blocked") {
+      blocked.push({
+        id: saved.id,
+        reason: review.blockedReasons[0] || "blocked",
+      });
+    }
+    if (review.categories.indexOf("missing-order") !== -1) missingOrder.push(saved.id);
+    if (review.categories.indexOf("unaffordable-buy") !== -1) unaffordableBuy.push(saved.id);
+    if (review.categories.indexOf("insufficient-resource") !== -1) insufficientResource.push(saved.id);
+    if (review.categories.indexOf("cooldown-blocked") !== -1) cooldownBlocked.push(saved.id);
+  }
+
+  const duplicates = duplicatePlanPairs(rows).slice(0, CONFIG.intelligenceLimit);
+  const lines = [`${CONFIG.logPrefix} Plan Audit`];
+  const pushList = function (title, values, formatter) {
+    if (!values.length) return;
+    lines.push("");
+    lines.push(`${title}:`);
+    for (const value of values.slice(0, CONFIG.intelligenceLimit)) {
+      lines.push(`  ${formatter ? formatter(value) : value}`);
+    }
+  };
+
+  pushList("STALE", stale);
+  pushList("BLOCKED", blocked, (row) => `${row.id} (${row.reason})`);
+  pushList("DUPLICATES", duplicates, (pair) => `${pair[0]} and ${pair[1]}`);
+  pushList("MISSING ORDER", missingOrder);
+  pushList("UNAFFORDABLE BUY", unaffordableBuy);
+  pushList("INSUFFICIENT RESOURCE SELL", insufficientResource);
+  pushList("COOLDOWN BLOCKED", cooldownBlocked);
+
+  lines.push("");
+  lines.push(`READY: ${fmt(ready.length)} plans`);
+
+  return printBlock(lines);
 }
 
 function bestOwnedRoomForBuy(amount, order) {
@@ -1206,9 +1438,14 @@ function help() {
     "  market.plans()",
     '  market.plans("all"|"history")',
     "  market.plan(planId)",
-    "  market.deletePlan(planId)",
-    "  market.removePlan(planId)",
-    "  market.clearPlans()",
+    "  market.planSummary()",
+    "  market.planReview(planId)",
+    "  market.planAudit()",
+    "  market.clearPlan(planId)",
+    '  market.clearPlan("all")',
+    "  market.deletePlan(planId) [deprecated: use market.clearPlan(planId)]",
+    "  market.removePlan(planId) [deprecated: use market.clearPlan(planId)]",
+    '  market.clearPlans() [deprecated: use market.clearPlan("all")]',
     "",
     "[MARKET] Manual trading:",
     "  market.buy(resource, amount, roomName)",
@@ -2101,8 +2338,12 @@ function registerGlobals() {
     planBuy,
     plans,
     plan,
+    planSummary,
+    planReview,
+    planAudit,
+    clearPlan,
     deletePlan,
-    removePlan: deletePlan,
+    removePlan,
     clearPlans,
     buy,
     sell,
@@ -2145,8 +2386,12 @@ module.exports = {
   planBuy,
   plans,
   plan,
+  planSummary,
+  planReview,
+  planAudit,
+  clearPlan,
   deletePlan,
-  removePlan: deletePlan,
+  removePlan,
   clearPlans,
   buy,
   sell,

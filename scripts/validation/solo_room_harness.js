@@ -7725,7 +7725,12 @@ function runMarketDryRunPlanningScenario() {
     captured.lines.some(function (line) { return line.indexOf("market.planSell(resource, amount, roomName)") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("market.planBuy(resource, amount, roomName)") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("market.plans()") !== -1; }) &&
-      captured.lines.some(function (line) { return line.indexOf("market.deletePlan(planId)") !== -1; }),
+      captured.lines.some(function (line) { return line.indexOf("market.planSummary()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.planReview(planId)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.planAudit()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.clearPlan(planId)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf('market.clearPlan("all")') !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.deletePlan(planId) [deprecated") !== -1; }),
     `market.help should include dry-run plan commands, got ${captured.lines.join(" / ")}`,
   );
 
@@ -7739,6 +7744,10 @@ function runMarketDryRunPlanningScenario() {
   assert(savedPlan.type === "sell", `expected sell plan type, got ${savedPlan.type}`);
   assert(savedPlan.selectedOrderId === "buy_H_plan", `expected selected buy order, got ${savedPlan.selectedOrderId}`);
   assert(savedPlan.executableAmount === 3000, `expected sell executable 3000, got ${savedPlan.executableAmount}`);
+
+  report = marketConsole.planSell("H", 10000, sellRoom.name);
+  assert(report.indexOf("READY") !== -1, `duplicate sell plan should be ready, got ${report}`);
+  const duplicateSellPlanId = getMarketPlanIdFromReport(report);
 
   report = marketConsole.planSell("Z", 1000, sellRoom.name);
   assert(report.indexOf("BLOCKED") !== -1, `missing resource sell plan should be blocked, got ${report}`);
@@ -7754,6 +7763,7 @@ function runMarketDryRunPlanningScenario() {
   report = marketConsole.planSell("H", 1000, lowEnergyRoom.name);
   assert(report.indexOf("BLOCKED") !== -1, `low-energy sell plan should be blocked, got ${report}`);
   assert(report.indexOf("insufficient terminal energy") !== -1 || report.indexOf("low terminal energy") !== -1, `expected energy blocker, got ${report}`);
+  const lowEnergyPlanId = getMarketPlanIdFromReport(report);
 
   const buyRoom = addOwnedMarketIntelRoom("VAL_MARKET_PLAN_BUY", {
     storageStore: { energy: 250000 },
@@ -7808,14 +7818,57 @@ function runMarketDryRunPlanningScenario() {
   assert(typeof report === "string", "market.plans should return a printable string");
   assert(report.indexOf(sellPlanId) !== -1 && report.indexOf(buyPlanId) !== -1, `market.plans should list active plans, got ${report}`);
 
+  report = marketConsole.planReview(sellPlanId);
+  assert(typeof report === "string", "market.planReview should return a printable string");
+  assert(report.indexOf("READY") !== -1, `planReview should confirm ready plans, got ${report}`);
+  assert(report.indexOf("Plan still executable.") !== -1, `ready planReview should include operator summary, got ${report}`);
+
+  report = marketConsole.planReview(lowEnergyPlanId);
+  assert(report.indexOf("BLOCKED") !== -1, `planReview should detect blocked plans, got ${report}`);
+  assert(report.indexOf("terminal energy") !== -1, `blocked planReview should explain energy blocker, got ${report}`);
+
+  report = marketConsole.planAudit();
+  assert(typeof report === "string", "market.planAudit should return a printable string");
+  assert(report.indexOf("DUPLICATES:") !== -1, `planAudit should flag duplicate plans, got ${report}`);
+  assert(report.indexOf(duplicateSellPlanId) !== -1, `planAudit should include duplicate plan id, got ${report}`);
+  assert(report.indexOf("BLOCKED:") !== -1, `planAudit should flag blocked plans, got ${report}`);
+  assert(report.indexOf(lowEnergyPlanId) !== -1, `planAudit should include blocked plan id, got ${report}`);
+
+  report = marketConsole.planSummary();
+  assert(typeof report === "string", "market.planSummary should return a printable string");
+  assert(report.indexOf("Ready: 3") !== -1, `planSummary should count ready plans, got ${report}`);
+  assert(report.indexOf("Blocked: 2") !== -1, `planSummary should count blocked plans, got ${report}`);
+  assert(report.indexOf("Stale: 3") !== -1, `planSummary should count stale plans, got ${report}`);
+  assert(report.indexOf("Deleted: 0") !== -1, `planSummary should count deleted plans, got ${report}`);
+  assert(report.indexOf("Buy Plans: 4") !== -1, `planSummary should count buy plans, got ${report}`);
+  assert(report.indexOf("Sell Plans: 4") !== -1, `planSummary should count sell plans, got ${report}`);
+
   installPlanMarket([]);
   report = marketConsole.plan(sellPlanId);
   assert(typeof report === "string", "market.plan should return a printable string");
   assert(report.indexOf("STALE") !== -1, `market.plan should detect missing selected order as stale, got ${report}`);
   assert(Memory.consoleTools.market.plans[sellPlanId].status === "stale", "market.plan should mark stale plans stale");
 
-  report = marketConsole.deletePlan(buyPlanId);
-  assert(report.indexOf("deleted plan") !== -1, `deletePlan should return a printable deletion report, got ${report}`);
+  report = marketConsole.planReview(duplicateSellPlanId);
+  assert(report.indexOf("STALE") !== -1, `planReview should detect stale missing-order plans, got ${report}`);
+  assert(Memory.consoleTools.market.plans[duplicateSellPlanId].status === "stale", "planReview should mark stale plans stale");
+
+  report = marketConsole.planAudit();
+  assert(report.indexOf("STALE:") !== -1, `planAudit should flag stale plans, got ${report}`);
+  assert(report.indexOf(sellPlanId) !== -1, `planAudit should include stale plan id, got ${report}`);
+  assert(report.indexOf("MISSING ORDER:") !== -1, `planAudit should flag missing-order plans, got ${report}`);
+
+  report = marketConsole.planSummary();
+  assert(typeof report === "string", "market.planSummary should return a printable string");
+  assert(report.indexOf("Ready: 0") !== -1, `planSummary should count ready plans, got ${report}`);
+  assert(report.indexOf("Blocked: 0") !== -1, `planSummary should count blocked plans, got ${report}`);
+  assert(report.indexOf("Stale: 8") !== -1, `planSummary should count stale plans, got ${report}`);
+  assert(report.indexOf("Deleted: 0") !== -1, `planSummary should count deleted plans, got ${report}`);
+  assert(report.indexOf("Buy Plans: 4") !== -1, `planSummary should count buy plans, got ${report}`);
+  assert(report.indexOf("Sell Plans: 4") !== -1, `planSummary should count sell plans, got ${report}`);
+
+  report = marketConsole.clearPlan(buyPlanId);
+  assert(report.indexOf(`Plan ${buyPlanId} deleted.`) !== -1, `clearPlan should return a printable deletion report, got ${report}`);
   assert(Memory.consoleTools.market.plans[buyPlanId].status === "deleted", "deletePlan should soft-delete plans");
   report = marketConsole.plans();
   assert(
@@ -7828,6 +7881,47 @@ function runMarketDryRunPlanningScenario() {
     `market.plans(all) should include deleted plans, got ${report}`,
   );
 
+  installPlanMarket(readyOrders);
+  report = marketConsole.planBuy("Z", 1000, buyRoom.name);
+  const deleteAliasPlanId = getMarketPlanIdFromReport(report);
+  captured = captureConsoleLines(function () {
+    return marketConsole.deletePlan(deleteAliasPlanId);
+  });
+  assert(captured.result.indexOf(`Plan ${deleteAliasPlanId} deleted.`) !== -1, `deletePlan alias should route to clearPlan, got ${captured.result}`);
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("deletePlan() is deprecated. Use market.clearPlan().") !== -1; }),
+    `deletePlan alias should print deprecation, got ${captured.lines.join(" / ")}`,
+  );
+
+  report = marketConsole.planBuy("Z", 1000, buyRoom.name);
+  const removeAliasPlanId = getMarketPlanIdFromReport(report);
+  captured = captureConsoleLines(function () {
+    return marketConsole.removePlan(removeAliasPlanId);
+  });
+  assert(captured.result.indexOf(`Plan ${removeAliasPlanId} deleted.`) !== -1, `removePlan alias should route to clearPlan, got ${captured.result}`);
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("removePlan() is deprecated. Use market.clearPlan().") !== -1; }),
+    `removePlan alias should print deprecation, got ${captured.lines.join(" / ")}`,
+  );
+
+  report = marketConsole.planBuy("Z", 1000, buyRoom.name);
+  const clearAllPlanId = getMarketPlanIdFromReport(report);
+  report = marketConsole.clearPlan("all");
+  assert(report.indexOf("plans deleted.") !== -1, `clearPlan(all) should return deleted count, got ${report}`);
+  assert(Memory.consoleTools.market.plans[clearAllPlanId].status === "deleted", "clearPlan(all) should soft-delete active plans");
+
+  report = marketConsole.planSell("H", 1000, sellRoom.name);
+  const clearPlansAliasPlanId = getMarketPlanIdFromReport(report);
+  captured = captureConsoleLines(function () {
+    return marketConsole.clearPlans();
+  });
+  assert(captured.result.indexOf("plans deleted.") !== -1, `clearPlans alias should route to clearPlan(all), got ${captured.result}`);
+  assert(Memory.consoleTools.market.plans[clearPlansAliasPlanId].status === "deleted", "clearPlans alias should soft-delete active plans");
+  assert(
+    captured.lines.some(function (line) { return line.indexOf('clearPlans() is deprecated. Use market.clearPlan("all").') !== -1; }),
+    `clearPlans alias should print deprecation, got ${captured.lines.join(" / ")}`,
+  );
+
   const dealCount = fakeMarketTrackers.reduce(function (total, tracker) {
     return total + tracker.length;
   }, 0);
@@ -7836,6 +7930,7 @@ function runMarketDryRunPlanningScenario() {
   }, 0);
   assert(dealCount === 0, `dry-run plans must not execute Game.market.deal, got ${dealCount}`);
   assert(createdOrderCount === 0, `dry-run plans must not create market orders, got ${createdOrderCount}`);
+  assert(currentRuntime.terminalSends.length === 0, `dry-run plans must not send terminal resources, got ${currentRuntime.terminalSends.length}`);
   assert(
     opsLogisticsManager.listRequests().length === requestCountBefore,
     "dry-run plans must not create ops logistics requests",
