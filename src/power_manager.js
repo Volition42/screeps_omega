@@ -36,8 +36,24 @@ const READINESS = {
   PROCESSED: "PROCESSED",
 };
 
+const REFILL = {
+  READY: "REFILL_READY",
+  NOT_NEEDED: "REFILL_NOT_NEEDED",
+  NEEDS_ENERGY: "REFILL_NEEDS_ENERGY",
+  NEEDS_POWER: "REFILL_NEEDS_POWER",
+  NEEDS_BOTH: "REFILL_NEEDS_BOTH",
+  BLOCKED_NO_STORAGE: "REFILL_BLOCKED_NO_STORAGE",
+  BLOCKED_NO_TERMINAL: "REFILL_BLOCKED_NO_TERMINAL",
+  BLOCKED_STORAGE_RESERVE: "REFILL_BLOCKED_STORAGE_RESERVE",
+  BLOCKED_TERMINAL_RESERVE: "REFILL_BLOCKED_TERMINAL_RESERVE",
+  BLOCKED_THREAT: "REFILL_BLOCKED_THREAT",
+  BLOCKED_CPU_PRESSURE: "REFILL_BLOCKED_CPU_PRESSURE",
+  REQUEST_PENDING: "REFILL_REQUEST_PENDING",
+};
+
 module.exports = {
   READINESS: READINESS,
+  REFILL: REFILL,
 
   run(room, state) {
     if (!config.POWER || !config.POWER.ENABLED) return;
@@ -68,6 +84,7 @@ module.exports = {
     const powerSpawns = this.getPowerSpawns(room, state);
     const powerSpawn = powerSpawns.length > 0 ? powerSpawns[0] : null;
     const storageEnergy = this.getStoredAmount(room.storage, RESOURCE_ENERGY);
+    const storagePower = this.getStoredAmount(room.storage, RESOURCE_POWER);
     const terminalEnergy = this.getStoredAmount(room.terminal, RESOURCE_ENERGY);
     const terminalPower = this.getStoredAmount(room.terminal, RESOURCE_POWER);
     const powerSpawnEnergy = this.getStoredAmount(powerSpawn, RESOURCE_ENERGY);
@@ -91,6 +108,7 @@ module.exports = {
       powerSpawnEnergy: powerSpawnEnergy,
       powerSpawnPower: powerSpawnPower,
       storageEnergy: storageEnergy,
+      storagePower: storagePower,
       terminalEnergy: terminalEnergy,
       terminalPower: terminalPower,
       minStorageEnergy: settings.MIN_STORAGE_ENERGY,
@@ -161,6 +179,7 @@ module.exports = {
     mem.powerSpawnEnergy = status.powerSpawnEnergy;
     mem.powerSpawnPower = status.powerSpawnPower;
     mem.storageEnergy = status.storageEnergy;
+    mem.storagePower = status.storagePower || 0;
     mem.terminalEnergy = status.terminalEnergy;
     mem.terminalPower = status.terminalPower;
     mem.minStorageEnergy = status.minStorageEnergy;
@@ -169,10 +188,117 @@ module.exports = {
     mem.powerTarget = status.powerTarget;
     mem.processed = false;
     mem.result = status.result;
+    this.writeRefillStatus(mem, status);
 
     // Legacy aliases kept for existing console snippets and memory inspection.
     mem.energy = status.powerSpawnEnergy;
     mem.power = status.powerSpawnPower;
+  },
+
+  writeRefillStatus(mem, status) {
+    const refill = this.getRefillStatus(status);
+
+    mem.refillState = refill.state;
+    mem.refillEnergyNeeded = refill.energyNeeded;
+    mem.refillPowerNeeded = refill.powerNeeded;
+    mem.refillEnergyStorageAvailable = refill.energyStorageAvailable;
+    mem.refillEnergyTerminalAvailable = refill.energyTerminalAvailable;
+    mem.refillPowerStorageAvailable = refill.powerStorageAvailable;
+    mem.refillPowerTerminalAvailable = refill.powerTerminalAvailable;
+    mem.refillBlockedReason = refill.blockedReason;
+    mem.refillPendingRequests = refill.pendingRequests;
+    mem.refillPendingSummary = refill.pendingSummary;
+  },
+
+  getRefillStatus(status) {
+    const energyNeeded = Math.max(
+      0,
+      (status.energyTarget || 0) - (status.powerSpawnEnergy || 0),
+    );
+    const powerNeeded = Math.max(
+      0,
+      (status.powerTarget || 0) - (status.powerSpawnPower || 0),
+    );
+    const energyStorageAvailable = status.powerSpawns > 0 && status.storageEnergy
+      ? Math.max(0, status.storageEnergy - (status.minStorageEnergy || 0))
+      : 0;
+    const energyTerminalAvailable = status.powerSpawns > 0 && status.terminalEnergy
+      ? Math.max(0, status.terminalEnergy - (status.minTerminalEnergy || 0))
+      : 0;
+    const powerStorageAvailable = status.powerSpawns > 0 ? status.storagePower || 0 : 0;
+    const powerTerminalAvailable = status.powerSpawns > 0 ? status.terminalPower || 0 : 0;
+    const needsEnergy = energyNeeded > 0;
+    const needsPower = powerNeeded > 0;
+    let state = REFILL.NOT_NEEDED;
+    let blockedReason = null;
+
+    if (status.powerSpawns <= 0) {
+      return {
+        state: REFILL.NOT_NEEDED,
+        energyNeeded: 0,
+        powerNeeded: 0,
+        energyStorageAvailable: 0,
+        energyTerminalAvailable: 0,
+        powerStorageAvailable: 0,
+        powerTerminalAvailable: 0,
+        blockedReason: null,
+        pendingRequests: 0,
+        pendingSummary: "none",
+      };
+    }
+
+    if (!needsEnergy && !needsPower) {
+      state = REFILL.NOT_NEEDED;
+    } else if (status.reason === READINESS.BLOCKED_THREAT) {
+      state = REFILL.BLOCKED_THREAT;
+      blockedReason = READINESS.BLOCKED_THREAT;
+    } else if (status.reason === READINESS.BLOCKED_CPU_PRESSURE) {
+      state = REFILL.BLOCKED_CPU_PRESSURE;
+      blockedReason = READINESS.BLOCKED_CPU_PRESSURE;
+    } else if (needsEnergy && !status.storageEnergy && !energyTerminalAvailable) {
+      state = REFILL.BLOCKED_NO_STORAGE;
+      blockedReason = REFILL.BLOCKED_NO_STORAGE;
+    } else if (
+      needsPower &&
+      powerStorageAvailable <= 0 &&
+      powerTerminalAvailable <= 0 &&
+      !status.terminalPower
+    ) {
+      state = REFILL.BLOCKED_NO_TERMINAL;
+      blockedReason = REFILL.BLOCKED_NO_TERMINAL;
+    } else if (needsEnergy && energyStorageAvailable <= 0) {
+      state = REFILL.BLOCKED_STORAGE_RESERVE;
+      blockedReason = REFILL.BLOCKED_STORAGE_RESERVE;
+    } else if (
+      needsEnergy &&
+      status.minTerminalEnergy > 0 &&
+      energyTerminalAvailable <= 0 &&
+      energyStorageAvailable <= 0
+    ) {
+      state = REFILL.BLOCKED_TERMINAL_RESERVE;
+      blockedReason = REFILL.BLOCKED_TERMINAL_RESERVE;
+    } else if (needsEnergy && needsPower) {
+      state = REFILL.NEEDS_BOTH;
+    } else if (needsEnergy) {
+      state = REFILL.NEEDS_ENERGY;
+    } else if (needsPower) {
+      state = REFILL.NEEDS_POWER;
+    } else {
+      state = REFILL.READY;
+    }
+
+    return {
+      state: state,
+      energyNeeded: energyNeeded,
+      powerNeeded: powerNeeded,
+      energyStorageAvailable: energyStorageAvailable,
+      energyTerminalAvailable: energyTerminalAvailable,
+      powerStorageAvailable: powerStorageAvailable,
+      powerTerminalAvailable: powerTerminalAvailable,
+      blockedReason: blockedReason,
+      pendingRequests: 0,
+      pendingSummary: "none",
+    };
   },
 
   getReadiness(

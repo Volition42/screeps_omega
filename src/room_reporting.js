@@ -6,6 +6,7 @@ const roomProgress = require("room_progress");
 const roomState = require("room_state");
 const statsManager = require("stats_manager");
 const observerManager = require("observer_manager");
+const opsLogisticsManager = require("ops_logistics_manager");
 
 const SECTION_ORDER = [
   "overview",
@@ -982,6 +983,7 @@ function getPowerSummary(room) {
 
   return {
     powerSpawns: power.powerSpawns || 0,
+    powerSpawnId: power.powerSpawnId || null,
     powerSpawnEnergy: power.powerSpawnEnergy || power.energy || 0,
     powerSpawnPower: power.powerSpawnPower || power.power || 0,
     storageEnergy: typeof power.storageEnergy === "number"
@@ -996,6 +998,11 @@ function getPowerSummary(room) {
       ? power.terminalPower
       : terminal && terminal.store
         ? terminal.store[RESOURCE_POWER] || 0
+        : 0,
+    storagePower: typeof power.storagePower === "number"
+      ? power.storagePower
+      : room.storage && room.storage.store
+        ? room.storage.store[RESOURCE_POWER] || 0
         : 0,
     lastProcessed: typeof power.lastProcessed === "number"
       ? power.lastProcessed
@@ -1012,6 +1019,67 @@ function getPowerSummary(room) {
       (config.POWER ? config.POWER.POWER_SPAWN_ENERGY_TARGET || 0 : 0),
     powerTarget: power.powerTarget ||
       (config.POWER ? config.POWER.POWER_SPAWN_POWER_TARGET || 0 : 0),
+    refillState: power.refillState || "REFILL_UNKNOWN",
+    refillEnergyNeeded: power.refillEnergyNeeded || 0,
+    refillPowerNeeded: power.refillPowerNeeded || 0,
+    refillEnergyStorageAvailable: power.refillEnergyStorageAvailable || 0,
+    refillEnergyTerminalAvailable: power.refillEnergyTerminalAvailable || 0,
+    refillPowerStorageAvailable: power.refillPowerStorageAvailable || 0,
+    refillPowerTerminalAvailable: power.refillPowerTerminalAvailable || 0,
+    refillBlockedReason: power.refillBlockedReason || "none",
+    refillPendingRequests: power.refillPendingRequests || 0,
+    refillPendingSummary: power.refillPendingSummary || "none",
+  };
+}
+
+function isPowerSpawnRefillTaskLabel(label) {
+  return label === "power_spawn_energy" || label === "power_spawn_power";
+}
+
+function isPowerSpawnRefillRequest(row, powerSpawnId) {
+  if (!row || row.status !== "open") return false;
+  if (row.resourceType !== RESOURCE_ENERGY && row.resourceType !== RESOURCE_POWER) {
+    return false;
+  }
+
+  return (
+    row.to === "powerSpawn" ||
+    row.to === "power_spawn" ||
+    row.targetType === STRUCTURE_POWER_SPAWN ||
+    (powerSpawnId && row.targetId === powerSpawnId) ||
+    isPowerSpawnRefillTaskLabel(row.label)
+  );
+}
+
+function getPowerRefillPendingSummary(room, power, advanced) {
+  const summaries = [];
+  let count = 0;
+
+  if (advanced && isPowerSpawnRefillTaskLabel(advanced.taskLabel)) {
+    count += 1;
+    summaries.push("advanced:" + advanced.taskLabel);
+  }
+
+  const requests = opsLogisticsManager.listRequests(room.name).filter(function (row) {
+    return isPowerSpawnRefillRequest(row, power.powerSpawnId);
+  });
+
+  count += requests.length;
+  for (let i = 0; i < requests.length && summaries.length < 2; i++) {
+    summaries.push(
+      [
+        requests[i].id,
+        requests[i].resourceType,
+        fmtAmount(requests[i].remaining || requests[i].amount || 0),
+      ].join(" "),
+    );
+  }
+
+  if (summaries.length === 0) summaries.push("none");
+
+  return {
+    count: count,
+    summary: summaries.join("; "),
   };
 }
 
@@ -1325,6 +1393,12 @@ module.exports = {
     const advanced = getAdvancedSummary(room, summaryState);
     const observer = getObserverSummary(room, summaryState);
     const power = getPowerSummary(room);
+    const powerRefillPending = getPowerRefillPendingSummary(room, power, advanced);
+    const refillState =
+      powerRefillPending.count > 0 &&
+      (power.refillEnergyNeeded > 0 || power.refillPowerNeeded > 0)
+        ? "REFILL_REQUEST_PENDING"
+        : power.refillState;
     const terminalBalance = summaryState.terminalBalance || {};
     const mineralMining = getMineralMiningSummary(room, summaryState);
     const mineralLine = formatMineralMiningLine(mineralMining);
@@ -1434,6 +1508,9 @@ module.exports = {
         `PowerSpawns ${power.powerSpawns} | Energy ${fmtAmount(power.powerSpawnEnergy)}/${fmtAmount(power.energyTarget)} | Power ${fmtAmount(power.powerSpawnPower)}/${fmtAmount(power.powerTarget)}`,
         `Storage Energy ${fmtAmount(power.storageEnergy)}/${fmtAmount(power.minStorageEnergy)} | Terminal Energy ${fmtAmount(power.terminalEnergy)}/${fmtAmount(power.minTerminalEnergy)}`,
         `Terminal Power ${fmtAmount(power.terminalPower)} | Balance ${terminalBalance.state || "unknown"} | pending ${terminalBalance.pendingMoves || 0}`,
+        `Refill ${refillState} | Energy need ${fmtAmount(power.refillEnergyNeeded)} | Power need ${fmtAmount(power.refillPowerNeeded)}`,
+        `Refill sources energy storage ${fmtAmount(power.refillEnergyStorageAvailable)} terminal ${fmtAmount(power.refillEnergyTerminalAvailable)} | power storage ${fmtAmount(power.refillPowerStorageAvailable)} terminal ${fmtAmount(power.refillPowerTerminalAvailable)}`,
+        `Refill pending ${powerRefillPending.count} | ${powerRefillPending.summary} | blocked ${power.refillBlockedReason || "none"}`,
         `Last processed ${power.lastProcessed !== null ? power.lastProcessed : "--"} | Total ${fmtAmount(power.totalProcessed)} | Last seen ${power.lastSeen !== null ? power.lastSeen : "--"}`,
       ],
       observer: [

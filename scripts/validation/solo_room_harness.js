@@ -6550,6 +6550,80 @@ function runPowerReportingScenario() {
   });
 }
 
+function runPowerSpawnRefillVisibilityScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 0,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 250 },
+    });
+    room.storage.store.power = 25;
+    const state = roomState.collect(room);
+
+    powerManager.run(room, state);
+    advancedStructureManager.run(room, state);
+
+    const powerSpawn = state.structuresByType[STRUCTURE_POWER_SPAWN][0];
+    Memory.ops = {
+      logistics: {
+        requests: {
+          refill_power_spawn_energy: {
+            id: "refill_power_spawn_energy",
+            type: "move",
+            status: "open",
+            roomName: room.name,
+            resourceType: RESOURCE_ENERGY,
+            amount: 1000,
+            remaining: 1000,
+            from: "storage",
+            to: "powerSpawn",
+            targetId: powerSpawn.id,
+            priority: 70,
+            createdAt: Game.time,
+            updatedAt: Game.time,
+            claims: {},
+          },
+        },
+      },
+    };
+
+    const memory = Memory.rooms[room.name].power;
+    assert(memory.refillState === "REFILL_NEEDS_BOTH", `expected refill needs both, got ${memory.refillState}`);
+    assert(memory.refillEnergyNeeded === 4000, `expected energy need 4000, got ${memory.refillEnergyNeeded}`);
+    assert(memory.refillPowerNeeded === 100, `expected power need 100, got ${memory.refillPowerNeeded}`);
+    assert(memory.refillEnergyStorageAvailable === 150000, `expected storage energy available 150000, got ${memory.refillEnergyStorageAvailable}`);
+    assert(memory.refillPowerStorageAvailable === 25, `expected storage power available 25, got ${memory.refillPowerStorageAvailable}`);
+    assert(memory.refillPowerTerminalAvailable === 250, `expected terminal power available 250, got ${memory.refillPowerTerminalAvailable}`);
+
+    ops.registerGlobals();
+    const captured = captureConsoleLines(function () {
+      return global.ops.room(room.name, "power");
+    });
+
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Refill REFILL_REQUEST_PENDING") !== -1; }),
+      `expected pending refill state in report, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Energy need 4,000") !== -1 && line.indexOf("Power need 100") !== -1; }),
+      `expected refill need line, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("energy storage 150,000 terminal 12,000") !== -1; }),
+      `expected energy source availability, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("power storage 25 terminal 250") !== -1; }),
+      `expected power source availability, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("Refill pending 2") !== -1 && line.indexOf("advanced:power_spawn_power") !== -1; }),
+      `expected pending refill summary, got ${captured.lines.join(" / ")}`,
+    );
+  });
+}
+
 function withBoostTargets(targets, fn) {
   const previousTargets = config.ADVANCED.LABS.BOOST_TARGETS;
   config.ADVANCED.LABS.BOOST_TARGETS = targets;
@@ -11528,6 +11602,7 @@ function main() {
     ["power_spawn_threat_block", runPowerSpawnThreatBlockScenario],
     ["power_spawn_cpu_block", runPowerSpawnCpuBlockScenario],
     ["power_reporting", runPowerReportingScenario],
+    ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
     ["lab_boost_direct", runLabBoostDirectScenario],
     ["lab_boost_intermediate", runLabBoostIntermediateScenario],
     ["lab_loaded_reaction_preserved", runLabLoadedReactionPreservedScenario],
