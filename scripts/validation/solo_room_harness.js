@@ -6620,7 +6620,7 @@ function installFakeMarket(orders, options) {
         amount: amount,
         roomName: roomName,
       });
-      return OK;
+      return settings.dealResult !== undefined ? settings.dealResult : OK;
     },
     createOrder(order) {
       createdOrders.push(order);
@@ -7739,8 +7739,8 @@ function runMarketDryRunPlanningScenario() {
 
   let report = marketConsole.executionStatus();
   assert(typeof report === "string", "market.executionStatus should return a printable string");
-  assert(report.indexOf("Engine: DISABLED") !== -1, `executionStatus should state disabled engine, got ${report}`);
-  assert(report.indexOf("Game.market.deal: not called by this layer") !== -1, `executionStatus should state no deal calls, got ${report}`);
+  assert(report.indexOf("Engine: MANUAL_APPROVAL_GATED") !== -1, `executionStatus should state manual approval-gated engine, got ${report}`);
+  assert(report.indexOf("market.executePlan(planId)") !== -1, `executionStatus should point to executePlan gate, got ${report}`);
 
   report = marketConsole.executionLimits();
   assert(typeof report === "string", "market.executionLimits should return a printable string");
@@ -8027,6 +8027,173 @@ function runMarketDryRunPlanningScenario() {
   assert(
     opsLogisticsManager.listRequests().length === requestCountBefore,
     "dry-run plans must not create ops logistics requests",
+  );
+}
+
+function runMarketApprovalGatedExecutionScenario() {
+  Memory.consoleTools = { market: { plans: {} } };
+  Memory.ops = { logistics: { requests: {} } };
+
+  const orders = [
+    {
+      id: "buy_H_execute",
+      type: ORDER_BUY,
+      resourceType: "H",
+      amount: 5000,
+      price: 0.72,
+      roomName: "W42N9",
+    },
+    {
+      id: "sell_Z_execute",
+      type: ORDER_SELL,
+      resourceType: "Z",
+      amount: 4000,
+      price: 0.35,
+      roomName: "W42N9",
+    },
+  ];
+  const sellRoom = buildOpsLogisticsRoom("VAL_MARKET_EXEC_SELL", {
+    tick: 1370,
+    storageStore: { energy: 250000, H: 10000 },
+    terminalStore: { energy: 12000, H: 5000 },
+  });
+  const buyRoom = addOwnedMarketIntelRoom("VAL_MARKET_EXEC_BUY", {
+    storageStore: { energy: 250000 },
+    terminalStore: { energy: 12000 },
+  });
+  const fakeTrackers = [];
+  const installPlanMarket = function (marketOrders, options) {
+    const tracker = installFakeMarket(marketOrders, options);
+    fakeTrackers.push(tracker);
+    return tracker;
+  };
+
+  installPlanMarket(orders);
+  const requestCountBefore = opsLogisticsManager.listRequests().length;
+
+  let captured = captureConsoleLines(function () {
+    return marketConsole.help();
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("market.executePlan(planId)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.history()") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.history(resource)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("market.history(roomName)") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf('market.history("all")') !== -1; }),
+    `market.help should include Layer 3.6 execution and history commands, got ${captured.lines.join(" / ")}`,
+  );
+
+  let report = marketConsole.planSell("H", 3000, sellRoom.name);
+  const sellPlanId = getMarketPlanIdFromReport(report);
+  const sellDeals = installPlanMarket(orders);
+  report = marketConsole.executePlan(sellPlanId);
+  assert(typeof report === "string", "market.executePlan should return a printable string");
+  assert(sellDeals.length === 1, `executePlan should call Game.market.deal once for ready sell, got ${sellDeals.length}`);
+  assert(sellDeals[0].orderId === "buy_H_execute", `sell executePlan should use saved order, got ${JSON.stringify(sellDeals[0])}`);
+  assert(sellDeals[0].amount === 3000, `sell executePlan should use final amount 3000, got ${sellDeals[0].amount}`);
+  assert(report.indexOf("EXECUTED") !== -1, `sell executePlan should report executed, got ${report}`);
+  let savedPlan = Memory.consoleTools.market.plans[sellPlanId];
+  assert(savedPlan.executionStatus === "executed", `sell plan should record executed status, got ${savedPlan.executionStatus}`);
+  assert(savedPlan.executedAmount === 3000, `sell plan should record executed amount, got ${savedPlan.executedAmount}`);
+  assert(savedPlan.resultLabel === "OK", `sell plan should record OK result, got ${savedPlan.resultLabel}`);
+  assert(Memory.consoleTools.market.history.length === 1, "sell execution should create history entry");
+
+  report = marketConsole.planBuy("Z", 2000, buyRoom.name);
+  const buyPlanId = getMarketPlanIdFromReport(report);
+  const buyDeals = installPlanMarket(orders);
+  report = marketConsole.executePlan(buyPlanId);
+  assert(buyDeals.length === 1, `executePlan should call Game.market.deal once for ready buy, got ${buyDeals.length}`);
+  assert(buyDeals[0].orderId === "sell_Z_execute", `buy executePlan should use saved order, got ${JSON.stringify(buyDeals[0])}`);
+  assert(report.indexOf("EXECUTED") !== -1, `buy executePlan should report executed, got ${report}`);
+  savedPlan = Memory.consoleTools.market.plans[buyPlanId];
+  assert(savedPlan.executionStatus === "executed", `buy plan should record executed status, got ${savedPlan.executionStatus}`);
+  assert(Memory.consoleTools.market.history.length === 2, "buy execution should create history entry");
+
+  const lowEnergyRoom = addOwnedMarketIntelRoom("VAL_MARKET_EXEC_LOW", {
+    storageStore: { energy: 250000, H: 10000 },
+    terminalStore: { energy: 0, H: 5000 },
+  });
+  installPlanMarket(orders);
+  report = marketConsole.planSell("H", 1000, lowEnergyRoom.name);
+  const blockedPlanId = getMarketPlanIdFromReport(report);
+  const blockedDeals = installPlanMarket(orders);
+  report = marketConsole.executePlan(blockedPlanId);
+  assert(blockedDeals.length === 0, `blocked executePlan must not deal, got ${blockedDeals.length}`);
+  assert(report.indexOf("BLOCKED") !== -1, `blocked executePlan should report blocked, got ${report}`);
+  assert(Memory.consoleTools.market.plans[blockedPlanId].executionStatus === "blocked", "blocked plan should record blocked execution status");
+
+  installPlanMarket(orders);
+  report = marketConsole.planSell("H", 1000, sellRoom.name);
+  const stalePlanId = getMarketPlanIdFromReport(report);
+  const staleDeals = installPlanMarket([]);
+  report = marketConsole.executePlan(stalePlanId);
+  assert(staleDeals.length === 0, `stale executePlan must not deal, got ${staleDeals.length}`);
+  assert(report.indexOf("STALE") !== -1, `stale executePlan should report stale, got ${report}`);
+  assert(Memory.consoleTools.market.plans[stalePlanId].executionStatus === "stale", "stale plan should record stale execution status");
+
+  installPlanMarket(orders);
+  report = marketConsole.planSell("H", 3000, sellRoom.name);
+  const limitPlanId = getMarketPlanIdFromReport(report);
+  marketConsole.setExecutionLimit("maxSellAmount", 1000);
+  const limitDeals = installPlanMarket(orders);
+  report = marketConsole.executePlan(limitPlanId);
+  assert(limitDeals.length === 0, `limit-blocked executePlan must not deal, got ${limitDeals.length}`);
+  assert(report.indexOf("LIMIT_BLOCKED") !== -1, `limit-blocked executePlan should report limit blocked, got ${report}`);
+  assert(Memory.consoleTools.market.plans[limitPlanId].executionStatus === "limit_blocked", "limit-blocked plan should record limit_blocked status");
+  marketConsole.clearExecutionLimit("maxSellAmount");
+
+  installPlanMarket(orders);
+  report = marketConsole.planSell("H", 1000, sellRoom.name);
+  const failedPlanId = getMarketPlanIdFromReport(report);
+  const failedDeals = installPlanMarket(orders, { dealResult: ERR_BUSY });
+  report = marketConsole.executePlan(failedPlanId);
+  assert(failedDeals.length === 1, `failed deal executePlan should call deal once, got ${failedDeals.length}`);
+  assert(report.indexOf("FAILED") !== -1, `failed executePlan should report failed, got ${report}`);
+  assert(Memory.consoleTools.market.plans[failedPlanId].executionStatus === "failed", "failed plan should record failed status");
+  assert(Memory.consoleTools.market.plans[failedPlanId].resultLabel === "ERR_BUSY", "failed plan should record result label");
+
+  installPlanMarket(orders);
+  report = marketConsole.planSell("H", 6000, sellRoom.name);
+  const partialPlanId = getMarketPlanIdFromReport(report);
+  const partialDeals = installPlanMarket(orders);
+  report = marketConsole.executePlan(partialPlanId);
+  assert(partialDeals.length === 1, `partial executePlan should call deal once, got ${partialDeals.length}`);
+  assert(partialDeals[0].amount === 5000, `partial executePlan should deal final order amount 5000, got ${partialDeals[0].amount}`);
+  assert(report.indexOf("PARTIAL") !== -1, `partial executePlan should report partial, got ${report}`);
+  savedPlan = Memory.consoleTools.market.plans[partialPlanId];
+  assert(savedPlan.executionStatus === "partial", `partial plan should record partial, got ${savedPlan.executionStatus}`);
+  assert(savedPlan.executedAmount < savedPlan.requestedAmount, "partial plan should record executedAmount below requestedAmount");
+
+  report = marketConsole.history();
+  assert(typeof report === "string" && report.indexOf("[MARKET] Execution History") !== -1, `history should return printable string, got ${report}`);
+  report = marketConsole.history("H");
+  assert(report.indexOf("| H |") !== -1, `history(resource) should include H entries, got ${report}`);
+  assert(report.indexOf("| Z |") === -1, `history(resource) should filter out Z entries, got ${report}`);
+  report = marketConsole.history(sellRoom.name);
+  assert(report.indexOf(sellRoom.name) !== -1, `history(roomName) should include room entries, got ${report}`);
+  assert(report.indexOf(buyRoom.name) === -1, `history(roomName) should filter other rooms, got ${report}`);
+  report = marketConsole.history("all");
+  assert(report.indexOf("showing") !== -1, `history(all) should return bounded all history, got ${report}`);
+
+  const executeTrackers = [sellDeals, buyDeals, failedDeals, partialDeals];
+  const autonomousDealCount = fakeTrackers.filter(function (tracker) {
+    return executeTrackers.indexOf(tracker) === -1;
+  }).reduce(function (total, tracker) {
+    return total + tracker.length;
+  }, 0);
+  assert(autonomousDealCount === 0, `non-execution market commands should not call deal in this scenario, got ${autonomousDealCount}`);
+  const executeDealCount = executeTrackers.reduce(function (total, tracker) {
+    return total + tracker.length;
+  }, 0);
+  assert(executeDealCount === 4, `expected four executePlan deal calls, got ${executeDealCount}`);
+  const createdOrderCount = fakeTrackers.reduce(function (total, tracker) {
+    return total + tracker.createdOrders.length;
+  }, 0);
+  assert(createdOrderCount === 0, `executePlan must not create market orders, got ${createdOrderCount}`);
+  assert(currentRuntime.terminalSends.length === 0, `executePlan must not send terminal resources, got ${currentRuntime.terminalSends.length}`);
+  assert(
+    opsLogisticsManager.listRequests().length === requestCountBefore,
+    "executePlan must not create ops logistics requests",
   );
 }
 
@@ -10515,6 +10682,7 @@ function main() {
     ["operator_report_cleanup", runOperatorReportCleanupScenario],
     ["market_intelligence_reports", runMarketIntelligenceReportsScenario],
     ["market_dry_run_planning", runMarketDryRunPlanningScenario],
+    ["market_approval_gated_execution", runMarketApprovalGatedExecutionScenario],
     ["hauler_execution_order_coverage", runHaulerExecutionOrderCoverageScenario],
     ["empire_mineral_transfer", runEmpireMineralTransferScenario],
     ["empire_mineral_blocked", runEmpireMineralBlockedScenario],

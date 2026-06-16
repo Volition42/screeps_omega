@@ -112,11 +112,38 @@ Execution limits live under `Memory.consoleTools.market.executionLimits` and def
 
 Use `market.executionLimits()` to print current limits and defaults, `market.setExecutionLimit(name, value)` to set a numeric limit, and `market.clearExecutionLimit(name)` to reset one limit to its default. `maxBuyEffectivePrice` may be set to `null` or `"null"` to keep it unlimited. Short aliases are available as `market.limits()`, `market.setLimit(name, value)`, and `market.clearLimit(name)`.
 
-Actual execution remains intentionally unavailable until a later phase. Layer 3.5 does not add `market.executePlan`, does not call `Game.market.deal`, does not create market orders, does not create ops logistics requests, and does not call `terminal.send`.
+Layer 3.5 itself does not execute. It does not call `Game.market.deal`, does not create market orders, does not create ops logistics requests, and does not call `terminal.send`.
+
+## Layer 3.6 Approval-Gated Plan Execution and History
+
+```js
+market.planSell("H", 1000, "W42N9")
+market.planReview(planId)
+market.executionDryRun(planId)
+market.executePlan(planId)
+market.history("H")
+```
+
+Layer 3.6 adds one manual execution command for saved plans: `market.executePlan(planId)`. It reloads the plan from `Memory.consoleTools.market.plans`, re-runs the same current-state preflight used by `market.executionDryRun(planId)`, applies all execution limits, recomputes the final executable amount immediately before the deal, and refuses unless the final preflight status is `READY`.
+
+`market.executePlan(planId)` is the only new command in this layer allowed to call `Game.market.deal`. No autonomous execution exists. Readiness, opportunity, recommendation, planning, review, audit, and dry-run commands still do not execute deals.
+
+Execution gates include plan existence, non-deleted status, buy/sell type, owned room, usable terminal, zero terminal cooldown, selected order existence, matching order type, positive final executable amount, sell resource availability, buy capacity, account credits, transaction energy, configured amount and credit limits, effective price limits, and terminal energy reserve.
+
+Each requested execution writes a bounded history entry under `Memory.consoleTools.market.history`, including successful executions, partial executions, failed `Game.market.deal` results, blocked preflight attempts, stale attempts, and limit-blocked attempts. Use:
+
+```js
+market.history()
+market.history("H")
+market.history("W42N9")
+market.history("all")
+```
+
+`market.history()` shows recent entries. Resource and room filters show matching entries, with owned room names preferred when an input is ambiguous. `market.history("all")` shows more entries while staying bounded for console safety.
 
 ## No-Execution Boundary
 
-Market intelligence commands do not:
+Market intelligence, planning, review, audit, and dry-run commands do not:
 
 - execute `Game.market.deal`
 - create market orders
@@ -128,4 +155,4 @@ Market intelligence commands do not:
 
 Dry-run planning and plan review commands follow the same safety boundary. They may read market orders, credits, and terminal state, and they may write plan objects to `Memory.consoleTools.market.plans` by saving, reviewing, updating status, or soft-deleting plans. They do not move resources, create ops logistics requests, send terminal resources, create orders, or execute deals.
 
-Use existing manual commands when you choose to act on a report: `ops.clearTerminal`, `ops.fillTerminal`, `market.sellOptions`, `market.buyOptions`, `market.planSell`, `market.planBuy`, `market.sell`, and `market.buy`.
+Use existing manual commands when you choose to act on a report: `ops.clearTerminal`, `ops.fillTerminal`, `market.sellOptions`, `market.buyOptions`, `market.planSell`, `market.planBuy`, `market.executionDryRun`, and `market.executePlan`. Legacy direct manual `market.buy` and `market.sell` behavior is unchanged by Layer 3.6.

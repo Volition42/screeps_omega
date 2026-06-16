@@ -90,6 +90,12 @@ function getPlanStore() {
   return memory.plans;
 }
 
+function getHistoryStore() {
+  const memory = getMemoryRoot();
+  if (!memory.history) memory.history = [];
+  return memory.history;
+}
+
 function getExecutionLimitStore() {
   const memory = getMemoryRoot();
   if (!memory.executionLimits) memory.executionLimits = {};
@@ -1230,13 +1236,14 @@ function planReview(planId) {
 function executionStatus() {
   return printBlock([
     `${CONFIG.logPrefix} Execution Status`,
-    "  Engine: DISABLED",
-    "  Game.market.deal: not called by this layer",
-    "  Actual Deal Execution: unavailable",
+    "  Engine: MANUAL_APPROVAL_GATED",
+    "  Game.market.deal: available only through market.executePlan(planId)",
+    "  Actual Deal Execution: manual only",
     "  Dry Run: available",
     "  Limits: available",
-    "  History Schema: prepared",
-    "  Next: review market.executionDryRun(planId)",
+    "  History: available",
+    "  Automation: none",
+    "  Next: review market.executionDryRun(planId), then market.executePlan(planId)",
   ]);
 }
 
@@ -1518,6 +1525,224 @@ function executionDryRun(planId) {
   return printBlock(lines);
 }
 
+function resultLabel(code) {
+  const labels = {};
+  labels[OK] = "OK";
+  labels[ERR_NOT_OWNER] = "ERR_NOT_OWNER";
+  labels[ERR_NO_PATH] = "ERR_NO_PATH";
+  labels[ERR_NAME_EXISTS] = "ERR_NAME_EXISTS";
+  labels[ERR_BUSY] = "ERR_BUSY";
+  labels[ERR_NOT_FOUND] = "ERR_NOT_FOUND";
+  labels[ERR_NOT_ENOUGH_RESOURCES] = "ERR_NOT_ENOUGH_RESOURCES";
+  labels[ERR_INVALID_TARGET] = "ERR_INVALID_TARGET";
+  labels[ERR_FULL] = "ERR_FULL";
+  labels[ERR_NOT_IN_RANGE] = "ERR_NOT_IN_RANGE";
+  labels[ERR_INVALID_ARGS] = "ERR_INVALID_ARGS";
+  labels[ERR_TIRED] = "ERR_TIRED";
+  labels[ERR_NO_BODYPART] = "ERR_NO_BODYPART";
+  labels[ERR_RCL_NOT_ENOUGH] = "ERR_RCL_NOT_ENOUGH";
+
+  if (code === null || code === undefined) return "NO_DEAL";
+  return labels[code] || `RESULT_${code}`;
+}
+
+function executionStatusFromPreflight(status) {
+  if (status === "STALE") return "stale";
+  if (status === "LIMIT_BLOCKED") return "limit_blocked";
+  return "blocked";
+}
+
+function executionReason(result, dealResult) {
+  if (dealResult !== OK && dealResult !== null && dealResult !== undefined) {
+    return resultLabel(dealResult);
+  }
+  if (result.staleReasons && result.staleReasons.length) {
+    return result.staleReasons.join(", ");
+  }
+  if (result.limitBlockers && result.limitBlockers.length) {
+    return result.limitBlockers.join(", ");
+  }
+  if (result.blockers && result.blockers.length) {
+    return result.blockers.join(", ");
+  }
+  return "none";
+}
+
+function appendExecutionHistory(entry) {
+  const history = getHistoryStore();
+  history.push(entry);
+
+  if (history.length > 100) {
+    history.splice(0, history.length - 100);
+  }
+
+  return entry;
+}
+
+function updatePlanExecutionFields(plan, entry) {
+  if (!plan) return;
+
+  plan.executionStatus = entry.status;
+  plan.executionReason = entry.reason;
+  plan.executedAt = entry.executedAt;
+  plan.executedAmount = entry.executedAmount;
+  plan.requestedAmount = entry.requestedAmount;
+  plan.plannedExecutableAmount = entry.plannedExecutableAmount;
+  plan.finalExecutableAmount = entry.finalExecutableAmount;
+  plan.finalOrderId = entry.orderId;
+  plan.finalPrice = entry.price;
+  plan.creditsDelta = entry.creditsDelta;
+  plan.energyCost = entry.energyCost;
+  plan.resultCode = entry.resultCode;
+  plan.resultLabel = entry.resultLabel;
+  plan.updatedAt = Game.time;
+}
+
+function buildExecutionEntry(planId, result, status, dealResult) {
+  const plan = result.plan;
+  const order = result.order;
+  const executedAmount = dealResult === OK ? result.finalAmount : 0;
+  const type = plan ? plan.type : null;
+  const credits = result.estimatedCredits || 0;
+  const creditsDelta = type === "buy" ? -credits : credits;
+
+  return {
+    id: `mx_${Game.time}_${getHistoryStore().length + 1}`,
+    planId,
+    type,
+    roomName: plan ? plan.roomName : null,
+    resourceType: plan ? plan.resourceType : null,
+    requestedAmount: plan ? plan.requestedAmount || 0 : 0,
+    plannedExecutableAmount: result.plannedAmount || 0,
+    finalExecutableAmount: result.finalAmount || 0,
+    executedAmount,
+    orderId: order ? order.id : plan && plan.selectedOrderId ? plan.selectedOrderId : null,
+    price: order ? order.price : 0,
+    effectivePrice: result.effectivePrice || 0,
+    creditsDelta,
+    energyCost: result.estimatedEnergy || 0,
+    resultCode: dealResult === undefined ? null : dealResult,
+    resultLabel: resultLabel(dealResult),
+    status,
+    reason: executionReason(result, dealResult),
+    blockers: uniqueReasons(
+      (result.blockers || [])
+        .concat(result.staleReasons || [])
+        .concat(result.limitBlockers || []),
+    ),
+    createdAt: Game.time,
+    executedAt: Game.time,
+  };
+}
+
+function formatExecutionReport(entry) {
+  const lines = [
+    `${CONFIG.logPrefix} Execute Plan ${entry.planId}: ${entry.status.toUpperCase()}`,
+    `  plan id ${entry.planId}`,
+    `  status ${entry.status}`,
+    `  type ${entry.type || "n/a"}`,
+    `  room ${entry.roomName || "n/a"}`,
+    `  resource ${entry.resourceType || "n/a"}`,
+    `  requested amount ${fmt(entry.requestedAmount)}`,
+    `  planned executable amount ${fmt(entry.plannedExecutableAmount)}`,
+    `  final executable amount ${fmt(entry.finalExecutableAmount)}`,
+    `  executed amount ${fmt(entry.executedAmount)}`,
+    `  order id ${entry.orderId || "none"}`,
+    `  price ${entry.price ? Number(entry.price).toFixed(4) : "n/a"}`,
+    `  credits delta ${fmt(entry.creditsDelta)}`,
+    `  energy cost ${fmt(entry.energyCost)}`,
+    `  result ${entry.resultCode === null ? "n/a" : entry.resultCode}/${entry.resultLabel}`,
+  ];
+
+  if (entry.status !== "executed" && entry.status !== "partial") {
+    lines.push(`  reason ${entry.reason || "none"}`);
+    lines.push(`  blockers ${entry.blockers.length ? entry.blockers.join(", ") : "none"}`);
+  }
+
+  return printBlock(lines);
+}
+
+function executePlan(planId) {
+  const preflight = preflightExecution(planId);
+
+  if (preflight.status !== "READY") {
+    const blockedStatus = executionStatusFromPreflight(preflight.status);
+    const blockedEntry = buildExecutionEntry(planId, preflight, blockedStatus, null);
+    appendExecutionHistory(blockedEntry);
+    updatePlanExecutionFields(preflight.plan, blockedEntry);
+    return formatExecutionReport(blockedEntry);
+  }
+
+  const dealResult = Game.market.deal(
+    preflight.order.id,
+    preflight.finalAmount,
+    preflight.plan.roomName,
+  );
+  const executedAmount = dealResult === OK ? preflight.finalAmount : 0;
+  let status = "failed";
+
+  if (dealResult === OK) {
+    status =
+      executedAmount >= preflight.plan.requestedAmount ||
+      preflight.finalAmount >= preflight.plan.requestedAmount
+        ? "executed"
+        : "partial";
+  }
+
+  const entry = buildExecutionEntry(planId, preflight, status, dealResult);
+  appendExecutionHistory(entry);
+  updatePlanExecutionFields(preflight.plan, entry);
+
+  return formatExecutionReport(entry);
+}
+
+function history(filter) {
+  const input = typeof filter === "string" ? filter.trim() : "";
+  const lower = input.toLowerCase();
+  const includeAll = lower === "all" || lower === "history";
+  let rows = getHistoryStore().slice();
+  let label = includeAll ? "all" : "recent";
+
+  if (input && !includeAll) {
+    const ownedRoom = getOwnedRoom(input);
+    if (ownedRoom) {
+      rows = rows.filter((entry) => entry.roomName === ownedRoom.name);
+      label = ownedRoom.name;
+    } else {
+      rows = rows.filter((entry) => entry.resourceType === input);
+      label = input;
+    }
+  }
+
+  rows.sort((a, b) => (b.executedAt || b.createdAt || 0) - (a.executedAt || a.createdAt || 0));
+  const limit = includeAll ? 50 : CONFIG.intelligenceLimit;
+  const shown = rows.slice(0, limit);
+  const lines = [
+    `${CONFIG.logPrefix} Execution History (${label})` +
+      ` | showing ${fmt(shown.length)}/${fmt(rows.length)}:`,
+  ];
+
+  if (!shown.length) {
+    lines.push("  none");
+    return printBlock(lines);
+  }
+
+  for (const entry of shown) {
+    lines.push(
+      `  ${entry.id} | ${entry.status}` +
+        ` | ${entry.type}` +
+        ` | ${entry.resourceType}` +
+        ` | ${entry.roomName}` +
+        ` | executed ${fmt(entry.executedAmount)}/${fmt(entry.requestedAmount)}` +
+        ` | order ${entry.orderId || "none"}` +
+        ` | result ${entry.resultLabel}` +
+        ` | tick ${entry.executedAt}`,
+    );
+  }
+
+  return printBlock(lines);
+}
+
 function clearPlan(planId) {
   if (planId === "all") {
     const planRows = activePlanRows();
@@ -1771,6 +1996,12 @@ function help() {
     "  market.limits()",
     "  market.setLimit(name, value)",
     "  market.clearLimit(name)",
+    "  market.executePlan(planId)",
+    "  market.execute(planId) [alias: market.executePlan(planId)]",
+    "  market.history()",
+    "  market.history(resource)",
+    "  market.history(roomName)",
+    '  market.history("all")',
     "",
     "[MARKET] Manual trading:",
     "  market.buy(resource, amount, roomName)",
@@ -2678,6 +2909,9 @@ function registerGlobals() {
     limits: executionLimits,
     setLimit: setExecutionLimit,
     clearLimit: clearExecutionLimit,
+    executePlan,
+    execute: executePlan,
+    history,
     buy,
     sell,
 
@@ -2734,6 +2968,9 @@ module.exports = {
   limits: executionLimits,
   setLimit: setExecutionLimit,
   clearLimit: clearExecutionLimit,
+  executePlan,
+  execute: executePlan,
+  history,
   buy,
   sell,
 
