@@ -342,8 +342,8 @@ function getConsoleCommandHelp() {
     {
       command: "ops.room([roomName], [section])",
       description:
-        "Show one room report. Sections include resources for terminal balance status.",
-      example: 'ops.room("W5N5", "resources")',
+        "Show one room report. Sections include observer and resources status.",
+      example: 'ops.room("W5N5", "observer")',
     },
     {
       command: "ops.rooms()",
@@ -688,7 +688,7 @@ module.exports = {
 
     if (!lines) {
       return printLine(
-        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, sources, resources, advanced, cpu, or all.',
+        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, sources, resources, advanced, observer, cpu, or all.',
       );
     }
 

@@ -197,6 +197,25 @@ module.exports = {
 
   /*
   Developer Notes:
+  Observer Scan Scheduler
+
+  Observers gather lightweight room intel for bounded operator awareness only.
+  They do not select remotes, drive attacks, trigger expansion, stage market
+  work, or perform map-wide scouting.
+  */
+  OBSERVER: {
+    ENABLED: true,
+    MIN_RCL: 8,
+    RUN_INTERVAL: 10,
+    MAX_TARGETS_PER_ROOM: 20,
+    INTEL_MAX_AGE: 50000,
+    INCLUDE_ADJACENT_ROOMS: true,
+    INCLUDE_REMOTE_ROOMS: true,
+    TARGETS: {},
+  },
+
+  /*
+  Developer Notes:
   Attack Operations
 
   Attack operations are manual ops commands. Participating rooms temporarily

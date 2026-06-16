@@ -5,6 +5,7 @@ const roadmap = require("construction_roadmap");
 const roomProgress = require("room_progress");
 const roomState = require("room_state");
 const statsManager = require("stats_manager");
+const observerManager = require("observer_manager");
 
 const SECTION_ORDER = [
   "overview",
@@ -15,6 +16,7 @@ const SECTION_ORDER = [
   "sources",
   "resources",
   "advanced",
+  "observer",
   "cpu",
 ];
 
@@ -962,6 +964,26 @@ function getAdvancedSummary(room, state) {
   };
 }
 
+function getObserverSummary(room, state) {
+  if (state && state.observer) {
+    return state.observer;
+  }
+
+  return observerManager.getStatus(room);
+}
+
+function formatIntelAge(age) {
+  return typeof age === "number" ? `${age}t` : "--";
+}
+
+function formatObserverTargets(observer) {
+  const targets = observer && observer.targets ? observer.targets : [];
+  if (targets.length === 0) return "none";
+
+  const visible = targets.slice(0, 5).join(",");
+  return targets.length > 5 ? `${visible},+${targets.length - 5}` : visible;
+}
+
 function getMineralMiningSummary(room, state) {
   const desiredMiners = Math.max(0, config.CREEPS.mineralMinersPerRoom || 0);
   if (desiredMiners <= 0) {
@@ -1258,6 +1280,7 @@ module.exports = {
     const alert = getAlertSummary(room, summaryState);
     const cpu = getCpuSummary(room);
     const advanced = getAdvancedSummary(room, summaryState);
+    const observer = getObserverSummary(room, summaryState);
     const terminalBalance = summaryState.terminalBalance || {};
     const mineralMining = getMineralMiningSummary(room, summaryState);
     const mineralLine = formatMineralMiningLine(mineralMining);
@@ -1361,6 +1384,14 @@ module.exports = {
         `[OPS][${room.name}][SOURCES]`,
       ],
       advanced: advancedLines,
+      observer: [
+        `[OPS][${room.name}][OBSERVER]`,
+        `Enabled ${observer.enabled ? "yes" : "no"} | Observers ${observer.observerCount || 0}`,
+        `Last ${observer.lastObservedTarget || "none"} | Result ${observer.lastResult || "none"} | Reason ${observer.lastReason || "none"}`,
+        `Queued ${observer.queuedTargets || 0}/${observer.maxTargetsPerRoom || 0} | Targets ${formatObserverTargets(observer)}`,
+        `Intel ${observer.intelCount || 0} | Newest ${formatIntelAge(observer.newestIntelAge)} | Oldest ${formatIntelAge(observer.oldestIntelAge)}`,
+        `Interval ${observer.runInterval || 0}t | Last run ${observer.lastRun || "--"}`,
+      ],
       cpu: [
         `[OPS][${room.name}][CPU]`,
         cpu.available

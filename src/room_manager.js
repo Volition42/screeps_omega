@@ -8,6 +8,7 @@ const towerManager = require("tower_manager");
 const advancedStructureManager = require("advanced_structure_manager");
 const terminalBalanceManager = require("terminal_balance_manager");
 const powerManager = require("power_manager");
+const observerManager = require("observer_manager");
 const controllerSigner = require("controller_signer");
 const directiveManager = require("directive_manager");
 const hud = require("hud");
@@ -115,6 +116,31 @@ module.exports = {
       runtimeMode,
     );
     runStep("power", powerManager.run, powerManager, room, state);
+    const observerKey = `room.${room.name}.observer`;
+    const observerSettings = observerManager.getSettings();
+    const observerDecision = !statsManager.isPastSoftCpuLimit(1)
+      ? this.getOptionalDecision(
+          observerKey,
+          observerSettings.runInterval,
+          runtimeMode,
+        )
+      : { ok: false, reason: "soft_cpu" };
+    if (observerDecision.ok) {
+      const beforeObserver = Game.cpu ? Game.cpu.getUsed() : 0;
+      state.observer = runStep(
+        "observer",
+        observerManager.run,
+        observerManager,
+        room,
+        state,
+      );
+      if (observerDecision.reason !== "direct") {
+        scheduler.markOptionalRun(observerKey, beforeObserver);
+      }
+    } else {
+      scheduler.recordSkip(observerKey, observerDecision.reason);
+      state.observer = observerManager.getStatus(room);
+    }
     const signKey = `room.${room.name}.sign`;
     const signDecision = !statsManager.isPastSoftCpuLimit(1)
       ? this.getOptionalDecision(

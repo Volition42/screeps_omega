@@ -921,6 +921,10 @@ module.exports = {
     return plan;
   },
 
+  getActiveReservations() {
+    return getActivePlanList().slice();
+  },
+
   getReservationThreat(planOrTargetRoom) {
     const plan =
       typeof planOrTargetRoom === "string"

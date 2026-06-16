@@ -840,6 +840,18 @@ function createStructure(structureType, x, y, options) {
     };
   }
 
+  if (structureType === STRUCTURE_OBSERVER) {
+    structure.observeRoom = function (roomName) {
+      currentRuntime.observerActions.push({
+        observerId: this.id,
+        observerRoom: this.pos.roomName,
+        targetRoom: roomName,
+        tick: Game.time,
+      });
+      return OK;
+    };
+  }
+
   if (structureType === STRUCTURE_TOWER) {
     structure.attack = function (target) {
       currentRuntime.towerActions.push({
@@ -1150,6 +1162,7 @@ function resetRuntime(tick) {
     rooms: {},
     objectsById: {},
     spawnEvents: [],
+    observerActions: [],
     terminalSends: [],
     towerActions: [],
     creepActions: [],
@@ -1181,6 +1194,36 @@ function resetRuntime(tick) {
         const b = parse(roomB);
         if (!a || !b) return roomA === roomB ? 0 : 50;
         return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+      },
+      describeExits(roomName) {
+        const match = /^([WE])(\d+)([NS])(\d+)$/.exec(roomName || "");
+        if (!match) return null;
+
+        const shiftAxis = function (direction, value, delta) {
+          let coordinate = direction === "W" ? -value - 1 : value;
+          coordinate += delta;
+          if (coordinate < 0) return { direction: "W", value: -coordinate - 1 };
+          return { direction: "E", value: coordinate };
+        };
+        const shiftVertical = function (direction, value, delta) {
+          let coordinate = direction === "N" ? -value - 1 : value;
+          coordinate += delta;
+          if (coordinate < 0) return { direction: "N", value: -coordinate - 1 };
+          return { direction: "S", value: coordinate };
+        };
+        const x = parseInt(match[2], 10);
+        const y = parseInt(match[4], 10);
+        const north = shiftVertical(match[3], y, -1);
+        const east = shiftAxis(match[1], x, 1);
+        const south = shiftVertical(match[3], y, 1);
+        const west = shiftAxis(match[1], x, -1);
+
+        return {
+          1: `${match[1]}${x}${north.direction}${north.value}`,
+          3: `${east.direction}${east.value}${match[3]}${y}`,
+          5: `${match[1]}${x}${south.direction}${south.value}`,
+          7: `${west.direction}${west.value}${match[3]}${y}`,
+        };
       },
       calcTransactionCost(amount, roomA, roomB) {
         return roomA === roomB ? 0 : Math.ceil(amount * 0.1);
@@ -1590,6 +1633,7 @@ const linkManager = require("link_manager");
 const logisticsManager = require("logistics_manager");
 const opsLogisticsManager = require("ops_logistics_manager");
 const terminalBalanceManager = require("terminal_balance_manager");
+const observerManager = require("observer_manager");
 const marketConsole = require("market_console");
 const kernelMemory = require("kernel_memory");
 const roleWorker = require("role_worker");
@@ -10798,6 +10842,132 @@ function runOpsCpuReportShapeScenario() {
   );
 }
 
+function runObserverSchedulerScenario() {
+  const room = buildRoomScenario("W5N5", {
+    tick: 1000,
+    controllerLevel: 8,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    extraStructures: [
+      { type: STRUCTURE_OBSERVER, x: 23, y: 23, options: { hits: 500, hitsMax: 500 } },
+    ],
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+
+  const target = new FakeRoom("W5N6", new FakeTerrain());
+  target.setController(
+    createController(20, 20, {
+      roomName: target.name,
+      level: 3,
+      reservation: { username: "ally", ticksToEnd: 1234 },
+    }),
+  );
+  target.addSource(createSource(12, 25, { roomName: target.name }));
+  target.addSource(createSource(38, 25, { roomName: target.name }));
+  target.addMineral(createMineral(25, 12, { roomName: target.name, mineralType: RESOURCE_UTRIUM }));
+  target.addStructure(createStructure(STRUCTURE_TOWER, 24, 24, { roomName: target.name, my: false }));
+  target.addStructure(createStructure(STRUCTURE_SPAWN, 25, 25, { roomName: target.name, my: false }));
+  target.addStructure(createStructure(STRUCTURE_TERMINAL, 26, 25, { roomName: target.name, my: false, store: {}, storeCapacity: 300000 }));
+  target.addStructure(createStructure(STRUCTURE_STORAGE, 26, 26, { roomName: target.name, my: false, store: {}, storeCapacity: 1000000 }));
+  target.addStructure(createStructure(STRUCTURE_NUKER, 27, 27, { roomName: target.name, my: false }));
+  const hostile = createCreep("observerHostile", "hostile", 10, 10, {
+    roomName: target.name,
+    my: false,
+  });
+  hostile.owner = { username: "Invader" };
+  target._hostileCreeps.push(hostile);
+
+  const originalObserverConfig = config.OBSERVER;
+  config.OBSERVER = {
+    ENABLED: true,
+    MIN_RCL: 8,
+    RUN_INTERVAL: 1,
+    MAX_TARGETS_PER_ROOM: 3,
+    INTEL_MAX_AGE: 50,
+    INCLUDE_ADJACENT_ROOMS: true,
+    INCLUDE_REMOTE_ROOMS: true,
+    TARGETS: {
+      W5N5: ["W5N6", "W6N5", "W4N5", "W5N4", "W7N5"],
+    },
+  };
+
+  try {
+    const state = roomState.collect(room);
+    const first = observerManager.run(room, state);
+    assert(first.observerCount === 1, `expected one observer, got ${first.observerCount}`);
+    assert(first.queuedTargets === 3, `expected bounded queue of 3, got ${first.queuedTargets}`);
+    assert(
+      currentRuntime.observerActions.length === 1 &&
+        currentRuntime.observerActions[0].targetRoom === "W5N6",
+      `expected first observer target W5N6, got ${JSON.stringify(currentRuntime.observerActions)}`,
+    );
+
+    Game.time = 1001;
+    const second = observerManager.run(room, state);
+    assert(second.lastObservedTarget === "W6N5", `expected second target W6N5, got ${second.lastObservedTarget}`);
+    const intel = Memory.intel.rooms.W5N6;
+    assert(intel, "expected visible observed room intel to be stored");
+    assert(intel.lastObserved === 1001, `expected lastObserved 1001, got ${intel.lastObserved}`);
+    assert(intel.observerRoom === room.name, `expected observer room ${room.name}, got ${intel.observerRoom}`);
+    assert(intel.controller.reservation.username === "ally", "expected reservation summary");
+    assert(intel.hostileCount === 1, `expected hostile count 1, got ${intel.hostileCount}`);
+    assert(intel.sourceCount === 2, `expected source count 2, got ${intel.sourceCount}`);
+    assert(intel.mineralType === RESOURCE_UTRIUM, `expected mineral U, got ${intel.mineralType}`);
+    assert(intel.structures[STRUCTURE_TOWER] === 1, "expected tower count");
+    assert(intel.structures[STRUCTURE_TERMINAL] === 1, "expected terminal count");
+    assert(intel.structures[STRUCTURE_STORAGE] === 1, "expected storage count");
+    assert(intel.structures[STRUCTURE_NUKER] === 1, "expected nuker count");
+    assert(
+      JSON.stringify(intel).indexOf('"pos"') === -1 &&
+        JSON.stringify(intel).indexOf('"room"') === -1,
+      `observer intel should not store raw objects, got ${JSON.stringify(intel)}`,
+    );
+
+    Memory.intel.rooms.STALE_OBSERVER_ROOM = {
+      roomName: "STALE_OBSERVER_ROOM",
+      observerRoom: room.name,
+      lastObserved: 900,
+    };
+    Memory.observer.lastCleanup = 900;
+    observerManager.cleanupIntel(observerManager.getSettings());
+    assert(
+      !Memory.intel.rooms.STALE_OBSERVER_ROOM,
+      "expected old observer intel to be removed on cleanup",
+    );
+
+    const report = roomReporting.build(room, Object.assign({}, state, {
+      observer: observerManager.getStatus(room),
+    }), { updateProgress: false });
+    assert(roomReporting.normalizeSection("observer") === "observer", "observer section should normalize");
+    assert(
+      report.sections.observer.some(function (line) {
+        return line.indexOf("Observers 1") !== -1;
+      }),
+      `expected observer count in report, got ${report.sections.observer.join(" / ")}`,
+    );
+    assert(
+      report.sections.observer.some(function (line) {
+        return line.indexOf("Intel 1") !== -1;
+      }),
+      `expected intel count in report, got ${report.sections.observer.join(" / ")}`,
+    );
+
+    ops.registerGlobals();
+    const captured = captureConsoleLines(function () {
+      return global.ops.room(room.name, "observer");
+    });
+    assert(
+      captured.lines.some(function (line) { return line === `[OPS][${room.name}][OBSERVER]`; }),
+      `expected observer ops room report, got ${captured.lines.join(" / ")}`,
+    );
+  } finally {
+    config.OBSERVER = originalObserverConfig;
+  }
+}
+
 function runSchedulerStaggerScenario() {
   resetRuntime(1000);
 
@@ -11233,6 +11403,7 @@ function main() {
     ["hud_config_controls", runHudConfigControlsScenario],
     ["cpu_soft_limit", runCpuSoftLimitScenario],
     ["ops_cpu_report_shape", runOpsCpuReportShapeScenario],
+    ["observer_scheduler", runObserverSchedulerScenario],
     ["cpu_room_scale", runCpuRoomScaleScenario],
     ["scheduler_stagger", runSchedulerStaggerScenario],
     ["scheduler_budget", runSchedulerBudgetScenario],
