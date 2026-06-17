@@ -7493,6 +7493,180 @@ function runPowerCreepOpsGenerationControlsScenario() {
   });
 }
 
+function runOpsInventoryAndStagingControlsScenario() {
+  let room = buildOpsLogisticsRoom("VAL_OPS_INVENTORY", {
+    tick: 885,
+    storageStore: { energy: 200000, ops: 1200 },
+    terminalStore: { energy: 12000, ops: 300 },
+  });
+  ops.registerGlobals();
+  assert(typeof global.ops.ops === "function", "ops.ops should be registered");
+
+  createPowerCreep("OperatorInventory", 20, 25, {
+    roomName: room.name,
+    ticksToLive: 1000,
+    powers: {
+      PWR_GENERATE_OPS: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 75 },
+    storeCapacity: 100,
+  });
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.ops();
+  });
+  assert(typeof captured.result === "string", "ops.ops should return a clean string");
+  assert(
+    captured.result.indexOf("Empire ops inventory") !== -1 &&
+      captured.result.indexOf("storage 1,200") !== -1 &&
+      captured.result.indexOf("terminal 300") !== -1 &&
+      captured.result.indexOf("powerCreeps 75") !== -1 &&
+      captured.result.indexOf(room.name) !== -1 &&
+      captured.result.indexOf("[object Object]") === -1,
+    `global ops inventory should report clean totals and room summary, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name);
+  });
+  assert(typeof captured.result === "string", "ops.ops(room) should return a clean string");
+  assert(
+    captured.result.indexOf(`[OPS][${room.name}][OPS] storage 1,200 | terminal 300`) !== -1 &&
+      captured.result.indexOf("visible Power Creeps: OperatorInventory 75") !== -1 &&
+      captured.result.indexOf("pending: none") !== -1,
+    `room ops inventory should include storage, terminal, carried ops, and pending summary, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name, "stage", "storage", "terminal", 500);
+  });
+  assert(
+    typeof captured.result === "string" &&
+      captured.result.indexOf(`ops stage ${room.name}: ops 500 storage -> terminal`) !== -1 &&
+      captured.result.indexOf("status open") !== -1,
+    `storage -> terminal staging should return a clean request line, got ${captured.result}`,
+  );
+  let rows = opsLogisticsManager.listRequests(room.name).filter(function (row) {
+    return row.resourceType === RESOURCE_OPS && row.from === "storage" && row.to === "terminal";
+  });
+  assert(rows.length === 1, `expected one storage -> terminal ops request, got ${rows.length}`);
+  assert(rows[0].amount === 500, `expected staged amount 500, got ${rows[0].amount}`);
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name);
+  });
+  assert(
+    captured.result.indexOf("pending 1") !== -1 &&
+      captured.result.indexOf(rows[0].id) !== -1 &&
+      captured.result.indexOf("storage->terminal") !== -1,
+    `room ops inventory should include pending staging request, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name, "stage", "storage", "terminal", 250);
+  });
+  assert(
+    captured.result.indexOf("status existing") !== -1,
+    `duplicate compatible request should be suppressed, got ${captured.result}`,
+  );
+  rows = opsLogisticsManager.listRequests(room.name).filter(function (row) {
+    return row.resourceType === RESOURCE_OPS && row.from === "storage" && row.to === "terminal";
+  });
+  assert(rows.length === 1, `duplicate staging should not create another request, got ${rows.length}`);
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name, "stage", "terminal", "storage", 100);
+  });
+  assert(
+    captured.result.indexOf(`ops stage ${room.name}: ops 100 terminal -> storage`) !== -1 &&
+      captured.result.indexOf("status open") !== -1,
+    `terminal -> storage staging should create a request, got ${captured.result}`,
+  );
+  rows = opsLogisticsManager.listRequests(room.name).filter(function (row) {
+    return row.resourceType === RESOURCE_OPS;
+  });
+  assert(rows.length === 2, `expected two directional ops requests, got ${rows.length}`);
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name, "stage", "terminal", "storage", 0);
+  });
+  assert(
+    captured.result.indexOf("amount must be a positive finite number") !== -1,
+    `invalid amount should be blocked, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops("VAL_OPS_INVENTORY_MISSING");
+  });
+  assert(
+    captured.result.indexOf('owned room "VAL_OPS_INVENTORY_MISSING" not found') !== -1,
+    `missing room should be blocked, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name, "stage", "storage", "terminal", 5000);
+  });
+  assert(
+    captured.result.indexOf("has 1,200 ops; requested 5,000") !== -1,
+    `over-large request should be blocked instead of clipped, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name, "stage", "powerCreep", "storage", 25, "OperatorInventory");
+  });
+  assert(
+    captured.result.indexOf("Power Creep direct ops staging is not supported yet") !== -1,
+    `Power Creep direct staging should report unsupported, got ${captured.result}`,
+  );
+
+  const savedResourceOps = global.RESOURCE_OPS;
+  delete global.RESOURCE_OPS;
+  room = buildOpsLogisticsRoom("VAL_OPS_INVENTORY_NO_CONST", {
+    tick: 886,
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 12000 },
+  });
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.ops(room.name);
+  });
+  assert(
+    captured.result.indexOf("storage 0 | terminal 0 | powerCreeps 0 | pending 0") !== -1 &&
+      captured.result.indexOf("[object Object]") === -1,
+    `missing RESOURCE_OPS should report safe zero ops, got ${captured.result}`,
+  );
+  global.RESOURCE_OPS = savedResourceOps;
+
+  room = buildPowerProcessingRoom("VAL_OPS_INVENTORY_REGRESSION", {
+    tick: 887,
+    storageEnergy: 200000,
+    powerSpawnEnergy: 500,
+    powerSpawnPower: 10,
+  });
+  powerManager.run(room, roomState.collect(room));
+  ops.registerGlobals();
+  createPowerCreep("OperatorOpsRegression", 20, 25, {
+    roomName: room.name,
+    ticksToLive: 1000,
+    powers: {
+      PWR_GENERATE_OPS: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 10 },
+    storeCapacity: 100,
+  });
+  assert(typeof global.ops.pcl(room.name) === "string", "ops.pcl should still work after ops inventory additions");
+  assert(typeof global.ops.powerCreeps() === "string", "ops.powerCreeps should still work after ops inventory additions");
+  assert(typeof global.ops.power(room.name) === "string", "ops.power should still work after ops inventory additions");
+  assert(
+    global.ops.powerEnable(room.name, "check").indexOf("READY_TO_ENABLE") !== -1,
+    "ops.powerEnable should still work after ops inventory additions",
+  );
+  assert(
+    global.ops.powerCreep("OperatorOpsRegression", "generateOps", "check").indexOf("action generateOps | mode check") !== -1,
+    "ops.powerCreep generateOps should still work after ops inventory additions",
+  );
+}
+
 function runPowerSpawnRefillVisibilityScenario() {
   withPowerSettings({ MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
     const room = buildPowerProcessingRoom("VAL_POWER_REFILL", {
@@ -12699,6 +12873,7 @@ function main() {
     ["power_creep_lifecycle_controls", runPowerCreepLifecycleControlsScenario],
     ["power_creep_positioning_support", runPowerCreepPositioningSupportScenario],
     ["power_creep_ops_generation_controls", runPowerCreepOpsGenerationControlsScenario],
+    ["ops_inventory_and_staging_controls", runOpsInventoryAndStagingControlsScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
     ["power_spawn_refill_energy_request", runPowerSpawnEnergyRefillRequestScenario],
     ["power_spawn_refill_power_request", runPowerSpawnPowerRefillRequestScenario],

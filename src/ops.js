@@ -131,6 +131,176 @@ function getStoredAmount(target, resourceType) {
   return target.store[resourceType] || 0;
 }
 
+function getOpsResourceType() {
+  return typeof RESOURCE_OPS !== "undefined" ? RESOURCE_OPS : "ops";
+}
+
+function getRoomPowerCreepOpsRows(roomName) {
+  const powerCreeps = Game.powerCreeps || {};
+  const resourceType = getOpsResourceType();
+
+  return Object.keys(powerCreeps)
+    .sort()
+    .map(function (name) {
+      const powerCreep = powerCreeps[name];
+      const creepRoomName =
+        powerCreep && powerCreep.room
+          ? powerCreep.room.name
+          : powerCreep && powerCreep.pos
+            ? powerCreep.pos.roomName
+            : null;
+
+      if (roomName && creepRoomName !== roomName) return null;
+
+      return {
+        name: powerCreep && powerCreep.name ? powerCreep.name : name,
+        roomName: creepRoomName || "unknown",
+        amount: getStoredAmount(powerCreep, resourceType),
+      };
+    })
+    .filter(function (row) {
+      return !!row;
+    });
+}
+
+function getActiveOpsLogisticsRequests(roomName) {
+  const resourceType = getOpsResourceType();
+  return opsLogisticsManager.listRequests(roomName).filter(function (row) {
+    return (
+      row.resourceType === resourceType &&
+      (row.status === "open" || row.status === "blocked")
+    );
+  });
+}
+
+function buildRoomOpsInventory(room) {
+  const resourceType = getOpsResourceType();
+  const powerCreeps = getRoomPowerCreepOpsRows(room.name);
+  const carried = powerCreeps.reduce(function (sum, row) {
+    return sum + (row.amount || 0);
+  }, 0);
+  const pending = getActiveOpsLogisticsRequests(room.name);
+
+  return {
+    roomName: room.name,
+    resourceType: resourceType,
+    storage: getStoredAmount(room.storage, resourceType),
+    terminal: getStoredAmount(room.terminal, resourceType),
+    carried: carried,
+    powerCreeps: powerCreeps,
+    pending: pending,
+  };
+}
+
+function formatPowerCreepOpsRows(rows) {
+  const visible = rows.filter(function (row) {
+    return row.amount > 0;
+  });
+  if (visible.length === 0) return "none";
+  return visible
+    .map(function (row) {
+      return row.name + " " + fmt(row.amount);
+    })
+    .join(", ");
+}
+
+function formatOpsRequestRows(rows) {
+  if (rows.length === 0) return "none";
+  return rows
+    .slice(0, 5)
+    .map(function (row) {
+      return (
+        row.id +
+        " " +
+        row.status +
+        " " +
+        row.from +
+        "->" +
+        row.to +
+        " remaining " +
+        fmt(row.remaining) +
+        "/" +
+        fmt(row.amount)
+      );
+    })
+    .join("; ");
+}
+
+function formatRoomOpsInventory(inventory) {
+  const lines = [
+    `[OPS][${inventory.roomName}][OPS] ` +
+      `storage ${fmt(inventory.storage)} | terminal ${fmt(inventory.terminal)} | ` +
+      `powerCreeps ${fmt(inventory.carried)} | pending ${inventory.pending.length}`,
+    `[OPS][${inventory.roomName}][OPS] visible Power Creeps: ${formatPowerCreepOpsRows(inventory.powerCreeps)}`,
+    `[OPS][${inventory.roomName}][OPS] pending: ${formatOpsRequestRows(inventory.pending)}`,
+  ];
+
+  return lines;
+}
+
+function formatGlobalOpsInventory() {
+  const rooms = getOwnedRooms();
+  const inventories = rooms.map(buildRoomOpsInventory);
+  const totals = inventories.reduce(
+    function (sum, inventory) {
+      sum.storage += inventory.storage;
+      sum.terminal += inventory.terminal;
+      sum.carried += inventory.carried;
+      sum.pending += inventory.pending.length;
+      return sum;
+    },
+    { storage: 0, terminal: 0, carried: 0, pending: 0 },
+  );
+
+  const lines = [
+    `[OPS][OPS] Empire ops inventory | storage ${fmt(totals.storage)} | ` +
+      `terminal ${fmt(totals.terminal)} | powerCreeps ${fmt(totals.carried)} | ` +
+      `pending ${totals.pending}`,
+  ];
+
+  if (rooms.length === 0) {
+    lines.push("[OPS][OPS] no visible owned rooms");
+    return lines;
+  }
+
+  for (let i = 0; i < inventories.length; i++) {
+    const inventory = inventories[i];
+    lines.push(
+      `[OPS][OPS] ${inventory.roomName} | storage ${fmt(inventory.storage)} | ` +
+        `terminal ${fmt(inventory.terminal)} | powerCreeps ${fmt(inventory.carried)} | ` +
+        `pending ${inventory.pending.length}`,
+    );
+  }
+
+  return lines;
+}
+
+function normalizeOpsEndpoint(endpoint) {
+  if (typeof endpoint !== "string") return "";
+  return endpoint.trim().toLowerCase();
+}
+
+function parsePositiveAmount(amount) {
+  if (typeof amount === "string" && amount.trim() !== "") {
+    amount = Number(amount);
+  }
+
+  if (typeof amount !== "number" || !isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  return Math.floor(amount);
+}
+
+function isStorageTerminalEndpoint(endpoint) {
+  return endpoint === "storage" || endpoint === "terminal";
+}
+
+function getRoomOpsEndpoint(room, endpoint) {
+  if (!room || !isStorageTerminalEndpoint(endpoint)) return null;
+  return room[endpoint] || null;
+}
+
 function getStoreTotal(target) {
   if (!target || !target.store) return 0;
 
@@ -533,6 +703,12 @@ function getConsoleCommandHelp() {
       example: 'ops.powerCreep("OperatorOne", "generateOps", "check")',
     },
     {
+      command: 'ops.ops([roomName], ["stage", from, to, amount])',
+      description:
+        "Show ops inventory or manually stage RESOURCE_OPS between room storage and terminal.",
+      example: 'ops.ops("W5N5", "stage", "storage", "terminal", 1000)',
+    },
+    {
       command: 'ops.powerEnable(roomName, mode, [name])',
       description:
         "Check room enablement readiness or confirm enableRoom with a named Power Creep.",
@@ -756,6 +932,9 @@ module.exports = {
       },
       powerCreep: function (powerCreepName, action, roomName, targetOrMode, mode) {
         return module.exports.powerCreep(powerCreepName, action, roomName, targetOrMode, mode);
+      },
+      ops: function (roomName, action, from, to, amount, powerCreepName) {
+        return module.exports.opsInventory(roomName, action, from, to, amount, powerCreepName);
       },
       powerEnable: function (roomName, mode, powerCreepName) {
         return module.exports.powerEnable(roomName, mode, powerCreepName);
@@ -995,6 +1174,107 @@ module.exports = {
     );
     printBlock(report.split("\n"));
     return report;
+  },
+
+  opsInventory(roomName, action, from, to, amount, powerCreepName) {
+    if (typeof roomName === "undefined" || roomName === null || roomName === "") {
+      return printBlock(formatGlobalOpsInventory());
+    }
+
+    const normalizedAction =
+      typeof action === "string" ? action.trim().toLowerCase() : action;
+    const room = Game.rooms && Game.rooms[roomName] ? Game.rooms[roomName] : null;
+
+    if (!room || !room.controller || !room.controller.my) {
+      return printLine(`[OPS] ops: owned room "${roomName}" not found.`);
+    }
+
+    if (typeof action === "undefined") {
+      const lines = formatRoomOpsInventory(buildRoomOpsInventory(room));
+      return printBlock(lines);
+    }
+
+    if (normalizedAction !== "stage") {
+      return printLine('[OPS] ops: use ops.ops("ROOM") or ops.ops("ROOM", "stage", "storage", "terminal", amount).');
+    }
+
+    const sourceEndpoint = normalizeOpsEndpoint(from);
+    const targetEndpoint = normalizeOpsEndpoint(to);
+
+    if (sourceEndpoint === "powercreep" || targetEndpoint === "powercreep") {
+      return printLine(
+        `[OPS] ops stage ${room.name}: Power Creep direct ops staging is not supported yet; use storage <-> terminal logistics.`,
+      );
+    }
+
+    if (
+      !isStorageTerminalEndpoint(sourceEndpoint) ||
+      !isStorageTerminalEndpoint(targetEndpoint) ||
+      sourceEndpoint === targetEndpoint
+    ) {
+      return printLine('[OPS] ops stage: endpoints must be storage -> terminal or terminal -> storage.');
+    }
+
+    if (powerCreepName) {
+      return printLine(
+        "[OPS] ops stage: Power Creep direct ops staging is not supported yet; use storage <-> terminal logistics.",
+      );
+    }
+
+    const requestAmount = parsePositiveAmount(amount);
+    if (requestAmount === null) {
+      return printLine("[OPS] ops stage: amount must be a positive finite number.");
+    }
+
+    const resourceType = getOpsResourceType();
+    const source = getRoomOpsEndpoint(room, sourceEndpoint);
+    const target = getRoomOpsEndpoint(room, targetEndpoint);
+
+    if (!source) {
+      return printLine(`[OPS] ops stage: ${room.name} has no ${sourceEndpoint}.`);
+    }
+
+    if (!target) {
+      return printLine(`[OPS] ops stage: ${room.name} has no ${targetEndpoint}.`);
+    }
+
+    const available = getStoredAmount(source, resourceType);
+    if (available < requestAmount) {
+      return printLine(
+        `[OPS] ops stage: ${room.name} ${sourceEndpoint} has ${fmt(available)} ${resourceType}; requested ${fmt(requestAmount)}.`,
+      );
+    }
+
+    if (
+      target.store &&
+      typeof target.store.getFreeCapacity === "function" &&
+      target.store.getFreeCapacity(resourceType) < requestAmount
+    ) {
+      return printLine(
+        `[OPS] ops stage: ${room.name} ${targetEndpoint} lacks free capacity for ${fmt(requestAmount)} ${resourceType}.`,
+      );
+    }
+
+    const result = opsLogisticsManager.createMoveRequest(
+      resourceType,
+      requestAmount,
+      room.name,
+      sourceEndpoint,
+      targetEndpoint,
+    );
+
+    const request = result.request || {};
+    const status = result.skipped ? "existing" : request.status || "unknown";
+    const line =
+      `[OPS] ops stage ${room.name}: ${resourceType} ${fmt(requestAmount)} ` +
+      `${sourceEndpoint} -> ${targetEndpoint} | request ${request.id || "none"} | status ${status}`;
+    printLine(line);
+
+    if (!result.ok || result.skipped) {
+      printLine(result.message);
+    }
+
+    return line;
   },
 
   powerEnable(roomName, mode, powerCreepName) {

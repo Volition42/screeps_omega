@@ -255,7 +255,7 @@ function getPowerCreepRows() {
         shard: shardName,
         roomName: roomName,
         powers: powers,
-        ops: getStoreAmount(powerCreep, RESOURCE_OPS),
+        ops: getStoreAmount(powerCreep, getOpsResourceType()),
         spawned: spawned,
       };
     });
