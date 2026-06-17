@@ -691,6 +691,12 @@ function getConsoleCommandHelp() {
       example: "ops.powerCreeps()",
     },
     {
+      command: 'ops.operator(name, [roomName], ["powers"])',
+      description:
+        "Report operator OPERATE_* readiness and visible room targets without using powers.",
+      example: 'ops.operator("OperatorOne", "W5N5", "powers")',
+    },
+    {
       command: 'ops.powerCreep(name, action, room, [target], [mode])',
       description:
         "Check Power Creep lifecycle position, or confirm manual spawn, renew, and move preparation.",
@@ -930,6 +936,9 @@ module.exports = {
       powerCreeps: function () {
         return module.exports.powerCreeps();
       },
+      operator: function (powerCreepName, roomName, mode) {
+        return module.exports.operator(powerCreepName, roomName, mode);
+      },
       powerCreep: function (powerCreepName, action, roomName, targetOrMode, mode) {
         return module.exports.powerCreep(powerCreepName, action, roomName, targetOrMode, mode);
       },
@@ -1123,6 +1132,25 @@ module.exports = {
 
   powerCreeps() {
     const report = pclManager.formatPowerCreeps();
+    printBlock(report.split("\n"));
+    return report;
+  },
+
+  operator(powerCreepName, roomName, mode) {
+    if (!powerCreepName) {
+      return printLine('[OPS] operator: use ops.operator("CREEP_NAME", ["ROOM"], ["powers"]).');
+    }
+
+    const normalizedMode = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
+    if (typeof normalizedMode !== "undefined" && normalizedMode !== "powers") {
+      return printLine('[OPS] operator: optional mode must be "powers".');
+    }
+
+    const report = pclManager.formatOperatorReadiness(
+      powerCreepName,
+      roomName,
+      normalizedMode,
+    );
     printBlock(report.split("\n"));
     return report;
   },

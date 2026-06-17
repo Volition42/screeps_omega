@@ -222,6 +222,266 @@ function getGenerateOpsPowerInfo(powerCreep, powerConstant) {
   return powerCreep.powers.PWR_GENERATE_OPS || null;
 }
 
+const OPERATOR_POWER_DEFS = [
+  { key: "spawn", constantName: "PWR_OPERATE_SPAWN", targetType: "spawn", targetLabel: "spawns" },
+  { key: "extension", constantName: "PWR_OPERATE_EXTENSION", targetType: "extension", targetLabel: "extensions" },
+  { key: "tower", constantName: "PWR_OPERATE_TOWER", targetType: "tower", targetLabel: "towers" },
+  { key: "storage", constantName: "PWR_OPERATE_STORAGE", targetType: "storage", targetLabel: "storage" },
+  { key: "terminal", constantName: "PWR_OPERATE_TERMINAL", targetType: "terminal", targetLabel: "terminal" },
+  { key: "factory", constantName: "PWR_OPERATE_FACTORY", targetType: "factory", targetLabel: "factory" },
+  { key: "lab", constantName: "PWR_OPERATE_LAB", targetType: "lab", targetLabel: "labs" },
+  { key: "power", constantName: "PWR_OPERATE_POWER", targetType: "powerSpawn", targetLabel: "powerSpawn" },
+  { key: "source", constantName: "PWR_REGEN_SOURCE", targetType: "source", targetLabel: "sources" },
+  { key: "mineral", constantName: "PWR_REGEN_MINERAL", targetType: "mineral", targetLabel: "minerals" },
+];
+
+function getGlobalConstant(name) {
+  return typeof global !== "undefined" && Object.prototype.hasOwnProperty.call(global, name)
+    ? global[name]
+    : null;
+}
+
+function getPowerInfo(powerConstant) {
+  if (
+    powerConstant === null ||
+    typeof POWER_INFO === "undefined" ||
+    !POWER_INFO ||
+    !Object.prototype.hasOwnProperty.call(POWER_INFO, powerConstant)
+  ) {
+    return null;
+  }
+  return POWER_INFO[powerConstant] || null;
+}
+
+function getPowerOpsCost(powerConstant) {
+  const info = getPowerInfo(powerConstant);
+  return info && typeof info.ops === "number" ? info.ops : null;
+}
+
+function getPowerRange(powerConstant) {
+  const info = getPowerInfo(powerConstant);
+  return info && typeof info.range === "number" ? info.range : null;
+}
+
+function getPowerCreepPowerInfo(powerCreep, powerConstant, constantName) {
+  if (!powerCreep || !powerCreep.powers) return null;
+  if (powerConstant !== null && powerCreep.powers[powerConstant]) return powerCreep.powers[powerConstant];
+  return powerCreep.powers[constantName] || null;
+}
+
+function countRoomStructures(room, structureType) {
+  if (!room || typeof room.find !== "function" || typeof FIND_STRUCTURES === "undefined") return [];
+  return room.find(FIND_STRUCTURES, {
+    filter(structure) {
+      return structure.structureType === structureType;
+    },
+  });
+}
+
+function getRoomOperatorTargets(room, targetType) {
+  if (!room) return [];
+  if (targetType === "spawn" && typeof STRUCTURE_SPAWN !== "undefined") {
+    return countRoomStructures(room, STRUCTURE_SPAWN);
+  }
+  if (targetType === "extension" && typeof STRUCTURE_EXTENSION !== "undefined") {
+    return countRoomStructures(room, STRUCTURE_EXTENSION);
+  }
+  if (targetType === "tower" && typeof STRUCTURE_TOWER !== "undefined") {
+    return countRoomStructures(room, STRUCTURE_TOWER);
+  }
+  if (targetType === "storage") return room.storage ? [room.storage] : [];
+  if (targetType === "terminal") return room.terminal ? [room.terminal] : [];
+  if (targetType === "factory" && typeof STRUCTURE_FACTORY !== "undefined") {
+    return countRoomStructures(room, STRUCTURE_FACTORY);
+  }
+  if (targetType === "lab" && typeof STRUCTURE_LAB !== "undefined") {
+    return countRoomStructures(room, STRUCTURE_LAB);
+  }
+  if (targetType === "powerSpawn" && typeof STRUCTURE_POWER_SPAWN !== "undefined") {
+    return countRoomStructures(room, STRUCTURE_POWER_SPAWN);
+  }
+  if (targetType === "source" && typeof FIND_SOURCES !== "undefined" && typeof room.find === "function") {
+    return room.find(FIND_SOURCES);
+  }
+  if (targetType === "mineral" && typeof FIND_MINERALS !== "undefined" && typeof room.find === "function") {
+    return room.find(FIND_MINERALS);
+  }
+  return [];
+}
+
+function getOperatorTargetSummary(room) {
+  const summary = {};
+  for (let i = 0; i < OPERATOR_POWER_DEFS.length; i++) {
+    const def = OPERATOR_POWER_DEFS[i];
+    summary[def.targetLabel] = getRoomOperatorTargets(room, def.targetType).length;
+  }
+  return summary;
+}
+
+function formatOperatorTargetSummaryLine(roomName, summary) {
+  return (
+    `[OPS][${roomName}][OPERATOR] targets ` +
+    `spawns ${summary.spawns || 0} | extensions ${summary.extensions || 0} | ` +
+    `towers ${summary.towers || 0} | storage ${summary.storage || 0} | ` +
+    `terminal ${summary.terminal || 0} | factory ${summary.factory || 0} | ` +
+    `labs ${summary.labs || 0} | powerSpawn ${summary.powerSpawn || 0} | ` +
+    `sources ${summary.sources || 0} | minerals ${summary.minerals || 0}`
+  );
+}
+
+function getFirstVisibleOperatorTarget(room, targetType) {
+  const targets = getRoomOperatorTargets(room, targetType);
+  return targets.length > 0 ? targets[0] : null;
+}
+
+function evaluateOperatorPower(def, powerCreep, room) {
+  const powerConstant = getGlobalConstant(def.constantName);
+  const powerInfo = getPowerCreepPowerInfo(powerCreep, powerConstant, def.constantName);
+  const cooldown = powerInfo && typeof powerInfo.cooldown === "number" ? powerInfo.cooldown : 0;
+  const opsCost = getPowerOpsCost(powerConstant);
+  const carriedOps = getStoreAmount(powerCreep, getOpsResourceType());
+  const targetCount = room ? getRoomOperatorTargets(room, def.targetType).length : null;
+  const target = room ? getFirstVisibleOperatorTarget(room, def.targetType) : null;
+  const range = powerCreep && target ? getRange(powerCreep, target) : null;
+  const requiredRange = powerConstant !== null ? getPowerRange(powerConstant) : null;
+
+  let status = "ready";
+  if (powerConstant === null) {
+    status = "missing-constant";
+  } else if (!powerCreep) {
+    status = "missing-creep";
+  } else if (!isPowerCreepSpawned(powerCreep)) {
+    status = "not-spawned";
+  } else if (!powerInfo) {
+    status = "missing-power";
+  } else if (cooldown > 0) {
+    status = "cooldown";
+  } else if (opsCost !== null && carriedOps < opsCost) {
+    status = "need-ops";
+  } else if (room && targetCount <= 0) {
+    status = "no-targets";
+  } else if (requiredRange !== null && range !== null && range > requiredRange) {
+    status = "out-of-range";
+  }
+
+  return {
+    key: def.key,
+    constantName: def.constantName,
+    powerConstant: powerConstant,
+    powerExists: powerConstant !== null,
+    hasPower: !!powerInfo,
+    cooldown: cooldown,
+    opsCost: opsCost,
+    carriedOps: carriedOps,
+    enoughOps: opsCost === null ? "unknown" : carriedOps >= opsCost ? "yes" : "no",
+    targetType: def.targetType,
+    targetLabel: def.targetLabel,
+    targetCount: targetCount,
+    range: range,
+    requiredRange: requiredRange,
+    status: status,
+  };
+}
+
+function buildOperatorReadiness(powerCreepName, roomName) {
+  const powerCreep = getPowerCreepByName(powerCreepName);
+  const room = roomName && Game.rooms ? Game.rooms[roomName] || null : null;
+  const spawned = isPowerCreepSpawned(powerCreep);
+  const currentRoomName = getPowerCreepRoomName(powerCreep);
+  const rows = OPERATOR_POWER_DEFS.map(function (def) {
+    return evaluateOperatorPower(def, powerCreep, room);
+  });
+  const supported = rows.filter(function (row) {
+    return row.powerExists;
+  }).length;
+  const ready = rows.filter(function (row) {
+    return row.status === "ready";
+  }).length;
+
+  return {
+    powerCreepName: powerCreepName,
+    roomName: roomName || null,
+    room: room,
+    powerCreep: powerCreep,
+    registryAvailable: !!Game.powerCreeps,
+    spawned: spawned,
+    currentRoomName: currentRoomName,
+    carriedOps: getStoreAmount(powerCreep, getOpsResourceType()),
+    supported: supported,
+    ready: ready,
+    rows: rows,
+    targetSummary: room ? getOperatorTargetSummary(room) : null,
+  };
+}
+
+function formatOperatorPowerRow(report, row, detailed) {
+  const parts = [
+    `[OPS][${report.powerCreepName || "?"}][POWER]`,
+    row.key,
+    row.status,
+    "cooldown",
+    String(row.cooldown),
+  ];
+
+  parts.push("ops");
+  parts.push(`${fmt(row.carriedOps)}/${row.opsCost === null ? "unknown" : fmt(row.opsCost)}`);
+  parts.push("enough");
+  parts.push(row.enoughOps);
+
+  if (row.targetCount !== null) {
+    parts.push("targets");
+    parts.push(String(row.targetCount));
+  }
+
+  if (detailed) {
+    parts.push("target");
+    parts.push(row.targetType);
+    parts.push("constant");
+    parts.push(row.powerExists ? row.constantName : "missing");
+    if (row.range !== null) {
+      parts.push("range");
+      parts.push(`${row.range}/${row.requiredRange === null ? "unknown" : row.requiredRange}`);
+    }
+  }
+
+  return parts.join(" ");
+}
+
+function formatOperatorReadiness(powerCreepName, roomName, mode) {
+  const report = buildOperatorReadiness(powerCreepName, roomName);
+  const detailed = mode === "powers";
+  const lines = [
+    `[OPS][${powerCreepName || "?"}][OPERATOR] ` +
+      `spawned ${report.spawned ? "yes" : "no"} | room ${report.currentRoomName || "unknown"} | ` +
+      `ops ${fmt(report.carriedOps)} | ready ${report.ready}/${report.rows.length} | ` +
+      `supported ${report.supported}/${report.rows.length}`,
+  ];
+
+  if (!report.registryAvailable) {
+    lines.push(`[OPS][${powerCreepName || "?"}][OPERATOR] Game.powerCreeps missing`);
+  }
+  if (!report.powerCreep) {
+    lines.push(`[OPS][${powerCreepName || "?"}][OPERATOR] missing Power Creep`);
+  } else if (!report.spawned) {
+    lines.push(`[OPS][${powerCreepName || "?"}][OPERATOR] unspawned Power Creep`);
+  }
+  if (roomName && !report.room) {
+    lines.push(`[OPS][${powerCreepName || "?"}][OPERATOR] room ${roomName} not visible`);
+  }
+  if (report.targetSummary) {
+    lines.push(formatOperatorTargetSummaryLine(report.room.name, report.targetSummary));
+  }
+
+  for (let i = 0; i < report.rows.length; i++) {
+    const row = report.rows[i];
+    if (!detailed && row.status === "missing-constant") continue;
+    lines.push(formatOperatorPowerRow(report, row, detailed));
+  }
+
+  lines.push(`[OPS][${powerCreepName || "?"}][OPERATOR] report only; OPERATE_* usePower not called.`);
+  return lines.join("\n");
+}
+
 function getPowerCreepRows() {
   const powerCreeps = Game.powerCreeps || {};
   return Object.keys(powerCreeps)
@@ -1209,6 +1469,8 @@ module.exports = {
 
     return lines.join("\n");
   },
+
+  formatOperatorReadiness: formatOperatorReadiness,
 
   formatPowerCreepLifecycle(powerCreepName, action, roomName, mode) {
     const report = evaluatePowerCreepLifecycle(powerCreepName, action, roomName, mode);

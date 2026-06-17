@@ -30,6 +30,28 @@ const ERR_RCL_NOT_ENOUGH = -14;
 const ORDER_BUY = "buy";
 const ORDER_SELL = "sell";
 const PWR_GENERATE_OPS = "PWR_GENERATE_OPS";
+const PWR_OPERATE_SPAWN = "PWR_OPERATE_SPAWN";
+const PWR_OPERATE_EXTENSION = "PWR_OPERATE_EXTENSION";
+const PWR_OPERATE_TOWER = "PWR_OPERATE_TOWER";
+const PWR_OPERATE_STORAGE = "PWR_OPERATE_STORAGE";
+const PWR_OPERATE_TERMINAL = "PWR_OPERATE_TERMINAL";
+const PWR_OPERATE_FACTORY = "PWR_OPERATE_FACTORY";
+const PWR_OPERATE_LAB = "PWR_OPERATE_LAB";
+const PWR_OPERATE_POWER = "PWR_OPERATE_POWER";
+const PWR_REGEN_SOURCE = "PWR_REGEN_SOURCE";
+const PWR_REGEN_MINERAL = "PWR_REGEN_MINERAL";
+const POWER_INFO = {
+  [PWR_OPERATE_SPAWN]: { ops: 100, range: 3 },
+  [PWR_OPERATE_EXTENSION]: { ops: 2, range: 3 },
+  [PWR_OPERATE_TOWER]: { ops: 10, range: 3 },
+  [PWR_OPERATE_STORAGE]: { ops: 100, range: 3 },
+  [PWR_OPERATE_TERMINAL]: { ops: 100, range: 3 },
+  [PWR_OPERATE_FACTORY]: { ops: 100, range: 3 },
+  [PWR_OPERATE_LAB]: { ops: 10, range: 3 },
+  [PWR_OPERATE_POWER]: { ops: 200, range: 3 },
+  [PWR_REGEN_SOURCE]: { ops: 0, range: 3 },
+  [PWR_REGEN_MINERAL]: { ops: 0, range: 3 },
+};
 
 const LOOK_STRUCTURES = "structure";
 const LOOK_CONSTRUCTION_SITES = "constructionSite";
@@ -208,6 +230,17 @@ Object.assign(global, {
   ORDER_BUY,
   ORDER_SELL,
   PWR_GENERATE_OPS,
+  PWR_OPERATE_SPAWN,
+  PWR_OPERATE_EXTENSION,
+  PWR_OPERATE_TOWER,
+  PWR_OPERATE_STORAGE,
+  PWR_OPERATE_TERMINAL,
+  PWR_OPERATE_FACTORY,
+  PWR_OPERATE_LAB,
+  PWR_OPERATE_POWER,
+  PWR_REGEN_SOURCE,
+  PWR_REGEN_MINERAL,
+  POWER_INFO,
   LOOK_STRUCTURES,
   LOOK_CONSTRUCTION_SITES,
   LOOK_CREEPS,
@@ -7493,6 +7526,158 @@ function runPowerCreepOpsGenerationControlsScenario() {
   });
 }
 
+function runOperatorReadinessReportsScenario() {
+  const room = buildPowerProcessingRoom("VAL_OPERATOR_READY", {
+    tick: 888,
+    storageEnergy: 200000,
+    powerSpawnEnergy: 500,
+    powerSpawnPower: 10,
+    terminalStore: { energy: 12000, ops: 300 },
+  });
+  room.addStructure(createStructure(STRUCTURE_EXTENSION, 23, 25, { roomName: room.name, my: true, store: { energy: 50 }, storeCapacityResource: { energy: 50 } }));
+  room.addStructure(createStructure(STRUCTURE_EXTENSION, 24, 25, { roomName: room.name, my: true, store: { energy: 50 }, storeCapacityResource: { energy: 50 } }));
+  room.addStructure(createStructure(STRUCTURE_TOWER, 25, 24, { roomName: room.name, my: true, store: { energy: 500 }, storeCapacityResource: { energy: 1000 } }));
+  room.addStructure(createStructure(STRUCTURE_FACTORY, 26, 24, { roomName: room.name, my: true, store: { energy: 0 }, storeCapacity: 50000, cooldown: 0 }));
+  room.addStructure(createStructure(STRUCTURE_LAB, 27, 24, { roomName: room.name, my: true, store: { energy: 0 }, storeCapacity: 3000, cooldown: 0 }));
+  room.addStructure(createStructure(STRUCTURE_LAB, 28, 24, { roomName: room.name, my: true, store: { energy: 0 }, storeCapacity: 3000, cooldown: 0 }));
+  room.addMineral(createMineral(28, 28, { roomName: room.name, mineralType: RESOURCE_UTRIUM }));
+  powerManager.run(room, roomState.collect(room));
+  ops.registerGlobals();
+  assert(typeof global.ops.operator === "function", "ops.operator should be registered");
+
+  createPowerCreep("OperatorReady", 25, 25, {
+    roomName: room.name,
+    ticksToLive: 1000,
+    powers: {
+      [PWR_OPERATE_SPAWN]: { level: 1, cooldown: 0 },
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 },
+      [PWR_OPERATE_TOWER]: { level: 1, cooldown: 42 },
+      [PWR_OPERATE_STORAGE]: { level: 1, cooldown: 0 },
+      [PWR_OPERATE_TERMINAL]: { level: 1, cooldown: 0 },
+      [PWR_OPERATE_FACTORY]: { level: 1, cooldown: 0 },
+      [PWR_OPERATE_LAB]: { level: 1, cooldown: 0 },
+      [PWR_REGEN_SOURCE]: { level: 1, cooldown: 0 },
+      [PWR_REGEN_MINERAL]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 40 },
+    storeCapacity: 100,
+  });
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorReady");
+  });
+  assert(typeof captured.result === "string", "ops.operator should return a clean string");
+  assert(
+    captured.result.indexOf("[OPS][OperatorReady][OPERATOR] spawned yes") !== -1 &&
+      captured.result.indexOf("ops 40") !== -1 &&
+      captured.result.indexOf("spawn need-ops cooldown 0 ops 40/100 enough no") !== -1 &&
+      captured.result.indexOf("extension ready cooldown 0 ops 40/2 enough yes") !== -1 &&
+      captured.result.indexOf("tower cooldown cooldown 42") !== -1 &&
+      captured.result.indexOf("report only; OPERATE_* usePower not called") !== -1 &&
+      captured.result.indexOf("[object Object]") === -1,
+    `operator summary should report clean readiness rows, got ${captured.result}`,
+  );
+  assert(
+    currentRuntime.powerCreepUsePowerActions.length === 0,
+    `operator report must not call usePower, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorReady", room.name);
+  });
+  assert(
+    captured.result.indexOf(`[OPS][${room.name}][OPERATOR] targets`) !== -1 &&
+      captured.result.indexOf("spawns ") !== -1 &&
+      captured.result.indexOf("extensions ") !== -1 &&
+      captured.result.indexOf("towers ") !== -1 &&
+      captured.result.indexOf("storage 1") !== -1 &&
+      captured.result.indexOf("terminal 1") !== -1 &&
+      captured.result.indexOf("factory 1") !== -1 &&
+      captured.result.indexOf("labs 2") !== -1 &&
+      captured.result.indexOf("powerSpawn 1") !== -1 &&
+      captured.result.indexOf("sources 2") !== -1 &&
+      captured.result.indexOf("minerals ") !== -1 &&
+      captured.result.indexOf("targets ") !== -1,
+    `operator room report should include target counts, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorReady", room.name, "powers");
+  });
+  assert(
+    captured.result.indexOf("target lab constant PWR_OPERATE_LAB") !== -1 &&
+      captured.result.indexOf("range") !== -1 &&
+      captured.result.indexOf("power missing-power") !== -1,
+    `operator powers detail should include target/constant/range fields, got ${captured.result}`,
+  );
+
+  const savedPowerCreeps = Game.powerCreeps;
+  delete Game.powerCreeps;
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorReady", room.name);
+  });
+  assert(
+    captured.result.indexOf("Game.powerCreeps missing") !== -1 &&
+      captured.result.indexOf("missing Power Creep") !== -1,
+    `missing Game.powerCreeps should be safe, got ${captured.result}`,
+  );
+  Game.powerCreeps = savedPowerCreeps;
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("MissingOperator", room.name);
+  });
+  assert(
+    captured.result.indexOf("missing Power Creep") !== -1 &&
+      captured.result.indexOf("missing-creep") !== -1,
+    `missing named Power Creep should be safe, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorUnspawnedReport", 1, 1, {
+    spawned: false,
+    powers: {
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 40 },
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorUnspawnedReport", room.name);
+  });
+  assert(
+    captured.result.indexOf("unspawned Power Creep") !== -1 &&
+      captured.result.indexOf("not-spawned") !== -1,
+    `unspawned Power Creep should be reported cleanly, got ${captured.result}`,
+  );
+
+  const savedLabPower = global.PWR_OPERATE_LAB;
+  delete global.PWR_OPERATE_LAB;
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorReady", room.name, "powers");
+  });
+  assert(
+    captured.result.indexOf("lab missing-constant") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 0,
+    `missing power constants should be reported safely, got ${captured.result}`,
+  );
+  global.PWR_OPERATE_LAB = savedLabPower;
+
+  assert(typeof global.ops.pcl(room.name) === "string", "ops.pcl should still work after operator report additions");
+  assert(typeof global.ops.powerCreeps() === "string", "ops.powerCreeps should still work after operator report additions");
+  assert(
+    global.ops.powerCreep("OperatorReady", "generateOps", "check").indexOf("BLOCKED_MISSING_POWER") !== -1,
+    "ops.powerCreep generateOps should still report missing power",
+  );
+  assert(typeof global.ops.ops(room.name) === "string", "ops.ops should still work after operator report additions");
+  assert(
+    global.ops.powerEnable(room.name, "check").indexOf("READY_TO_ENABLE") !== -1,
+    "ops.powerEnable should still work after operator report additions",
+  );
+  assert(typeof global.ops.power(room.name) === "string", "ops.power should still work after operator report additions");
+  assert(
+    currentRuntime.powerCreepUsePowerActions.length === 0,
+    `operator readiness and check regressions must not call usePower, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+  );
+}
+
 function runOpsInventoryAndStagingControlsScenario() {
   let room = buildOpsLogisticsRoom("VAL_OPS_INVENTORY", {
     tick: 885,
@@ -12873,6 +13058,7 @@ function main() {
     ["power_creep_lifecycle_controls", runPowerCreepLifecycleControlsScenario],
     ["power_creep_positioning_support", runPowerCreepPositioningSupportScenario],
     ["power_creep_ops_generation_controls", runPowerCreepOpsGenerationControlsScenario],
+    ["operator_readiness_reports", runOperatorReadinessReportsScenario],
     ["ops_inventory_and_staging_controls", runOpsInventoryAndStagingControlsScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
     ["power_spawn_refill_energy_request", runPowerSpawnEnergyRefillRequestScenario],
