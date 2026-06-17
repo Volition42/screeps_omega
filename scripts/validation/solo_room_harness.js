@@ -1277,10 +1277,14 @@ function createPowerCreep(name, x, y, options) {
       if (this.pos.getRangeTo(controller) > 1) return ERR_NOT_IN_RANGE;
       return OK;
     },
-    usePower(power) {
+    usePower(power, target) {
       currentRuntime.powerCreepUsePowerActions.push({
         powerCreepName: this.name,
         power: power,
+        targetId: target ? target.id || null : null,
+        targetName: target ? target.name || null : null,
+        targetType: target ? target.structureType || null : null,
+        targetRoom: target && target.pos ? target.pos.roomName : null,
         tick: Game.time,
       });
       if (!this.pos) return ERR_INVALID_TARGET;
@@ -7659,6 +7663,228 @@ function runOperatorReadinessReportsScenario() {
     `missing power constants should be reported safely, got ${captured.result}`,
   );
   global.PWR_OPERATE_LAB = savedLabPower;
+
+  const secondSpawn = room.addStructure(
+    createStructure(STRUCTURE_SPAWN, 24, 26, {
+      roomName: room.name,
+      name: "SpawnOperateTwo",
+      id: "spawn_operate_two",
+      hits: 5000,
+      hitsMax: 5000,
+      store: { energy: 300 },
+      storeCapacityResource: { energy: 300 },
+    }),
+  );
+
+  createPowerCreep("OperatorSpawnOps", 22, 25, {
+    roomName: room.name,
+    ticksToLive: 1000,
+    powers: {
+      [PWR_OPERATE_SPAWN]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 150 },
+    storeCapacity: 200,
+  });
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn", "check");
+  });
+  assert(typeof captured.result === "string", "operateSpawn check should return a clean string");
+  assert(
+    captured.result.indexOf("action operateSpawn | mode check") !== -1 &&
+      captured.result.indexOf("creep OperatorSpawnOps") !== -1 &&
+      captured.result.indexOf(`room ${room.name}`) !== -1 &&
+      captured.result.indexOf("target spawn Spawn1") !== -1 &&
+      captured.result.indexOf("ops 150/100") !== -1 &&
+      captured.result.indexOf("cooldown 0") !== -1 &&
+      captured.result.indexOf("range 3/3") !== -1 &&
+      captured.result.indexOf("status READY") !== -1 &&
+      captured.result.indexOf("target defaulted to first owned spawn") !== -1 &&
+      captured.result.indexOf("native powerCreep.usePower(PWR_OPERATE_SPAWN, spawn)") !== -1 &&
+      captured.result.indexOf("dry run only; usePower not called") !== -1 &&
+      captured.result.indexOf("[object Object]") === -1,
+    `operateSpawn check should explain readiness and native call, got ${captured.result}`,
+  );
+  assert(
+    currentRuntime.powerCreepUsePowerActions.length === 0,
+    `operateSpawn check must not call usePower, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn", "SpawnOperateTwo", "check");
+  });
+  assert(
+    captured.result.indexOf("target spawn SpawnOperateTwo") !== -1 &&
+      captured.result.indexOf("requested target SpawnOperateTwo") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 0,
+    `operateSpawn should resolve target by spawn name without executing, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn", secondSpawn.id, "check");
+  });
+  assert(
+    captured.result.indexOf("target spawn SpawnOperateTwo") !== -1 &&
+      captured.result.indexOf(`requested target ${secondSpawn.id}`) !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 0,
+    `operateSpawn should resolve target by spawn id without executing, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn", "SpawnOperateTwo", "confirm");
+  });
+  assert(
+    captured.result.indexOf("status EXECUTED") !== -1 &&
+      captured.result.indexOf("usePower result 0 (OK)") !== -1,
+    `operateSpawn confirm should execute with readable result, got ${captured.result}`,
+  );
+  assert(
+    currentRuntime.powerCreepUsePowerActions.length === 1 &&
+      currentRuntime.powerCreepUsePowerActions[0].powerCreepName === "OperatorSpawnOps" &&
+      currentRuntime.powerCreepUsePowerActions[0].power === PWR_OPERATE_SPAWN &&
+      currentRuntime.powerCreepUsePowerActions[0].targetId === secondSpawn.id,
+    `operateSpawn confirm should call usePower(PWR_OPERATE_SPAWN, spawn) once, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_INVALID_MODE") !== -1 &&
+      captured.result.indexOf("usePower not called") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `operateSpawn without explicit confirm should block, got ${captured.result}`,
+  );
+
+  const savedPowerCreepsForOperateSpawn = Game.powerCreeps;
+  delete Game.powerCreeps;
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn", "check");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NO_POWER_CREEPS") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `missing Game.powerCreeps should be handled safely for operateSpawn, got ${captured.result}`,
+  );
+  Game.powerCreeps = savedPowerCreepsForOperateSpawn;
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("MissingSpawnOps", room.name, "operateSpawn", "check");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_MISSING_POWER_CREEP") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `missing named Power Creep should block operateSpawn, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorUnspawnedSpawnOps", 1, 1, {
+    spawned: false,
+    powers: {
+      [PWR_OPERATE_SPAWN]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 150 },
+    storeCapacity: 200,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorUnspawnedSpawnOps", room.name, "operateSpawn", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NOT_SPAWNED") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `unspawned Power Creep should block operateSpawn, got ${captured.result}`,
+  );
+
+  const savedOperateSpawnPower = global.PWR_OPERATE_SPAWN;
+  delete global.PWR_OPERATE_SPAWN;
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_MISSING_CONSTANT") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `missing PWR_OPERATE_SPAWN constant should block safely, got ${captured.result}`,
+  );
+  global.PWR_OPERATE_SPAWN = savedOperateSpawnPower;
+
+  createPowerCreep("OperatorNoSpawnPower", 22, 25, {
+    roomName: room.name,
+    powers: {},
+    store: { ops: 150 },
+    storeCapacity: 200,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorNoSpawnPower", room.name, "operateSpawn", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_MISSING_POWER") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `missing PWR_OPERATE_SPAWN on creep should block, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorCooldownSpawnOps", 22, 25, {
+    roomName: room.name,
+    powers: {
+      [PWR_OPERATE_SPAWN]: { level: 1, cooldown: 4 },
+    },
+    store: { ops: 150 },
+    storeCapacity: 200,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorCooldownSpawnOps", room.name, "operateSpawn", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_COOLDOWN") !== -1 &&
+      captured.result.indexOf("cooldown 4") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `operateSpawn cooldown should block, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorLowOpsSpawnOps", 22, 25, {
+    roomName: room.name,
+    powers: {
+      [PWR_OPERATE_SPAWN]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 40 },
+    storeCapacity: 200,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorLowOpsSpawnOps", room.name, "operateSpawn", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_INSUFFICIENT_OPS") !== -1 &&
+      captured.result.indexOf("ops 40/100") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `operateSpawn insufficient ops should block, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorSpawnOps", room.name, "operateSpawn", "MissingSpawn", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NO_TARGET") !== -1 &&
+      captured.result.indexOf("requested target MissingSpawn") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `missing spawn target should block operateSpawn, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorFarSpawnOps", 10, 10, {
+    roomName: room.name,
+    powers: {
+      [PWR_OPERATE_SPAWN]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 150 },
+    storeCapacity: 200,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorFarSpawnOps", room.name, "operateSpawn", "check");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NOT_IN_RANGE") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 1,
+    `out of range operateSpawn should block, got ${captured.result}`,
+  );
+
+  currentRuntime.powerCreepUsePowerActions = [];
 
   assert(typeof global.ops.pcl(room.name) === "string", "ops.pcl should still work after operator report additions");
   assert(typeof global.ops.powerCreeps() === "string", "ops.powerCreeps should still work after operator report additions");
