@@ -1221,6 +1221,17 @@ function createPowerCreep(name, x, y, options) {
     powers: spec.powers || {},
     shard: spec.shard || { name: "shard0" },
     store: createStore(spec.store || {}, null, spec.storeCapacity || 100),
+    moveTo(target) {
+      currentRuntime.powerCreepMoveActions.push({
+        powerCreepName: this.name,
+        targetId: target ? target.id || null : null,
+        targetType: target ? target.structureType || (target.my ? "controller" : "target") : null,
+        targetRoom: target && target.pos ? target.pos.roomName : null,
+        tick: Game.time,
+      });
+      if (!target || !target.pos || !this.pos) return ERR_INVALID_TARGET;
+      return OK;
+    },
     enableRoom(controller) {
       currentRuntime.enableRoomActions.push({
         roomName: controller && controller.room ? controller.room.name : controller && controller.pos ? controller.pos.roomName : null,
@@ -1257,6 +1268,7 @@ function resetRuntime(tick) {
     rooms: {},
     objectsById: {},
     enableRoomActions: [],
+    powerCreepMoveActions: [],
     spawnPowerCreepActions: [],
     renewPowerCreepActions: [],
     spawnEvents: [],
@@ -7155,6 +7167,138 @@ function runPowerCreepLifecycleControlsScenario() {
   });
 }
 
+function runPowerCreepPositioningSupportScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, PROCESS_UNDER_CRITICAL_CPU: false }, function () {
+    const room = buildPowerProcessingRoom("VAL_PC_POSITION", {
+      tick: 883,
+      storageEnergy: 200000,
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 10,
+    });
+    powerManager.run(room, roomState.collect(room));
+    ops.registerGlobals();
+
+    createPowerCreep("OperatorMover", 20, 25, {
+      roomName: room.name,
+      ticksToLive: 1000,
+    });
+
+    let captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorMover", "position", room.name);
+    });
+    assert(typeof captured.result === "string", "position command should return a clean string");
+    assert(
+      captured.result.indexOf("action position | mode check") !== -1 &&
+        captured.result.indexOf("current " + room.name + ":20,25") !== -1 &&
+        captured.result.indexOf("target Power Spawn") !== -1 &&
+        captured.result.indexOf("target Controller") !== -1 &&
+        captured.result.indexOf("target Staging") !== -1 &&
+        captured.result.indexOf("[object Object]") === -1,
+      `position command should report clean target strings, got ${captured.result}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorMover", "move", room.name, "powerSpawn", "check");
+    });
+    assert(
+      captured.result.indexOf("action move | mode check") !== -1 &&
+        captured.result.indexOf("target Power Spawn") !== -1 &&
+        captured.result.indexOf("dry run only; moveTo not called") !== -1,
+      `move check should report Power Spawn target without moving, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.powerCreepMoveActions.length === 0,
+      `move check must not call moveTo, got ${JSON.stringify(currentRuntime.powerCreepMoveActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorMover", "move", room.name, "powerSpawn", "confirm");
+    });
+    assert(
+      captured.result.indexOf("status EXECUTED") !== -1 &&
+        captured.result.indexOf("moveTo result 0 (OK)") !== -1,
+      `move confirm should execute with readable moveTo result, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.powerCreepMoveActions.length === 1 &&
+        currentRuntime.powerCreepMoveActions[0].powerCreepName === "OperatorMover" &&
+        currentRuntime.powerCreepMoveActions[0].targetType === STRUCTURE_POWER_SPAWN,
+      `move confirm should call moveTo once for Power Spawn, got ${JSON.stringify(currentRuntime.powerCreepMoveActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorMover", "move", room.name, "controller", "confirm");
+    });
+    assert(
+      captured.result.indexOf("target Controller") !== -1 &&
+        captured.result.indexOf("moveTo result 0 (OK)") !== -1,
+      `controller move should resolve controller target, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.powerCreepMoveActions.length === 2 &&
+        currentRuntime.powerCreepMoveActions[1].targetType === "controller",
+      `controller move confirm should call moveTo on controller, got ${JSON.stringify(currentRuntime.powerCreepMoveActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorMover", "move", room.name, "staging", "confirm");
+    });
+    assert(
+      captured.result.indexOf("target Staging") !== -1 &&
+        captured.result.indexOf("default staging target is Power Spawn") !== -1 &&
+        captured.result.indexOf("moveTo result 0 (OK)") !== -1,
+      `staging move should default to Power Spawn, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.powerCreepMoveActions.length === 3 &&
+        currentRuntime.powerCreepMoveActions[2].targetType === STRUCTURE_POWER_SPAWN,
+      `staging move should call moveTo on Power Spawn, got ${JSON.stringify(currentRuntime.powerCreepMoveActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorMover", "move", room.name, "controller");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_INVALID_MODE") !== -1 &&
+        captured.result.indexOf("moveTo not called") !== -1 &&
+        currentRuntime.powerCreepMoveActions.length === 3,
+      `move without explicit confirm should block and avoid moveTo, got ${captured.result}`,
+    );
+
+    createPowerCreep("OperatorUnspawned", 1, 1, {
+      roomName: room.name,
+      spawned: false,
+    });
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorUnspawned", "move", room.name, "controller", "confirm");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_NOT_SPAWNED") !== -1 &&
+        currentRuntime.powerCreepMoveActions.length === 3,
+      `unspawned Power Creep movement should block, got ${captured.result}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("MissingMover", "move", room.name, "controller", "confirm");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_MISSING_POWER_CREEP") !== -1 &&
+        currentRuntime.powerCreepMoveActions.length === 3,
+      `missing named Power Creep movement should block, got ${captured.result}`,
+    );
+
+    delete Game.powerCreeps;
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorMover", "move", room.name, "controller", "confirm");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_NO_POWER_CREEPS") !== -1 &&
+        currentRuntime.powerCreepMoveActions.length === 3,
+      `missing Game.powerCreeps should be handled safely, got ${captured.result}`,
+    );
+  });
+}
+
 function runPowerSpawnRefillVisibilityScenario() {
   withPowerSettings({ MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
     const room = buildPowerProcessingRoom("VAL_POWER_REFILL", {
@@ -12359,6 +12503,7 @@ function main() {
     ["pcl_readiness_commands", runPclReadinessCommandsScenario],
     ["pcl_blocked_readiness", runPclBlockedReadinessScenario],
     ["power_creep_lifecycle_controls", runPowerCreepLifecycleControlsScenario],
+    ["power_creep_positioning_support", runPowerCreepPositioningSupportScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
     ["power_spawn_refill_energy_request", runPowerSpawnEnergyRefillRequestScenario],
     ["power_spawn_refill_power_request", runPowerSpawnPowerRefillRequestScenario],

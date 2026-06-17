@@ -8,7 +8,8 @@ Purpose:
 - Keep Power Creep preparation operator-driven and non-executing
 
 Important Notes:
-- Does not move or operate Power Creeps
+- Does not add autonomous Power Creep movement or power use
+- Operator-confirmed move commands call moveTo only after explicit confirm
 - Native Power Creep lifecycle actions require explicit operator confirm
 - Does not write Memory
 */
@@ -40,6 +41,9 @@ const LIFECYCLE = {
   BLOCKED_NO_CONTROLLER: "BLOCKED_NO_CONTROLLER",
   BLOCKED_NO_POWER_SPAWN: "BLOCKED_NO_POWER_SPAWN",
   BLOCKED_POWER_SPAWN_NOT_OWNED: "BLOCKED_POWER_SPAWN_NOT_OWNED",
+  BLOCKED_NO_POSITION: "BLOCKED_NO_POSITION",
+  BLOCKED_INVALID_TARGET: "BLOCKED_INVALID_TARGET",
+  BLOCKED_NO_TARGET: "BLOCKED_NO_TARGET",
   BLOCKED_ROOM_MISMATCH: "BLOCKED_ROOM_MISMATCH",
   BLOCKED_NOT_IN_RANGE: "BLOCKED_NOT_IN_RANGE",
   BLOCKED_THREAT: "BLOCKED_THREAT",
@@ -115,14 +119,37 @@ function getPowerCreepRoomName(powerCreep) {
 
 function getRange(powerCreep, target) {
   if (!powerCreep || !powerCreep.pos || !target || !target.pos) return null;
+  if (powerCreep.pos.roomName !== target.pos.roomName) return null;
   if (typeof powerCreep.pos.getRangeTo === "function") {
     return powerCreep.pos.getRangeTo(target);
   }
-  if (powerCreep.pos.roomName !== target.pos.roomName) return null;
   return Math.max(
     Math.abs(powerCreep.pos.x - target.pos.x),
     Math.abs(powerCreep.pos.y - target.pos.y),
   );
+}
+
+function formatPosition(pos) {
+  if (!pos) return "unknown";
+  return `${pos.roomName || "?"}:${pos.x},${pos.y}`;
+}
+
+function normalizeMoveTarget(targetType) {
+  const normalized =
+    typeof targetType === "string" ? targetType.trim().toLowerCase() : targetType;
+  if (normalized === "powerspawn" || normalized === "power_spawn" || normalized === "power-spawn") {
+    return "powerSpawn";
+  }
+  if (normalized === "controller") return "controller";
+  if (normalized === "staging" || normalized === "stage") return "staging";
+  return normalized || "";
+}
+
+function targetLabel(targetType) {
+  if (targetType === "powerSpawn") return "Power Spawn";
+  if (targetType === "controller") return "Controller";
+  if (targetType === "staging") return "Staging";
+  return targetType || "none";
 }
 
 function resultLabel(result) {
@@ -159,6 +186,7 @@ function nativeActionLabel(action) {
   if (action === "spawn") return "powerSpawn.spawnPowerCreep(powerCreep)";
   if (action === "renew") return "powerSpawn.renewPowerCreep(powerCreep)";
   if (action === "enable") return "powerCreep.enableRoom(room.controller)";
+  if (action === "move") return "powerCreep.moveTo(target)";
   return "none";
 }
 
@@ -344,6 +372,326 @@ function formatLifecycleReport(report) {
     );
   } else {
     lines.push("[OPS][POWER_CREEP] native action not called.");
+  }
+
+  return lines.join("\n");
+}
+
+function resolvePowerCreepTarget(room, targetType) {
+  const normalizedTarget = normalizeMoveTarget(targetType);
+  const powerSpawns = getOwnedPowerSpawns(room);
+  const powerSpawn = powerSpawns.length > 0 ? powerSpawns[0] : null;
+
+  if (normalizedTarget === "powerSpawn") {
+    return {
+      requestedType: normalizedTarget,
+      targetType: "Power Spawn",
+      target: powerSpawn,
+      targetId: powerSpawn ? powerSpawn.id : null,
+      targetPosition: powerSpawn ? powerSpawn.pos : null,
+      status: powerSpawn ? null : LIFECYCLE.BLOCKED_NO_POWER_SPAWN,
+      detail: powerSpawn ? "owned Power Spawn" : "missing owned Power Spawn",
+    };
+  }
+
+  if (normalizedTarget === "controller") {
+    return {
+      requestedType: normalizedTarget,
+      targetType: "Controller",
+      target: room && room.controller ? room.controller : null,
+      targetId: room && room.controller ? room.controller.id : null,
+      targetPosition: room && room.controller ? room.controller.pos : null,
+      status: room && room.controller ? null : LIFECYCLE.BLOCKED_NO_CONTROLLER,
+      detail: room && room.controller ? "controller visible" : "missing controller",
+    };
+  }
+
+  if (normalizedTarget === "staging") {
+    return {
+      requestedType: normalizedTarget,
+      targetType: "Staging",
+      target: powerSpawn,
+      targetId: powerSpawn ? powerSpawn.id : null,
+      targetPosition: powerSpawn ? powerSpawn.pos : null,
+      status: powerSpawn ? null : LIFECYCLE.BLOCKED_NO_POWER_SPAWN,
+      detail: powerSpawn
+        ? "default staging target is Power Spawn"
+        : "default staging target missing Power Spawn",
+    };
+  }
+
+  return {
+    requestedType: normalizedTarget,
+    targetType: targetLabel(normalizedTarget),
+    target: null,
+    targetId: null,
+    targetPosition: null,
+    status: LIFECYCLE.BLOCKED_INVALID_TARGET,
+    detail: 'use "powerSpawn", "controller", or "staging"',
+  };
+}
+
+function evaluatePowerCreepPosition(powerCreepName, roomName) {
+  const checks = [];
+  const room = Game.rooms && Game.rooms[roomName] ? Game.rooms[roomName] : null;
+  const powerCreep = getPowerCreepByName(powerCreepName);
+  const powerCreepSpawned = isPowerCreepSpawned(powerCreep);
+  const creepRoomName = getPowerCreepRoomName(powerCreep);
+  const targets = ["powerSpawn", "controller", "staging"].map(function (targetType) {
+    const resolved = resolvePowerCreepTarget(room, targetType);
+    return {
+      type: resolved.targetType,
+      requestedType: resolved.requestedType,
+      id: resolved.targetId,
+      position: resolved.targetPosition,
+      detail: resolved.detail,
+      range: powerCreepSpawned && resolved.target ? getRange(powerCreep, resolved.target) : null,
+      status: resolved.status || "VISIBLE",
+    };
+  });
+
+  addLifecycleCheck(
+    checks,
+    "Power Creeps registry",
+    hasAnyPowerCreeps(),
+    hasAnyPowerCreeps() ? "available" : "Game.powerCreeps missing or empty",
+    LIFECYCLE.BLOCKED_NO_POWER_CREEPS,
+  );
+  addLifecycleCheck(
+    checks,
+    "named Power Creep",
+    !!powerCreep,
+    powerCreep ? powerCreep.name || powerCreepName : "not found",
+    LIFECYCLE.BLOCKED_MISSING_POWER_CREEP,
+  );
+  addLifecycleCheck(
+    checks,
+    "spawned Power Creep",
+    !!powerCreep && powerCreepSpawned,
+    powerCreepSpawned ? `in ${creepRoomName || "unknown"}` : "not spawned",
+    LIFECYCLE.BLOCKED_NOT_SPAWNED,
+  );
+  addLifecycleCheck(
+    checks,
+    "visible Power Creep position",
+    !!(powerCreep && powerCreep.pos),
+    powerCreep && powerCreep.pos ? formatPosition(powerCreep.pos) : "position unavailable",
+    LIFECYCLE.BLOCKED_NO_POSITION,
+  );
+  addLifecycleCheck(
+    checks,
+    "owned room",
+    !!(room && room.controller && room.controller.my),
+    room ? "visible" : "room not visible or not owned",
+    LIFECYCLE.BLOCKED_NOT_OWNED,
+  );
+
+  const blocked = firstBlockedStatus(checks, LIFECYCLE.BLOCKED_MISSING_POWER_CREEP);
+  return {
+    action: "position",
+    mode: "check",
+    roomName: roomName,
+    powerCreepName: powerCreepName,
+    powerCreep: powerCreep,
+    currentPosition: powerCreep && powerCreep.pos ? powerCreep.pos : null,
+    currentRoomName: creepRoomName,
+    status: blocked || LIFECYCLE.READY,
+    blockedReason: blocked,
+    checks: checks,
+    targets: targets,
+  };
+}
+
+function evaluatePowerCreepMove(powerCreepName, roomName, targetType, mode) {
+  const normalizedMode = normalizeMode(mode);
+  const normalizedTarget = normalizeMoveTarget(targetType);
+  const checks = [];
+  const room = Game.rooms && Game.rooms[roomName] ? Game.rooms[roomName] : null;
+  const powerCreep = getPowerCreepByName(powerCreepName);
+  const powerCreepSpawned = isPowerCreepSpawned(powerCreep);
+  const creepRoomName = getPowerCreepRoomName(powerCreep);
+  const threat = hasActiveThreat(room);
+  const resolved = resolvePowerCreepTarget(room, normalizedTarget);
+  const range = powerCreepSpawned && resolved.target ? getRange(powerCreep, resolved.target) : null;
+
+  addLifecycleCheck(
+    checks,
+    "mode",
+    normalizedMode === "check" || normalizedMode === "confirm",
+    'use "check" or "confirm"',
+    LIFECYCLE.BLOCKED_INVALID_MODE,
+  );
+  addLifecycleCheck(
+    checks,
+    "operator approval",
+    normalizedMode === "check" || normalizedMode === "confirm",
+    normalizedMode === "confirm"
+      ? "confirmed"
+      : normalizedMode === "check"
+        ? "dry run; moveTo not called"
+        : 'use "confirm" to issue moveTo',
+    LIFECYCLE.BLOCKED_INVALID_MODE,
+  );
+  addLifecycleCheck(
+    checks,
+    "Power Creeps registry",
+    hasAnyPowerCreeps(),
+    hasAnyPowerCreeps() ? "available" : "Game.powerCreeps missing or empty",
+    LIFECYCLE.BLOCKED_NO_POWER_CREEPS,
+  );
+  addLifecycleCheck(
+    checks,
+    "named Power Creep",
+    !!powerCreep,
+    powerCreep ? powerCreep.name || powerCreepName : "not found",
+    LIFECYCLE.BLOCKED_MISSING_POWER_CREEP,
+  );
+  addLifecycleCheck(
+    checks,
+    "spawned Power Creep",
+    !!powerCreep && powerCreepSpawned,
+    powerCreepSpawned ? `in ${creepRoomName || "unknown"}` : "not spawned",
+    LIFECYCLE.BLOCKED_NOT_SPAWNED,
+  );
+  addLifecycleCheck(
+    checks,
+    "visible Power Creep position",
+    !!(powerCreep && powerCreep.pos),
+    powerCreep && powerCreep.pos ? formatPosition(powerCreep.pos) : "position unavailable",
+    LIFECYCLE.BLOCKED_NO_POSITION,
+  );
+  addLifecycleCheck(
+    checks,
+    "owned room",
+    !!(room && room.controller && room.controller.my),
+    room ? "visible" : "room not visible or not owned",
+    LIFECYCLE.BLOCKED_NOT_OWNED,
+  );
+  addLifecycleCheck(
+    checks,
+    "target type",
+    resolved.status !== LIFECYCLE.BLOCKED_INVALID_TARGET,
+    resolved.detail,
+    LIFECYCLE.BLOCKED_INVALID_TARGET,
+  );
+  addLifecycleCheck(
+    checks,
+    "target exists",
+    !!resolved.target && !resolved.status,
+    resolved.detail,
+    resolved.status || LIFECYCLE.BLOCKED_NO_TARGET,
+  );
+  addLifecycleCheck(
+    checks,
+    "target position visible",
+    !!resolved.targetPosition,
+    resolved.targetPosition ? formatPosition(resolved.targetPosition) : "position unavailable",
+    LIFECYCLE.BLOCKED_NO_TARGET,
+  );
+  addLifecycleCheck(
+    checks,
+    "no active threat",
+    !threat,
+    threat ? "active threat" : "clear",
+    LIFECYCLE.BLOCKED_THREAT,
+  );
+
+  const blocked = firstBlockedStatus(checks, LIFECYCLE.BLOCKED_INVALID_MODE);
+
+  return {
+    action: "move",
+    mode: normalizedMode || String(mode || ""),
+    roomName: roomName,
+    powerCreepName: powerCreepName,
+    powerCreep: powerCreep,
+    currentPosition: powerCreep && powerCreep.pos ? powerCreep.pos : null,
+    currentRoomName: creepRoomName,
+    targetType: resolved.targetType,
+    requestedTargetType: normalizedTarget,
+    target: resolved.target,
+    targetId: resolved.targetId,
+    targetPosition: resolved.targetPosition,
+    targetDetail: resolved.detail,
+    range: range,
+    nativeAction: nativeActionLabel("move"),
+    crossRoom: !!(powerCreep && powerCreep.pos && resolved.targetPosition && powerCreep.pos.roomName !== resolved.targetPosition.roomName),
+    status: blocked || LIFECYCLE.READY,
+    blockedReason: blocked,
+    checks: checks,
+  };
+}
+
+function formatPositionReport(report) {
+  const lines = [
+    `[OPS][POWER_CREEP] action ${report.action} | mode ${report.mode} | room ${report.roomName || "?"} | ` +
+      `creep ${report.powerCreepName || "?"} | current ${formatPosition(report.currentPosition)} | status ${report.status}`,
+  ];
+
+  if (report.blockedReason) {
+    lines.push(`[OPS][POWER_CREEP] blocked ${report.blockedReason}`);
+  }
+
+  for (let i = 0; i < report.checks.length; i++) {
+    const item = report.checks[i];
+    lines.push(
+      `[OPS][POWER_CREEP] ${item.ok ? "OK" : "BLOCK"} ${item.key}` +
+        `${item.detail ? " - " + item.detail : ""}`,
+    );
+  }
+
+  for (let i = 0; i < report.targets.length; i++) {
+    const target = report.targets[i];
+    lines.push(
+      `[OPS][POWER_CREEP] target ${target.type} | room ${report.roomName || "?"} | ` +
+        `pos ${formatPosition(target.position)} | range ${
+          typeof target.range === "number" ? target.range : "cross-room/unavailable"
+        } | status ${target.status} | ${target.detail}`,
+    );
+  }
+
+  lines.push("[OPS][POWER_CREEP] position report only; native action not called.");
+  return lines.join("\n");
+}
+
+function formatMoveReport(report) {
+  const lines = [
+    `[OPS][POWER_CREEP] action ${report.action} | mode ${report.mode || "?"} | room ${report.roomName || "?"} | ` +
+      `creep ${report.powerCreepName || "?"} | target ${report.targetType || "none"} ${
+        report.targetId || "none"
+      } | status ${report.status}`,
+    `[OPS][POWER_CREEP] current ${formatPosition(report.currentPosition)} | target room ${
+      report.roomName || "?"
+    } | target pos ${formatPosition(report.targetPosition)} | range ${
+      typeof report.range === "number" ? report.range : "cross-room/unavailable"
+    }`,
+  ];
+
+  if (report.crossRoom) {
+    lines.push("[OPS][POWER_CREEP] cross-room movement is operator-directed; no route automation added.");
+  }
+
+  if (report.blockedReason) {
+    lines.push(`[OPS][POWER_CREEP] blocked ${report.blockedReason}`);
+  }
+
+  for (let i = 0; i < report.checks.length; i++) {
+    const item = report.checks[i];
+    lines.push(
+      `[OPS][POWER_CREEP] ${item.ok ? "OK" : "BLOCK"} ${item.key}` +
+        `${item.detail ? " - " + item.detail : ""}`,
+    );
+  }
+
+  lines.push(`[OPS][POWER_CREEP] native ${report.nativeAction}`);
+
+  if (report.mode === "check") {
+    lines.push("[OPS][POWER_CREEP] dry run only; moveTo not called.");
+  } else if (report.executed) {
+    lines.push(
+      `[OPS][POWER_CREEP] moveTo result ${report.apiResult} (${resultLabel(report.apiResult)})`,
+    );
+  } else {
+    lines.push("[OPS][POWER_CREEP] moveTo not called.");
   }
 
   return lines.join("\n");
@@ -694,6 +1042,24 @@ module.exports = {
     }
 
     return formatLifecycleReport(report);
+  },
+
+  formatPowerCreepPosition(powerCreepName, roomName) {
+    return formatPositionReport(evaluatePowerCreepPosition(powerCreepName, roomName));
+  },
+
+  formatPowerCreepMove(powerCreepName, roomName, targetType, mode) {
+    const report = evaluatePowerCreepMove(powerCreepName, roomName, targetType, mode);
+
+    if (report.mode === "confirm" && !report.blockedReason) {
+      report.executed = true;
+      report.apiResult = report.powerCreep.moveTo(report.target);
+      report.status = report.apiResult === OK ? "EXECUTED" : "API_ERROR";
+    } else {
+      report.executed = false;
+    }
+
+    return formatMoveReport(report);
   },
 
   getRoomEnablementReadiness(roomName) {

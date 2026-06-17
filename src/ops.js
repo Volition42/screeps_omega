@@ -521,10 +521,10 @@ function getConsoleCommandHelp() {
       example: "ops.powerCreeps()",
     },
     {
-      command: 'ops.powerCreep(name, action, room, mode)',
+      command: 'ops.powerCreep(name, action, room, [target], [mode])',
       description:
-        "Check or confirm manual Power Creep spawn and renewal at a Power Spawn.",
-      example: 'ops.powerCreep("OperatorOne", "spawn", "W5N5", "check")',
+        "Check Power Creep lifecycle position, or confirm manual spawn, renew, and move preparation.",
+      example: 'ops.powerCreep("OperatorOne", "move", "W5N5", "powerSpawn", "check")',
     },
     {
       command: 'ops.powerEnable(roomName, mode, [name])',
@@ -748,8 +748,8 @@ module.exports = {
       powerCreeps: function () {
         return module.exports.powerCreeps();
       },
-      powerCreep: function (powerCreepName, action, roomName, mode) {
-        return module.exports.powerCreep(powerCreepName, action, roomName, mode);
+      powerCreep: function (powerCreepName, action, roomName, targetOrMode, mode) {
+        return module.exports.powerCreep(powerCreepName, action, roomName, targetOrMode, mode);
       },
       powerEnable: function (roomName, mode, powerCreepName) {
         return module.exports.powerEnable(roomName, mode, powerCreepName);
@@ -942,14 +942,34 @@ module.exports = {
     return report;
   },
 
-  powerCreep(powerCreepName, action, roomName, mode) {
+  powerCreep(powerCreepName, action, roomName, targetOrMode, mode) {
     if (!powerCreepName || !action || !roomName) {
       return printLine(
-        '[OPS] powerCreep: use ops.powerCreep("CREEP_NAME", "spawn|renew", "ROOM", "check|confirm").',
+        '[OPS] powerCreep: use ops.powerCreep("CREEP_NAME", "spawn|renew|position|move", "ROOM", "check|confirm").',
       );
     }
 
-    const normalized = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
+    const normalizedAction = typeof action === "string" ? action.trim().toLowerCase() : action;
+
+    if (normalizedAction === "position") {
+      const report = pclManager.formatPowerCreepPosition(powerCreepName, roomName);
+      printBlock(report.split("\n"));
+      return report;
+    }
+
+    if (normalizedAction === "move") {
+      const normalizedMode = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
+      const report = pclManager.formatPowerCreepMove(
+        powerCreepName,
+        roomName,
+        targetOrMode,
+        normalizedMode,
+      );
+      printBlock(report.split("\n"));
+      return report;
+    }
+
+    const normalized = typeof targetOrMode === "string" ? targetOrMode.trim().toLowerCase() : targetOrMode;
     if (normalized !== "check" && normalized !== "confirm") {
       return printLine('[OPS] powerCreep: mode must be "check" or "confirm".');
     }
