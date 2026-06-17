@@ -715,6 +715,21 @@ function getConsoleCommandHelp() {
       example: 'ops.powerCreep("OperatorOne", "move", "W5N5", "powerSpawn", "check")',
     },
     {
+      command: 'ops.powerCreep(name, "assign", room)',
+      description: "Assign a Power Creep home room for renewal assist only.",
+      example: 'ops.powerCreep("OperatorOne", "assign", "W5N5")',
+    },
+    {
+      command: 'ops.powerCreep(name, "renewAssist", on|off)',
+      description: "Toggle per-creep renewal assist for an assigned Power Creep.",
+      example: 'ops.powerCreep("OperatorOne", "renewAssist", "off")',
+    },
+    {
+      command: 'ops.powerCreep(name, "renewStatus")',
+      description: "Show concise Power Creep renewal assist state.",
+      example: 'ops.powerCreep("OperatorOne", "renewStatus")',
+    },
+    {
       command: 'ops.powerCreep(name, "generateOps", mode)',
       description:
         "Check or explicitly confirm manual GENERATE_OPS use on a spawned Power Creep.",
@@ -1211,9 +1226,36 @@ module.exports = {
   powerCreep(powerCreepName, action, roomName, targetOrMode, mode) {
     const normalizedAction = typeof action === "string" ? action.trim().toLowerCase() : action;
 
-    if (!powerCreepName || !action || (!roomName && normalizedAction !== "generateops")) {
+    if (!powerCreepName || !action) {
       return printLine(
-        '[OPS] powerCreep: use ops.powerCreep("CREEP_NAME", "spawn|renew|position|move", "ROOM", "check|confirm") or ops.powerCreep("CREEP_NAME", "generateOps", "check|confirm").',
+        '[OPS] powerCreep: use ops.powerCreep("CREEP_NAME", "assign|unassign|renewAssist|renewStatus|spawn|renew|position|move", ...).',
+      );
+    }
+
+    if (normalizedAction === "assign") {
+      const result = pclManager.assignPowerCreep(powerCreepName, roomName);
+      return printLine(result.message);
+    }
+
+    if (normalizedAction === "unassign") {
+      const result = pclManager.unassignPowerCreep(powerCreepName);
+      return printLine(result.message);
+    }
+
+    if (normalizedAction === "renewassist") {
+      const result = pclManager.setPowerCreepRenewAssist(powerCreepName, roomName);
+      return printLine(result.message);
+    }
+
+    if (normalizedAction === "renewstatus") {
+      const report = pclManager.formatPowerCreepRenewStatus(powerCreepName);
+      printBlock(report.split("\n"));
+      return report;
+    }
+
+    if (!roomName && normalizedAction !== "generateops") {
+      return printLine(
+        '[OPS] powerCreep: room required for spawn, renew, position, and move.',
       );
     }
 

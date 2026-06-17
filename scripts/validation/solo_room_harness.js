@@ -1784,6 +1784,7 @@ const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const ops = require("ops");
 const powerManager = require("power_manager");
+const pclManager = require("pcl_manager");
 const invasionLog = require("invasion_log");
 const creepManager = require("creep_manager");
 const hud = require("hud");
@@ -6542,6 +6543,17 @@ function withPowerSettings(overrides, fn) {
   }
 }
 
+function withPowerCreepSettings(overrides, fn) {
+  const previous = Object.assign({}, config.POWER_CREEPS || {});
+  config.POWER_CREEPS = Object.assign({}, config.POWER_CREEPS || {}, overrides || {});
+
+  try {
+    fn();
+  } finally {
+    config.POWER_CREEPS = previous;
+  }
+}
+
 function buildPowerProcessingRoom(name, options) {
   const settings = options || {};
   const room = buildRoomScenario(name, {
@@ -7345,6 +7357,228 @@ function runPowerCreepPositioningSupportScenario() {
         currentRuntime.powerCreepMoveActions.length === 3,
       `missing Game.powerCreeps should be handled safely, got ${captured.result}`,
     );
+  });
+}
+
+function runPowerCreepRenewalAssistScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, PROCESS_UNDER_CRITICAL_CPU: false }, function () {
+    withPowerCreepSettings({
+      RENEW_ASSIST_ENABLED: true,
+      RENEW_TTL_THRESHOLD: 1000,
+      RENEW_TARGET_TTL: 4500,
+      MOVE_REUSE_PATH: 3,
+    }, function () {
+      const room = buildPowerProcessingRoom("VAL_PC_RENEW_ASSIST", {
+        tick: 889,
+        storageEnergy: 200000,
+        powerSpawnEnergy: 500,
+        powerSpawnPower: 10,
+      });
+      powerManager.run(room, roomState.collect(room));
+      ops.registerGlobals();
+
+      let result = global.ops.powerCreep("OperatorRemove", "assign", room.name);
+      assert(result.indexOf("assigned " + room.name) !== -1, `assign should print bounded status, got ${result}`);
+      assert(
+        Memory.powerCreeps.OperatorRemove.homeRoom === room.name &&
+          Memory.powerCreeps.OperatorRemove.renewalAssist === true &&
+          Memory.powerCreeps.OperatorRemove.updated === Game.time,
+        `assign should store bounded assignment, got ${JSON.stringify(Memory.powerCreeps.OperatorRemove)}`,
+      );
+      result = global.ops.powerCreep("OperatorRemove", "unassign");
+      assert(result.indexOf("unassigned") !== -1, `unassign should print status, got ${result}`);
+      assert(!Memory.powerCreeps.OperatorRemove, "unassign should remove assignment memory");
+
+      result = global.ops.powerCreep("OperatorRenewAssist", "assign", room.name);
+      assert(result.indexOf("renewAssist on") !== -1, `assign should default assist on, got ${result}`);
+      result = global.ops.powerCreep("OperatorRenewAssist", "renewAssist", "off");
+      assert(
+        result.indexOf("renewAssist off") !== -1 &&
+          Memory.powerCreeps.OperatorRenewAssist.renewalAssist === false,
+        `renewAssist off should update memory, got ${result}`,
+      );
+      result = global.ops.powerCreep("OperatorRenewAssist", "renewAssist", "on");
+      assert(
+        result.indexOf("renewAssist on") !== -1 &&
+          Memory.powerCreeps.OperatorRenewAssist.renewalAssist === true,
+        `renewAssist on should update memory, got ${result}`,
+      );
+
+      const operator = createPowerCreep("OperatorRenewAssist", 20, 25, {
+        roomName: room.name,
+        ticksToLive: 1500,
+      });
+
+      pclManager.runRenewalAssist();
+      assert(
+        currentRuntime.powerCreepMoveActions.length === 0 &&
+          currentRuntime.renewPowerCreepActions.length === 0,
+        "renewal assist should do nothing above threshold",
+      );
+      assert(
+        Memory.powerCreeps.OperatorRenewAssist.renewal.status === "IDLE_ABOVE_THRESHOLD",
+        `expected above-threshold idle, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewAssist.renewal)}`,
+      );
+
+      operator.ticksToLive = 500;
+      pclManager.runRenewalAssist();
+      assert(
+        currentRuntime.powerCreepMoveActions.length === 1 &&
+          currentRuntime.powerCreepMoveActions[0].powerCreepName === "OperatorRenewAssist" &&
+          currentRuntime.powerCreepMoveActions[0].targetType === STRUCTURE_POWER_SPAWN &&
+          currentRuntime.renewPowerCreepActions.length === 0,
+        `renewal assist should move toward Power Spawn below threshold, got moves ${JSON.stringify(currentRuntime.powerCreepMoveActions)} renews ${JSON.stringify(currentRuntime.renewPowerCreepActions)}`,
+      );
+      assert(
+        Memory.powerCreeps.OperatorRenewAssist.renewal.status === "MOVING_TO_POWER_SPAWN" &&
+          Memory.powerCreeps.OperatorRenewAssist.renewal.moveResult === OK,
+        `expected move status, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewAssist.renewal)}`,
+      );
+
+      operator.pos = new RoomPosition(27, 32, room.name);
+      operator.ticksToLive = 500;
+      pclManager.runRenewalAssist();
+      assert(
+        currentRuntime.renewPowerCreepActions.length === 1 &&
+          currentRuntime.renewPowerCreepActions[0].powerCreepName === "OperatorRenewAssist",
+        `renewal assist should renew in range, got ${JSON.stringify(currentRuntime.renewPowerCreepActions)}`,
+      );
+      assert(
+        Memory.powerCreeps.OperatorRenewAssist.renewal.status === "RENEWED" &&
+          Memory.powerCreeps.OperatorRenewAssist.renewal.renewResult === OK,
+        `expected renewed status, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewAssist.renewal)}`,
+      );
+
+      let captured = captureConsoleLines(function () {
+        return global.ops.powerCreep("OperatorRenewAssist", "renewStatus");
+      });
+      assert(
+        captured.result.indexOf("assigned " + room.name) !== -1 &&
+          captured.result.indexOf("ttl 500") !== -1 &&
+          captured.result.indexOf("threshold 1000") !== -1 &&
+          captured.result.indexOf("target 4500") !== -1 &&
+          captured.result.indexOf("powerSpawn") !== -1 &&
+          captured.result.indexOf("range 1") !== -1 &&
+          captured.result.indexOf("renew 0 (OK)") !== -1 &&
+          captured.result.indexOf("[object Object]") === -1,
+        `renewStatus should report clean assist state, got ${captured.result}`,
+      );
+
+      operator.ticksToLive = 4600;
+      const renewsBeforeTarget = currentRuntime.renewPowerCreepActions.length;
+      pclManager.runRenewalAssist();
+      assert(
+        currentRuntime.renewPowerCreepActions.length === renewsBeforeTarget &&
+          Memory.powerCreeps.OperatorRenewAssist.renewal.status === "IDLE_ABOVE_TARGET",
+        `renewal assist should stop above target TTL, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewAssist.renewal)}`,
+      );
+
+      assert(
+        global.ops.powerCreep("OperatorManualSpawn", "assign", room.name).indexOf("assigned") !== -1,
+        "manual spawn regression setup should assign cleanly",
+      );
+      createPowerCreep("OperatorManualSpawn", 1, 1, { spawned: false });
+      assert(
+        global.ops.powerCreep("OperatorManualSpawn", "spawn", room.name, "check").indexOf("action spawn | mode check") !== -1,
+        "manual spawn check should still work",
+      );
+      assert(
+        global.ops.powerCreep("OperatorRenewAssist", "renew", room.name, "check").indexOf("action renew | mode check") !== -1,
+        "manual renew check should still work",
+      );
+      assert(
+        global.ops.powerEnable(room.name, "check").indexOf("POWER_ENABLE") !== -1,
+        "manual enable check should still work",
+      );
+      assert(
+        global.ops.powerCreep("OperatorRenewAssist", "move", room.name, "powerSpawn", "check").indexOf("action move | mode check") !== -1,
+        "manual move check should still work",
+      );
+      createPowerCreep("OperatorManualOps", 20, 25, {
+        roomName: room.name,
+        ticksToLive: 1000,
+        powers: { [PWR_GENERATE_OPS]: { level: 1, cooldown: 0 } },
+        store: { ops: 0 },
+        storeCapacity: 100,
+      });
+      assert(
+        global.ops.powerCreep("OperatorManualOps", "generateOps", "check").indexOf("action generateOps | mode check") !== -1,
+        "manual generateOps check should still work",
+      );
+      createPowerCreep("OperatorManualSpawnOps", 22, 25, {
+        roomName: room.name,
+        ticksToLive: 1000,
+        powers: { [PWR_OPERATE_SPAWN]: { level: 1, cooldown: 0 } },
+        store: { ops: 150 },
+        storeCapacity: 200,
+      });
+      assert(
+        global.ops.operator("OperatorManualSpawnOps", room.name, "operateSpawn", "check").indexOf("action operateSpawn | mode check") !== -1,
+        "manual operateSpawn check should still work",
+      );
+      createPowerCreep("OperatorManualExtensionOps", 22, 20, {
+        roomName: room.name,
+        ticksToLive: 1000,
+        powers: { [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 } },
+        store: { ops: 10 },
+        storeCapacity: 100,
+      });
+      assert(
+        global.ops.operator("OperatorManualExtensionOps", room.name, "operateExtension", "check").indexOf("action operateExtension | mode check") !== -1,
+        "manual operateExtension check should still work",
+      );
+
+      global.ops.powerCreep("OperatorRenewAssist", "renewAssist", "off");
+      operator.pos = new RoomPosition(20, 25, room.name);
+      operator.ticksToLive = 500;
+      const movesBeforeOff = currentRuntime.powerCreepMoveActions.length;
+      const renewsBeforeOff = currentRuntime.renewPowerCreepActions.length;
+      pclManager.runRenewalAssist();
+      assert(
+        currentRuntime.powerCreepMoveActions.length === movesBeforeOff &&
+          currentRuntime.renewPowerCreepActions.length === renewsBeforeOff &&
+          Memory.powerCreeps.OperatorRenewAssist.renewal.status === "BLOCKED_ASSIGNMENT_DISABLED",
+        `per-creep assist off should block automation, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewAssist.renewal)}`,
+      );
+      global.ops.powerCreep("OperatorRenewAssist", "renewAssist", "on");
+
+      room._hostileCreeps.push(
+        createCreep("RenewAssistHostile", "hostile", 25, 25, {
+          roomName: room.name,
+          my: false,
+        }),
+      );
+      const movesBeforeThreat = currentRuntime.powerCreepMoveActions.length;
+      pclManager.runRenewalAssist();
+      assert(
+        currentRuntime.powerCreepMoveActions.length === movesBeforeThreat &&
+          Memory.powerCreeps.OperatorRenewAssist.renewal.status === "BLOCKED_THREAT",
+        `active threat should block renewal assist, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewAssist.renewal)}`,
+      );
+      room._hostileCreeps = [];
+
+      const powerSpawn = room.find(FIND_MY_STRUCTURES, {
+        filter(structure) {
+          return structure.structureType === STRUCTURE_POWER_SPAWN;
+        },
+      })[0];
+      powerSpawn.destroy();
+      const movesBeforeNoPowerSpawn = currentRuntime.powerCreepMoveActions.length;
+      pclManager.runRenewalAssist();
+      assert(
+        currentRuntime.powerCreepMoveActions.length === movesBeforeNoPowerSpawn &&
+          Memory.powerCreeps.OperatorRenewAssist.renewal.status === "BLOCKED_NO_POWER_SPAWN",
+        `missing Power Spawn should block renewal assist, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewAssist.renewal)}`,
+      );
+
+      global.ops.powerCreep("OperatorRenewUnspawned", "assign", room.name);
+      createPowerCreep("OperatorRenewUnspawned", 1, 1, { spawned: false });
+      pclManager.runRenewalAssist();
+      assert(
+        Memory.powerCreeps.OperatorRenewUnspawned.renewal.status === "BLOCKED_NOT_SPAWNED",
+        `unspawned Power Creep should block renewal assist, got ${JSON.stringify(Memory.powerCreeps.OperatorRenewUnspawned.renewal)}`,
+      );
+    });
   });
 }
 
@@ -13506,6 +13740,7 @@ function main() {
     ["pcl_blocked_readiness", runPclBlockedReadinessScenario],
     ["power_creep_lifecycle_controls", runPowerCreepLifecycleControlsScenario],
     ["power_creep_positioning_support", runPowerCreepPositioningSupportScenario],
+    ["power_creep_renewal_assist", runPowerCreepRenewalAssistScenario],
     ["power_creep_ops_generation_controls", runPowerCreepOpsGenerationControlsScenario],
     ["operator_readiness_reports", runOperatorReadinessReportsScenario],
     ["ops_inventory_and_staging_controls", runOpsInventoryAndStagingControlsScenario],

@@ -3,6 +3,7 @@ const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const roomManager = require("room_manager");
+const pclManager = require("pcl_manager");
 const hud = require("hud");
 const kernelProfiler = require("kernel_profiler");
 const statsManager = require("stats_manager");
@@ -72,6 +73,8 @@ module.exports = {
       ownedRooms,
       roomStates,
     );
+
+    profiler.wrap("powerCreeps.renewalAssist", pclManager.runRenewalAssist, pclManager);
 
     profiler.wrap(
       "attack.run",

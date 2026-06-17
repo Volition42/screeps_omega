@@ -58,6 +58,29 @@ const LIFECYCLE = {
   BLOCKED_ENABLEMENT_READINESS: "BLOCKED_ENABLEMENT_READINESS",
 };
 
+const RENEWAL = {
+  IDLE: "IDLE",
+  IDLE_ABOVE_THRESHOLD: "IDLE_ABOVE_THRESHOLD",
+  IDLE_ABOVE_TARGET: "IDLE_ABOVE_TARGET",
+  MOVING_TO_POWER_SPAWN: "MOVING_TO_POWER_SPAWN",
+  RENEWED: "RENEWED",
+  API_ERROR: "API_ERROR",
+  BLOCKED_DISABLED: "BLOCKED_DISABLED",
+  BLOCKED_ASSIGNMENT_DISABLED: "BLOCKED_ASSIGNMENT_DISABLED",
+  BLOCKED_MISSING_ASSIGNMENT: "BLOCKED_MISSING_ASSIGNMENT",
+  BLOCKED_NO_POWER_CREEPS: "BLOCKED_NO_POWER_CREEPS",
+  BLOCKED_MISSING_POWER_CREEP: "BLOCKED_MISSING_POWER_CREEP",
+  BLOCKED_NOT_SPAWNED: "BLOCKED_NOT_SPAWNED",
+  BLOCKED_NO_TTL: "BLOCKED_NO_TTL",
+  BLOCKED_ROOM_NOT_VISIBLE: "BLOCKED_ROOM_NOT_VISIBLE",
+  BLOCKED_NOT_OWNED: "BLOCKED_NOT_OWNED",
+  BLOCKED_NO_POWER_SPAWN: "BLOCKED_NO_POWER_SPAWN",
+  BLOCKED_POWER_SPAWN_NOT_OWNED: "BLOCKED_POWER_SPAWN_NOT_OWNED",
+  BLOCKED_NO_POSITION: "BLOCKED_NO_POSITION",
+  BLOCKED_THREAT: "BLOCKED_THREAT",
+  BLOCKED_CPU_PRESSURE: "BLOCKED_CPU_PRESSURE",
+};
+
 function fmt(value) {
   return Math.round(value || 0).toLocaleString();
 }
@@ -610,8 +633,131 @@ function getPowerCreepRows() {
         powers: powers,
         ops: getStoreAmount(powerCreep, getOpsResourceType()),
         spawned: spawned,
+        assignment: getPowerCreepAssignment(name),
       };
     });
+}
+
+function getRenewSettings() {
+  return Object.assign(
+    {
+      RENEW_ASSIST_ENABLED: true,
+      RENEW_TTL_THRESHOLD: 1000,
+      RENEW_TARGET_TTL: 4500,
+      MOVE_REUSE_PATH: 10,
+    },
+    config.POWER_CREEPS || {},
+  );
+}
+
+function getPowerCreepAssignment(name, create) {
+  if (!name) return null;
+  if (!Memory.powerCreeps) {
+    if (!create) return null;
+    Memory.powerCreeps = {};
+  }
+  if (!Memory.powerCreeps[name]) {
+    if (!create) return null;
+    Memory.powerCreeps[name] = {};
+  }
+  return Memory.powerCreeps[name];
+}
+
+function writeRenewalStatus(name, updates) {
+  const record = getPowerCreepAssignment(name, true);
+  if (!record.renewal) record.renewal = {};
+  const renewal = record.renewal;
+
+  renewal.tick = Game.time;
+  renewal.status = updates.status || RENEWAL.IDLE;
+  renewal.blockedReason = updates.blockedReason || null;
+  renewal.ttl =
+    typeof updates.ttl === "number" ? updates.ttl : null;
+  renewal.threshold =
+    typeof updates.threshold === "number" ? updates.threshold : null;
+  renewal.targetTtl =
+    typeof updates.targetTtl === "number" ? updates.targetTtl : null;
+  renewal.currentRoom = updates.currentRoom || null;
+  renewal.powerSpawnAvailable = !!updates.powerSpawnAvailable;
+  renewal.powerSpawnId = updates.powerSpawnId || null;
+  renewal.range = typeof updates.range === "number" ? updates.range : null;
+  renewal.moveResult =
+    typeof updates.moveResult === "number" ? updates.moveResult : null;
+  renewal.renewResult =
+    typeof updates.renewResult === "number" ? updates.renewResult : null;
+  renewal.updated = Game.time;
+  return renewal;
+}
+
+function assignPowerCreep(name, roomName) {
+  const trimmedName = typeof name === "string" ? name.trim() : "";
+  const trimmedRoom = typeof roomName === "string" ? roomName.trim() : "";
+  if (!trimmedName || !trimmedRoom) {
+    return {
+      ok: false,
+      message: '[OPS] powerCreep assign: use ops.powerCreep("CREEP_NAME", "assign", "ROOM").',
+    };
+  }
+
+  const record = getPowerCreepAssignment(trimmedName, true);
+  record.homeRoom = trimmedRoom;
+  if (typeof record.renewalAssist !== "boolean") {
+    record.renewalAssist = true;
+  }
+  record.updated = Game.time;
+  return {
+    ok: true,
+    message:
+      `[OPS][POWER_CREEP] ${trimmedName} assigned ${trimmedRoom} | ` +
+      `renewAssist ${record.renewalAssist ? "on" : "off"}`,
+  };
+}
+
+function unassignPowerCreep(name) {
+  const trimmedName = typeof name === "string" ? name.trim() : "";
+  if (!trimmedName) {
+    return {
+      ok: false,
+      message: '[OPS] powerCreep unassign: use ops.powerCreep("CREEP_NAME", "unassign").',
+    };
+  }
+  if (Memory.powerCreeps && Memory.powerCreeps[trimmedName]) {
+    delete Memory.powerCreeps[trimmedName];
+  }
+  return {
+    ok: true,
+    message: `[OPS][POWER_CREEP] ${trimmedName} unassigned`,
+  };
+}
+
+function normalizeRenewAssistMode(mode) {
+  const normalized = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
+  if (normalized === true || normalized === "on" || normalized === "enable" || normalized === "enabled" || normalized === "true" || normalized === 1) {
+    return true;
+  }
+  if (normalized === false || normalized === "off" || normalized === "disable" || normalized === "disabled" || normalized === "false" || normalized === 0) {
+    return false;
+  }
+  return null;
+}
+
+function setPowerCreepRenewAssist(name, mode) {
+  const trimmedName = typeof name === "string" ? name.trim() : "";
+  const enabled = normalizeRenewAssistMode(mode);
+  if (!trimmedName || enabled === null) {
+    return {
+      ok: false,
+      message: '[OPS] powerCreep renewAssist: use ops.powerCreep("CREEP_NAME", "renewAssist", "on|off").',
+    };
+  }
+
+  const record = getPowerCreepAssignment(trimmedName, true);
+  record.renewalAssist = enabled;
+  record.updated = Game.time;
+  return {
+    ok: true,
+    message: `[OPS][POWER_CREEP] ${trimmedName} renewAssist ${enabled ? "on" : "off"}`,
+  };
 }
 
 function getCriticalCpuPressure(roomName) {
@@ -649,6 +795,186 @@ function hasActiveThreat(room) {
     defense &&
     ((defense.homeThreat && defense.homeThreat.active) ||
       (defense.recovery && defense.recovery.active))
+  );
+}
+
+function evaluateRenewalAssist(powerCreepName, powerCreep, settings) {
+  const assignment = getPowerCreepAssignment(powerCreepName, false);
+  const ttl =
+    powerCreep && typeof powerCreep.ticksToLive === "number"
+      ? powerCreep.ticksToLive
+      : null;
+  const currentRoomName = getPowerCreepRoomName(powerCreep);
+  const base = {
+    ttl: ttl,
+    threshold: settings.RENEW_TTL_THRESHOLD,
+    targetTtl: settings.RENEW_TARGET_TTL,
+    currentRoom: currentRoomName,
+    powerSpawnAvailable: false,
+    powerSpawnId: null,
+    range: null,
+    moveResult: null,
+    renewResult: null,
+  };
+
+  if (!settings.RENEW_ASSIST_ENABLED) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_DISABLED,
+      blockedReason: RENEWAL.BLOCKED_DISABLED,
+    });
+  }
+  if (!assignment || !assignment.homeRoom) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_MISSING_ASSIGNMENT,
+      blockedReason: RENEWAL.BLOCKED_MISSING_ASSIGNMENT,
+    });
+  }
+  if (assignment.renewalAssist === false) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_ASSIGNMENT_DISABLED,
+      blockedReason: RENEWAL.BLOCKED_ASSIGNMENT_DISABLED,
+    });
+  }
+  if (!powerCreep) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_MISSING_POWER_CREEP,
+      blockedReason: RENEWAL.BLOCKED_MISSING_POWER_CREEP,
+    });
+  }
+  if (!isPowerCreepSpawned(powerCreep)) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_NOT_SPAWNED,
+      blockedReason: RENEWAL.BLOCKED_NOT_SPAWNED,
+    });
+  }
+  if (typeof ttl !== "number") {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_NO_TTL,
+      blockedReason: RENEWAL.BLOCKED_NO_TTL,
+    });
+  }
+  if (ttl >= settings.RENEW_TARGET_TTL) {
+    return Object.assign(base, {
+      status: RENEWAL.IDLE_ABOVE_TARGET,
+      blockedReason: null,
+    });
+  }
+  if (ttl > settings.RENEW_TTL_THRESHOLD) {
+    return Object.assign(base, {
+      status: RENEWAL.IDLE_ABOVE_THRESHOLD,
+      blockedReason: null,
+    });
+  }
+
+  const room =
+    Game.rooms && assignment.homeRoom ? Game.rooms[assignment.homeRoom] || null : null;
+  if (!room) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_ROOM_NOT_VISIBLE,
+      blockedReason: RENEWAL.BLOCKED_ROOM_NOT_VISIBLE,
+    });
+  }
+  if (!room.controller || !room.controller.my) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_NOT_OWNED,
+      blockedReason: RENEWAL.BLOCKED_NOT_OWNED,
+    });
+  }
+  if (hasActiveThreat(room)) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_THREAT,
+      blockedReason: RENEWAL.BLOCKED_THREAT,
+    });
+  }
+  if (getCriticalCpuPressure(room.name)) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_CPU_PRESSURE,
+      blockedReason: RENEWAL.BLOCKED_CPU_PRESSURE,
+    });
+  }
+
+  const allPowerSpawns = getAllPowerSpawns(room);
+  const powerSpawns = getOwnedPowerSpawns(room);
+  if (allPowerSpawns.length > 0 && powerSpawns.length <= 0) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_POWER_SPAWN_NOT_OWNED,
+      blockedReason: RENEWAL.BLOCKED_POWER_SPAWN_NOT_OWNED,
+    });
+  }
+  if (powerSpawns.length <= 0) {
+    return Object.assign(base, {
+      status: RENEWAL.BLOCKED_NO_POWER_SPAWN,
+      blockedReason: RENEWAL.BLOCKED_NO_POWER_SPAWN,
+    });
+  }
+
+  const powerSpawn = powerSpawns[0];
+  const range = getRange(powerCreep, powerSpawn);
+  const active = Object.assign(base, {
+    powerSpawnAvailable: true,
+    powerSpawnId: powerSpawn.id,
+    range: range,
+  });
+
+  if (!powerCreep.pos) {
+    return Object.assign(active, {
+      status: RENEWAL.BLOCKED_NO_POSITION,
+      blockedReason: RENEWAL.BLOCKED_NO_POSITION,
+    });
+  }
+
+  if (currentRoomName !== room.name || typeof range !== "number" || range > 1) {
+    const moveResult = powerCreep.moveTo(powerSpawn, {
+      reusePath: settings.MOVE_REUSE_PATH,
+    });
+    return Object.assign(active, {
+      status: RENEWAL.MOVING_TO_POWER_SPAWN,
+      blockedReason: null,
+      moveResult: moveResult,
+    });
+  }
+
+  const renewResult = powerSpawn.renewPowerCreep(powerCreep);
+  return Object.assign(active, {
+    status: renewResult === OK ? RENEWAL.RENEWED : RENEWAL.API_ERROR,
+    blockedReason: renewResult === OK ? null : resultLabel(renewResult),
+    renewResult: renewResult,
+  });
+}
+
+function formatRenewalResult(value) {
+  return typeof value === "number" ? `${value} (${resultLabel(value)})` : "none";
+}
+
+function formatRenewalStatusLine(name, assignment, settings) {
+  const renewal = assignment && assignment.renewal ? assignment.renewal : null;
+  const ttl = renewal && typeof renewal.ttl === "number" ? renewal.ttl : "unknown";
+  const currentRoom = renewal && renewal.currentRoom ? renewal.currentRoom : "unknown";
+  const range = renewal && typeof renewal.range === "number" ? renewal.range : "unknown";
+  const powerSpawn =
+    renewal && renewal.powerSpawnAvailable
+      ? renewal.powerSpawnId || "available"
+      : "none";
+  const status = renewal ? renewal.status || "unknown" : "not-evaluated";
+  const blocked = renewal && renewal.blockedReason ? renewal.blockedReason : "none";
+
+  return (
+    `[OPS][POWER_CREEP][RENEW] ${name} | assigned ${
+      assignment && assignment.homeRoom ? assignment.homeRoom : "none"
+    } | assist ${
+      assignment && assignment.renewalAssist === false ? "off" : "on"
+    } | ttl ${ttl} | threshold ${
+      renewal && typeof renewal.threshold === "number"
+        ? renewal.threshold
+        : settings.RENEW_TTL_THRESHOLD
+    } | target ${
+      renewal && typeof renewal.targetTtl === "number"
+        ? renewal.targetTtl
+        : settings.RENEW_TARGET_TTL
+    } | current ${currentRoom} | powerSpawn ${powerSpawn} | range ${range} | ` +
+    `move ${formatRenewalResult(renewal ? renewal.moveResult : null)} | ` +
+    `renew ${formatRenewalResult(renewal ? renewal.renewResult : null)} | ` +
+    `status ${status} | blocked ${blocked}`
   );
 }
 
@@ -1910,6 +2236,7 @@ function evaluateEnablementConfirm(roomName, mode, powerCreepName) {
 module.exports = {
   ENABLEMENT: ENABLEMENT,
   LIFECYCLE: LIFECYCLE,
+  RENEWAL: RENEWAL,
 
   getGlobalStatus() {
     const gpl = Game.gpl || {};
@@ -1977,13 +2304,19 @@ module.exports = {
       const location = row.spawned
         ? `${row.shard || "shard?"}/${row.roomName || "room?"}`
         : "unspawned";
+      const assignment = row.assignment || null;
+      const renewal = assignment && assignment.renewal ? assignment.renewal : null;
       lines.push(
         `[OPS][POWER_CREEPS] ${row.name} | ${row.className} L${row.level} | ` +
           `${row.spawned ? "spawned" : "unspawned"} | ttl ${
             row.ticksToLive !== null ? row.ticksToLive : "--"
           } | ${location} | ops ${fmt(row.ops)} | powers ${
             row.powers.length > 0 ? row.powers.join(",") : "none"
-          }`,
+          } | assigned ${assignment && assignment.homeRoom ? assignment.homeRoom : "none"} | ` +
+          `renewAssist ${
+            assignment ? (assignment.renewalAssist === false ? "off" : "on") : "unassigned"
+          } | ` +
+          `renew ${renewal && renewal.status ? renewal.status : "not-evaluated"}`,
       );
     }
 
@@ -1991,6 +2324,57 @@ module.exports = {
   },
 
   formatOperatorReadiness: formatOperatorReadiness,
+
+  assignPowerCreep: assignPowerCreep,
+  unassignPowerCreep: unassignPowerCreep,
+  setPowerCreepRenewAssist: setPowerCreepRenewAssist,
+
+  getPowerCreepAssignment: getPowerCreepAssignment,
+  getRenewSettings: getRenewSettings,
+
+  runRenewalAssist() {
+    const settings = getRenewSettings();
+    const powerCreeps = Game.powerCreeps || null;
+    if (!powerCreeps) return { evaluated: 0, blocked: RENEWAL.BLOCKED_NO_POWER_CREEPS };
+
+    let evaluated = 0;
+    const names = Object.keys(powerCreeps).sort();
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      const assignment = getPowerCreepAssignment(name, false);
+      if (!assignment || !assignment.homeRoom) continue;
+
+      const status = evaluateRenewalAssist(name, powerCreeps[name], settings);
+      writeRenewalStatus(name, status);
+      evaluated += 1;
+    }
+
+    return { evaluated: evaluated };
+  },
+
+  formatPowerCreepRenewStatus(powerCreepName) {
+    const settings = getRenewSettings();
+    const name = typeof powerCreepName === "string" ? powerCreepName.trim() : "";
+    if (!name) {
+      return '[OPS] powerCreep renewStatus: use ops.powerCreep("CREEP_NAME", "renewStatus").';
+    }
+
+    const assignment = getPowerCreepAssignment(name, false);
+    const lines = [
+      formatRenewalStatusLine(name, assignment, settings),
+    ];
+
+    if (!assignment || !assignment.homeRoom) {
+      lines.push("[OPS][POWER_CREEP][RENEW] blocked missing assignment");
+    }
+    lines.push(
+      `[OPS][POWER_CREEP][RENEW] global ${
+        settings.RENEW_ASSIST_ENABLED ? "on" : "off"
+      } | reusePath ${settings.MOVE_REUSE_PATH}`,
+    );
+
+    return lines.join("\n");
+  },
 
   formatOperateSpawn(powerCreepName, roomName, targetArg, mode) {
     const report = evaluateOperateSpawn(powerCreepName, roomName, targetArg, mode);

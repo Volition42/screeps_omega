@@ -203,6 +203,13 @@ module.exports = {
     PROCESS_ENERGY_COST: 50,
   },
 
+  POWER_CREEPS: {
+    RENEW_ASSIST_ENABLED: true,
+    RENEW_TTL_THRESHOLD: 1000,
+    RENEW_TARGET_TTL: 4500,
+    MOVE_REUSE_PATH: 10,
+  },
+
   /*
   Developer Notes:
   Observer Scan Scheduler
