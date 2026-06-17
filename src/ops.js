@@ -527,6 +527,12 @@ function getConsoleCommandHelp() {
       example: 'ops.powerCreep("OperatorOne", "move", "W5N5", "powerSpawn", "check")',
     },
     {
+      command: 'ops.powerCreep(name, "generateOps", mode)',
+      description:
+        "Check or explicitly confirm manual GENERATE_OPS use on a spawned Power Creep.",
+      example: 'ops.powerCreep("OperatorOne", "generateOps", "check")',
+    },
+    {
       command: 'ops.powerEnable(roomName, mode, [name])',
       description:
         "Check room enablement readiness or confirm enableRoom with a named Power Creep.",
@@ -943,13 +949,20 @@ module.exports = {
   },
 
   powerCreep(powerCreepName, action, roomName, targetOrMode, mode) {
-    if (!powerCreepName || !action || !roomName) {
+    const normalizedAction = typeof action === "string" ? action.trim().toLowerCase() : action;
+
+    if (!powerCreepName || !action || (!roomName && normalizedAction !== "generateops")) {
       return printLine(
-        '[OPS] powerCreep: use ops.powerCreep("CREEP_NAME", "spawn|renew|position|move", "ROOM", "check|confirm").',
+        '[OPS] powerCreep: use ops.powerCreep("CREEP_NAME", "spawn|renew|position|move", "ROOM", "check|confirm") or ops.powerCreep("CREEP_NAME", "generateOps", "check|confirm").',
       );
     }
 
-    const normalizedAction = typeof action === "string" ? action.trim().toLowerCase() : action;
+    if (normalizedAction === "generateops") {
+      const normalizedMode = typeof roomName === "string" ? roomName.trim().toLowerCase() : roomName;
+      const report = pclManager.formatPowerCreepGenerateOps(powerCreepName, normalizedMode);
+      printBlock(report.split("\n"));
+      return report;
+    }
 
     if (normalizedAction === "position") {
       const report = pclManager.formatPowerCreepPosition(powerCreepName, roomName);
