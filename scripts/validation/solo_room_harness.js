@@ -862,6 +862,40 @@ function createStructure(structureType, x, y, options) {
       this.store[RESOURCE_ENERGY] -= 50;
       return OK;
     };
+    structure.spawnPowerCreep = function (powerCreep) {
+      currentRuntime.spawnPowerCreepActions.push({
+        powerSpawnId: this.id,
+        roomName: this.room ? this.room.name : this.pos.roomName,
+        powerCreepName: powerCreep ? powerCreep.name : null,
+        tick: Game.time,
+      });
+      if (!powerCreep) return ERR_INVALID_TARGET;
+      if (powerCreep.ticksToLive || powerCreep.room || powerCreep.pos) return ERR_BUSY;
+
+      powerCreep.ticksToLive = 5000;
+      powerCreep.pos = new RoomPosition(this.pos.x, this.pos.y, this.pos.roomName);
+      Object.defineProperty(powerCreep, "room", {
+        enumerable: false,
+        configurable: true,
+        get() {
+          return currentRuntime.rooms[this.pos.roomName] || null;
+        },
+      });
+      return OK;
+    };
+    structure.renewPowerCreep = function (powerCreep) {
+      currentRuntime.renewPowerCreepActions.push({
+        powerSpawnId: this.id,
+        roomName: this.room ? this.room.name : this.pos.roomName,
+        powerCreepName: powerCreep ? powerCreep.name : null,
+        tick: Game.time,
+      });
+      if (!powerCreep || !powerCreep.pos) return ERR_INVALID_TARGET;
+      if (powerCreep.pos.getRangeTo(this) > 1) return ERR_NOT_IN_RANGE;
+
+      powerCreep.ticksToLive = Math.max(powerCreep.ticksToLive || 0, 5000);
+      return OK;
+    };
   }
 
   if (structureType === STRUCTURE_TOWER) {
@@ -1175,12 +1209,56 @@ function createCreep(name, role, x, y, options) {
   return creep;
 }
 
+function createPowerCreep(name, x, y, options) {
+  const spec = options || {};
+  const spawned = spec.spawned !== false;
+  const roomName = spec.roomName || "sim";
+  const powerCreep = {
+    id: spec.id || nextId("powerCreep"),
+    name: name,
+    className: spec.className || "operator",
+    level: spec.level !== undefined ? spec.level : 1,
+    powers: spec.powers || {},
+    shard: spec.shard || { name: "shard0" },
+    store: createStore(spec.store || {}, null, spec.storeCapacity || 100),
+    enableRoom(controller) {
+      currentRuntime.enableRoomActions.push({
+        roomName: controller && controller.room ? controller.room.name : controller && controller.pos ? controller.pos.roomName : null,
+        powerCreepName: this.name,
+        tick: Game.time,
+      });
+      if (!controller || !this.pos) return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(controller) > 1) return ERR_NOT_IN_RANGE;
+      return OK;
+    },
+  };
+
+  if (spawned) {
+    powerCreep.ticksToLive =
+      spec.ticksToLive !== undefined ? spec.ticksToLive : 1000;
+    powerCreep.pos = new RoomPosition(x, y, roomName);
+    Object.defineProperty(powerCreep, "room", {
+      enumerable: false,
+      configurable: true,
+      get() {
+        return currentRuntime.rooms[this.pos.roomName] || null;
+      },
+    });
+  }
+
+  currentRuntime.objectsById[powerCreep.id] = powerCreep;
+  Game.powerCreeps[powerCreep.name] = powerCreep;
+  return powerCreep;
+}
+
 function resetRuntime(tick) {
   currentRuntime = {
     nextId: 0,
     rooms: {},
     objectsById: {},
     enableRoomActions: [],
+    spawnPowerCreepActions: [],
+    renewPowerCreepActions: [],
     spawnEvents: [],
     observerActions: [],
     terminalSends: [],
@@ -6853,6 +6931,230 @@ function runPclBlockedReadinessScenario() {
   });
 }
 
+function runPowerCreepLifecycleControlsScenario() {
+  withPowerSettings({ MIN_STORAGE_ENERGY: 50000, PROCESS_UNDER_CRITICAL_CPU: false }, function () {
+    let room = buildPowerProcessingRoom("VAL_PC_LIFE_SPAWN", {
+      tick: 879,
+      storageEnergy: 200000,
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 10,
+    });
+    powerManager.run(room, roomState.collect(room));
+    ops.registerGlobals();
+    assert(typeof global.ops.powerCreep === "function", "ops.powerCreep should be registered");
+
+    createPowerCreep("OperatorSpawn", 0, 0, {
+      spawned: false,
+      level: 3,
+    });
+
+    let captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorSpawn", "spawn", room.name, "check");
+    });
+    assert(typeof captured.result === "string", "spawn check should return a clean string");
+    assert(
+      captured.result.indexOf("action spawn | mode check") !== -1 &&
+        captured.result.indexOf("status READY") !== -1 &&
+        captured.result.indexOf("native powerSpawn.spawnPowerCreep(powerCreep)") !== -1 &&
+        captured.result.indexOf("dry run only; native action not called") !== -1,
+      `spawn check should explain readiness and native call, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.spawnPowerCreepActions.length === 0,
+      `spawn check must not call spawnPowerCreep, got ${JSON.stringify(currentRuntime.spawnPowerCreepActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorSpawn", "spawn", room.name, "confirm");
+    });
+    assert(
+      captured.result.indexOf("status EXECUTED") !== -1 &&
+        captured.result.indexOf("API result 0 (OK)") !== -1,
+      `spawn confirm should execute with result, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.spawnPowerCreepActions.length === 1 &&
+        currentRuntime.spawnPowerCreepActions[0].powerCreepName === "OperatorSpawn",
+      `spawn confirm should call spawnPowerCreep once, got ${JSON.stringify(currentRuntime.spawnPowerCreepActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorSpawn", "spawn", room.name, "confirm");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_ALREADY_SPAWNED") !== -1 &&
+        currentRuntime.spawnPowerCreepActions.length === 1,
+      `spawn confirm should block already-spawned Power Creeps, got ${captured.result}`,
+    );
+
+    room = buildPowerProcessingRoom("VAL_PC_LIFE_RENEW", {
+      tick: 880,
+      storageEnergy: 200000,
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 10,
+    });
+    powerManager.run(room, roomState.collect(room));
+    ops.registerGlobals();
+    createPowerCreep("OperatorRenew", 27, 32, {
+      roomName: room.name,
+      ticksToLive: 500,
+    });
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorRenew", "renew", room.name, "check");
+    });
+    assert(
+      captured.result.indexOf("action renew | mode check") !== -1 &&
+        captured.result.indexOf("status READY") !== -1 &&
+        captured.result.indexOf("native powerSpawn.renewPowerCreep(powerCreep)") !== -1,
+      `renew check should explain readiness and native call, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.renewPowerCreepActions.length === 0,
+      `renew check must not call renewPowerCreep, got ${JSON.stringify(currentRuntime.renewPowerCreepActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorRenew", "renew", room.name, "confirm");
+    });
+    assert(
+      captured.result.indexOf("status EXECUTED") !== -1 &&
+        captured.result.indexOf("API result 0 (OK)") !== -1,
+      `renew confirm should execute with result, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.renewPowerCreepActions.length === 1 &&
+        currentRuntime.renewPowerCreepActions[0].powerCreepName === "OperatorRenew",
+      `renew confirm should call renewPowerCreep once, got ${JSON.stringify(currentRuntime.renewPowerCreepActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("MissingRenew", "renew", room.name, "confirm");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_MISSING_POWER_CREEP") !== -1 &&
+        currentRuntime.renewPowerCreepActions.length === 1,
+      `renew confirm should block missing Power Creeps, got ${captured.result}`,
+    );
+
+    const otherRoom = new FakeRoom("VAL_PC_OTHER", new FakeTerrain());
+    otherRoom.setController(
+      createController(20, 20, {
+        roomName: otherRoom.name,
+        level: 8,
+        my: true,
+        owner: { username: "tester" },
+      }),
+    );
+    createPowerCreep("OperatorWrongRoom", 25, 25, {
+      roomName: otherRoom.name,
+      ticksToLive: 1000,
+    });
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("OperatorWrongRoom", "renew", room.name, "confirm");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_ROOM_MISMATCH") !== -1 &&
+        currentRuntime.renewPowerCreepActions.length === 1,
+      `renew confirm should block wrong-room Power Creeps, got ${captured.result}`,
+    );
+
+    room = buildPowerProcessingRoom("VAL_PC_LIFE_ENABLE", {
+      tick: 881,
+      storageEnergy: 200000,
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 10,
+    });
+    powerManager.run(room, roomState.collect(room));
+    ops.registerGlobals();
+    createPowerCreep("OperatorEnable", 20, 21, {
+      roomName: room.name,
+      ticksToLive: 1000,
+    });
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerEnable(room.name, "check");
+    });
+    assert(
+      captured.result.indexOf("READY_TO_ENABLE") !== -1 &&
+        captured.result.indexOf("dry run only; enableRoom not called") !== -1,
+      `powerEnable check should remain dry-run only, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.enableRoomActions.length === 0,
+      `powerEnable check must not call enableRoom, got ${JSON.stringify(currentRuntime.enableRoomActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerEnable(room.name, "confirm", "OperatorEnable");
+    });
+    assert(
+      captured.result.indexOf("action enable | mode confirm") !== -1 &&
+        captured.result.indexOf("status EXECUTED") !== -1 &&
+        captured.result.indexOf("native powerCreep.enableRoom(room.controller)") !== -1 &&
+        captured.result.indexOf("API result 0 (OK)") !== -1,
+      `powerEnable confirm should execute with readable result, got ${captured.result}`,
+    );
+    assert(
+      currentRuntime.enableRoomActions.length === 1 &&
+        currentRuntime.enableRoomActions[0].roomName === room.name,
+      `powerEnable confirm should call enableRoom once, got ${JSON.stringify(currentRuntime.enableRoomActions)}`,
+    );
+
+    captured = captureConsoleLines(function () {
+      return global.ops.powerEnable(room.name, "confirm");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_MISSING_POWER_CREEP") !== -1 &&
+        currentRuntime.enableRoomActions.length === 1,
+      `powerEnable confirm should require named Power Creep, got ${captured.result}`,
+    );
+
+    const invalidEnable = global.ops.powerEnable(room.name, "execute", "OperatorEnable");
+    assert(
+      invalidEnable.indexOf('mode must be "check" or "confirm"') !== -1 &&
+        currentRuntime.enableRoomActions.length === 1,
+      `powerEnable should block non-confirm execution modes, got ${invalidEnable}`,
+    );
+
+    const zeroRoom = buildPowerProcessingRoom("VAL_PC_LIFE_ZERO", {
+      tick: 882,
+      storageEnergy: 200000,
+    });
+    powerManager.run(zeroRoom, roomState.collect(zeroRoom));
+    ops.registerGlobals();
+    Game.powerCreeps = {};
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("Nobody", "spawn", zeroRoom.name, "check");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_NO_POWER_CREEPS") !== -1,
+      `zero Power Creeps should be handled safely, got ${captured.result}`,
+    );
+
+    delete Game.powerCreeps;
+    captured = captureConsoleLines(function () {
+      return global.ops.powerCreep("Nobody", "spawn", zeroRoom.name, "check");
+    });
+    assert(
+      captured.result.indexOf("BLOCKED_NO_POWER_CREEPS") !== -1,
+      `missing Game.powerCreeps should be handled safely, got ${captured.result}`,
+    );
+
+    Game.powerCreeps = {};
+    assert(typeof global.ops.pcl(zeroRoom.name) === "string", "ops.pcl should still work");
+    assert(typeof global.ops.powerCreeps() === "string", "ops.powerCreeps should still work");
+    assert(typeof global.ops.power(zeroRoom.name) === "string", "ops.power should still work");
+    captured = captureConsoleLines(function () {
+      return global.ops.room(zeroRoom.name, "power");
+    });
+    assert(
+      captured.lines.some(function (line) { return line === `[OPS][${zeroRoom.name}][POWER]`; }),
+      `ops.room(room, power) should still print power section, got ${captured.lines.join(" / ")}`,
+    );
+  });
+}
+
 function runPowerSpawnRefillVisibilityScenario() {
   withPowerSettings({ MIN_STORAGE_ENERGY: 50000, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
     const room = buildPowerProcessingRoom("VAL_POWER_REFILL", {
@@ -12056,6 +12358,7 @@ function main() {
     ["power_operator_controls", runPowerOperatorControlsScenario],
     ["pcl_readiness_commands", runPclReadinessCommandsScenario],
     ["pcl_blocked_readiness", runPclBlockedReadinessScenario],
+    ["power_creep_lifecycle_controls", runPowerCreepLifecycleControlsScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],
     ["power_spawn_refill_energy_request", runPowerSpawnEnergyRefillRequestScenario],
     ["power_spawn_refill_power_request", runPowerSpawnPowerRefillRequestScenario],

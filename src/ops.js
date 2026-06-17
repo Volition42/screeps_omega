@@ -521,8 +521,15 @@ function getConsoleCommandHelp() {
       example: "ops.powerCreeps()",
     },
     {
-      command: 'ops.powerEnable(roomName, "check")',
-      description: "Dry-run room enablement readiness only.",
+      command: 'ops.powerCreep(name, action, room, mode)',
+      description:
+        "Check or confirm manual Power Creep spawn and renewal at a Power Spawn.",
+      example: 'ops.powerCreep("OperatorOne", "spawn", "W5N5", "check")',
+    },
+    {
+      command: 'ops.powerEnable(roomName, mode, [name])',
+      description:
+        "Check room enablement readiness or confirm enableRoom with a named Power Creep.",
       example: 'ops.powerEnable("W5N5", "check")',
     },
     {
@@ -741,8 +748,11 @@ module.exports = {
       powerCreeps: function () {
         return module.exports.powerCreeps();
       },
-      powerEnable: function (roomName, mode) {
-        return module.exports.powerEnable(roomName, mode);
+      powerCreep: function (powerCreepName, action, roomName, mode) {
+        return module.exports.powerCreep(powerCreepName, action, roomName, mode);
+      },
+      powerEnable: function (roomName, mode, powerCreepName) {
+        return module.exports.powerEnable(roomName, mode, powerCreepName);
       },
       move: function (resource, amount, roomName, from, to) {
         return module.exports.move(resource, amount, roomName, from, to);
@@ -932,18 +942,47 @@ module.exports = {
     return report;
   },
 
-  powerEnable(roomName, mode) {
+  powerCreep(powerCreepName, action, roomName, mode) {
+    if (!powerCreepName || !action || !roomName) {
+      return printLine(
+        '[OPS] powerCreep: use ops.powerCreep("CREEP_NAME", "spawn|renew", "ROOM", "check|confirm").',
+      );
+    }
+
+    const normalized = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
+    if (normalized !== "check" && normalized !== "confirm") {
+      return printLine('[OPS] powerCreep: mode must be "check" or "confirm".');
+    }
+
+    const report = pclManager.formatPowerCreepLifecycle(
+      powerCreepName,
+      action,
+      roomName,
+      normalized,
+    );
+    printBlock(report.split("\n"));
+    return report;
+  },
+
+  powerEnable(roomName, mode, powerCreepName) {
     const normalized = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
     if (!roomName) {
       return printLine('[OPS] powerEnable: roomName required. Use ops.powerEnable("ROOM", "check").');
     }
-    if (normalized !== "check") {
-      return printLine('[OPS] powerEnable: dry-run only in this phase. Use "check".');
+
+    if (normalized === "check") {
+      const report = pclManager.formatEnablementReadiness(roomName);
+      printBlock(report.split("\n"));
+      return report;
     }
 
-    const report = pclManager.formatEnablementReadiness(roomName);
-    printBlock(report.split("\n"));
-    return report;
+    if (normalized === "confirm") {
+      const report = pclManager.formatEnablementConfirm(roomName, normalized, powerCreepName);
+      printBlock(report.split("\n"));
+      return report;
+    }
+
+    return printLine('[OPS] powerEnable: mode must be "check" or "confirm".');
   },
 
   rooms() {
