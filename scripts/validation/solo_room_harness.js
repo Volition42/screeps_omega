@@ -1283,7 +1283,7 @@ function createPowerCreep(name, x, y, options) {
         power: power,
         targetId: target ? target.id || null : null,
         targetName: target ? target.name || null : null,
-        targetType: target ? target.structureType || null : null,
+        targetType: target ? target.structureType || (target.my ? "controller" : null) : null,
         targetRoom: target && target.pos ? target.pos.roomName : null,
         tick: Game.time,
       });
@@ -7883,6 +7883,229 @@ function runOperatorReadinessReportsScenario() {
       currentRuntime.powerCreepUsePowerActions.length === 1,
     `out of range operateSpawn should block, got ${captured.result}`,
   );
+
+  createPowerCreep("OperatorExtensionOps", 22, 20, {
+    roomName: room.name,
+    ticksToLive: 1000,
+    powers: {
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 10 },
+    storeCapacity: 100,
+  });
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorExtensionOps", room.name, "operateExtension", "check");
+  });
+  assert(typeof captured.result === "string", "operateExtension check should return a clean string");
+  assert(
+    captured.result.indexOf("action operateExtension | mode check") !== -1 &&
+      captured.result.indexOf("creep OperatorExtensionOps") !== -1 &&
+      captured.result.indexOf(`room ${room.name}`) !== -1 &&
+      captured.result.indexOf(`target controller ${room.controller.id}`) !== -1 &&
+      captured.result.indexOf("ops 10/2") !== -1 &&
+      captured.result.indexOf("cooldown 0") !== -1 &&
+      captured.result.indexOf("range 2/3") !== -1 &&
+      captured.result.indexOf("status READY") !== -1 &&
+      captured.result.indexOf("native powerCreep.usePower(PWR_OPERATE_EXTENSION, room.controller)") !== -1 &&
+      captured.result.indexOf("dry run only; usePower not called") !== -1 &&
+      captured.result.indexOf("[object Object]") === -1,
+    `operateExtension check should explain readiness and native call, got ${captured.result}`,
+  );
+  assert(
+    currentRuntime.powerCreepUsePowerActions.length === 1,
+    `operateExtension check must not call usePower, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("status EXECUTED") !== -1 &&
+      captured.result.indexOf("usePower result 0 (OK)") !== -1,
+    `operateExtension confirm should execute with readable result, got ${captured.result}`,
+  );
+  assert(
+    currentRuntime.powerCreepUsePowerActions.length === 2 &&
+      currentRuntime.powerCreepUsePowerActions[1].powerCreepName === "OperatorExtensionOps" &&
+      currentRuntime.powerCreepUsePowerActions[1].power === PWR_OPERATE_EXTENSION &&
+      currentRuntime.powerCreepUsePowerActions[1].targetId === room.controller.id &&
+      currentRuntime.powerCreepUsePowerActions[1].targetType === "controller",
+    `operateExtension confirm should call usePower(PWR_OPERATE_EXTENSION, controller) once, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorExtensionOps", room.name, "operateExtension");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_INVALID_MODE") !== -1 &&
+      captured.result.indexOf("usePower not called") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `operateExtension without explicit confirm should block, got ${captured.result}`,
+  );
+
+  const savedPowerCreepsForOperateExtension = Game.powerCreeps;
+  delete Game.powerCreeps;
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorExtensionOps", room.name, "operateExtension", "check");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NO_POWER_CREEPS") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `missing Game.powerCreeps should be handled safely for operateExtension, got ${captured.result}`,
+  );
+  Game.powerCreeps = savedPowerCreepsForOperateExtension;
+
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("MissingExtensionOps", room.name, "operateExtension", "check");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_MISSING_POWER_CREEP") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `missing named Power Creep should block operateExtension, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorUnspawnedExtensionOps", 1, 1, {
+    spawned: false,
+    powers: {
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 10 },
+    storeCapacity: 100,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorUnspawnedExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NOT_SPAWNED") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `unspawned Power Creep should block operateExtension, got ${captured.result}`,
+  );
+
+  const savedOperateExtensionPower = global.PWR_OPERATE_EXTENSION;
+  delete global.PWR_OPERATE_EXTENSION;
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_MISSING_CONSTANT") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `missing PWR_OPERATE_EXTENSION constant should block safely, got ${captured.result}`,
+  );
+  global.PWR_OPERATE_EXTENSION = savedOperateExtensionPower;
+
+  createPowerCreep("OperatorNoExtensionPower", 22, 20, {
+    roomName: room.name,
+    powers: {},
+    store: { ops: 10 },
+    storeCapacity: 100,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorNoExtensionPower", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_MISSING_POWER") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `missing PWR_OPERATE_EXTENSION on creep should block, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorCooldownExtensionOps", 22, 20, {
+    roomName: room.name,
+    powers: {
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 4 },
+    },
+    store: { ops: 10 },
+    storeCapacity: 100,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorCooldownExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_COOLDOWN") !== -1 &&
+      captured.result.indexOf("cooldown 4") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `operateExtension cooldown should block, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorLowOpsExtensionOps", 22, 20, {
+    roomName: room.name,
+    powers: {
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 1 },
+    storeCapacity: 100,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorLowOpsExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_INSUFFICIENT_OPS") !== -1 &&
+      captured.result.indexOf("ops 1/2") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `operateExtension insufficient ops should block, got ${captured.result}`,
+  );
+
+  const savedController = room.controller;
+  room.controller = null;
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NOT_OWNED") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `missing controller target should block operateExtension, got ${captured.result}`,
+  );
+  room.controller = savedController;
+
+  createPowerCreep("OperatorWrongRoomExtensionOps", 22, 20, {
+    roomName: "VAL_OTHER_ROOM",
+    powers: {
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 10 },
+    storeCapacity: 100,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorWrongRoomExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_ROOM_MISMATCH") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `wrong room should block operateExtension, got ${captured.result}`,
+  );
+
+  createPowerCreep("OperatorFarExtensionOps", 10, 10, {
+    roomName: room.name,
+    powers: {
+      [PWR_OPERATE_EXTENSION]: { level: 1, cooldown: 0 },
+    },
+    store: { ops: 10 },
+    storeCapacity: 100,
+  });
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorFarExtensionOps", room.name, "operateExtension", "check");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_NOT_IN_RANGE") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `out of range operateExtension should block, got ${captured.result}`,
+  );
+
+  room._hostileCreeps.push(
+    createCreep("OperateExtensionHostile", "hostile", 25, 25, {
+      roomName: room.name,
+      my: false,
+    }),
+  );
+  captured = captureConsoleLines(function () {
+    return global.ops.operator("OperatorExtensionOps", room.name, "operateExtension", "confirm");
+  });
+  assert(
+    captured.result.indexOf("BLOCKED_THREAT") !== -1 &&
+      currentRuntime.powerCreepUsePowerActions.length === 2,
+    `active threat should block operateExtension, got ${captured.result}`,
+  );
+  room._hostileCreeps = [];
 
   currentRuntime.powerCreepUsePowerActions = [];
 

@@ -703,6 +703,12 @@ function getConsoleCommandHelp() {
       example: 'ops.operator("OperatorOne", "W5N5", "operateSpawn", "Spawn1", "check")',
     },
     {
+      command: 'ops.operator(name, roomName, "operateExtension", mode)',
+      description:
+        "Check or explicitly confirm manual OPERATE_EXTENSION use on an owned room controller target.",
+      example: 'ops.operator("OperatorOne", "W5N5", "operateExtension", "check")',
+    },
+    {
       command: 'ops.powerCreep(name, action, room, [target], [mode])',
       description:
         "Check Power Creep lifecycle position, or confirm manual spawn, renew, and move preparation.",
@@ -1144,13 +1150,13 @@ module.exports = {
 
   operator(powerCreepName, roomName, mode, targetOrMode, maybeMode) {
     if (!powerCreepName) {
-      return printLine('[OPS] operator: use ops.operator("CREEP_NAME", ["ROOM"], ["powers"]) or ops.operator("CREEP_NAME", "ROOM", "operateSpawn", ["SPAWN"], "check|confirm").');
+      return printLine('[OPS] operator: use ops.operator("CREEP_NAME", ["ROOM"], ["powers"]) or ops.operator("CREEP_NAME", "ROOM", "operateSpawn|operateExtension", ["SPAWN"], "check|confirm").');
     }
 
     const normalizedMode = typeof mode === "string" ? mode.trim().toLowerCase() : mode;
-    if (normalizedMode === "operatespawn") {
+    if (normalizedMode === "operatespawn" || normalizedMode === "operateextension") {
       if (!roomName) {
-        return printLine('[OPS] operator operateSpawn: roomName required.');
+        return printLine(`[OPS] operator ${mode}: roomName required.`);
       }
 
       let targetArg = null;
@@ -1158,13 +1164,27 @@ module.exports = {
       const normalizedTargetOrMode =
         typeof targetOrMode === "string" ? targetOrMode.trim().toLowerCase() : targetOrMode;
 
-      if (normalizedTargetOrMode !== "check" && normalizedTargetOrMode !== "confirm") {
+      if (
+        normalizedMode === "operatespawn" &&
+        normalizedTargetOrMode !== "check" &&
+        normalizedTargetOrMode !== "confirm"
+      ) {
         targetArg = targetOrMode;
         executionMode = maybeMode;
       }
 
       const normalizedExecutionMode =
         typeof executionMode === "string" ? executionMode.trim().toLowerCase() : executionMode;
+      if (normalizedMode === "operateextension") {
+        const report = pclManager.formatOperateExtension(
+          powerCreepName,
+          roomName,
+          normalizedExecutionMode,
+        );
+        printBlock(report.split("\n"));
+        return report;
+      }
+
       const report = pclManager.formatOperateSpawn(
         powerCreepName,
         roomName,
@@ -1176,7 +1196,7 @@ module.exports = {
     }
 
     if (typeof normalizedMode !== "undefined" && normalizedMode !== "powers") {
-      return printLine('[OPS] operator: optional mode must be "powers" or "operateSpawn".');
+      return printLine('[OPS] operator: optional mode must be "powers", "operateSpawn", or "operateExtension".');
     }
 
     const report = pclManager.formatOperatorReadiness(

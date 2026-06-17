@@ -205,6 +205,7 @@ function nativeActionLabel(action) {
   if (action === "move") return "powerCreep.moveTo(target)";
   if (action === "generateOps") return "powerCreep.usePower(PWR_GENERATE_OPS)";
   if (action === "operateSpawn") return "powerCreep.usePower(PWR_OPERATE_SPAWN, spawn)";
+  if (action === "operateExtension") return "powerCreep.usePower(PWR_OPERATE_EXTENSION, room.controller)";
   return "none";
 }
 
@@ -214,6 +215,10 @@ function getGenerateOpsPowerConstant() {
 
 function getOperateSpawnPowerConstant() {
   return typeof PWR_OPERATE_SPAWN !== "undefined" ? PWR_OPERATE_SPAWN : null;
+}
+
+function getOperateExtensionPowerConstant() {
+  return typeof PWR_OPERATE_EXTENSION !== "undefined" ? PWR_OPERATE_EXTENSION : null;
 }
 
 function getOpsResourceType() {
@@ -347,6 +352,22 @@ function resolveOwnedSpawnTarget(room, targetArg) {
     status: null,
     detail: "default first owned spawn",
     defaulted: true,
+  };
+}
+
+function resolveOwnedControllerTarget(room) {
+  if (!room || !room.controller || !room.controller.my) {
+    return {
+      controller: null,
+      status: LIFECYCLE.BLOCKED_NOT_OWNED,
+      detail: "room not visible or not owned",
+    };
+  }
+
+  return {
+    controller: room.controller,
+    status: null,
+    detail: "owned room controller target",
   };
 }
 
@@ -1426,6 +1447,219 @@ function formatOperateSpawnReport(report) {
   return lines.join("\n");
 }
 
+function evaluateOperateExtension(powerCreepName, roomName, mode) {
+  const normalizedMode = normalizeMode(mode);
+  const checks = [];
+  const room = Game.rooms && Game.rooms[roomName] ? Game.rooms[roomName] : null;
+  const powerConstant = getOperateExtensionPowerConstant();
+  const resourceType = getOpsResourceType();
+  const powerCreep = getPowerCreepByName(powerCreepName);
+  const powerCreepSpawned = isPowerCreepSpawned(powerCreep);
+  const creepRoomName = getPowerCreepRoomName(powerCreep);
+  const powerInfo = getPowerCreepPowerInfo(powerCreep, powerConstant, "PWR_OPERATE_EXTENSION");
+  const cooldown =
+    powerInfo && typeof powerInfo.cooldown === "number" ? powerInfo.cooldown : 0;
+  const opsCost = powerConstant !== null ? getPowerOpsCost(powerConstant) : null;
+  const requiredRange = powerConstant !== null ? getPowerRange(powerConstant) : null;
+  const opsCarried = powerCreep && powerCreep.store ? getStoreAmount(powerCreep, resourceType) : 0;
+  const target = resolveOwnedControllerTarget(room);
+  const range = powerCreepSpawned && target.controller ? getRange(powerCreep, target.controller) : null;
+  const threat = hasActiveThreat(room);
+
+  addLifecycleCheck(
+    checks,
+    "mode",
+    normalizedMode === "check" || normalizedMode === "confirm",
+    'use "check" or "confirm"',
+    LIFECYCLE.BLOCKED_INVALID_MODE,
+  );
+  addLifecycleCheck(
+    checks,
+    "explicit confirm",
+    normalizedMode === "confirm" || normalizedMode === "check",
+    normalizedMode === "confirm"
+      ? "confirmed"
+      : normalizedMode === "check"
+        ? "dry run; usePower not called"
+        : 'use ops.operator("CREEP_NAME", "ROOM", "operateExtension", "confirm")',
+    LIFECYCLE.BLOCKED_INVALID_MODE,
+  );
+  addLifecycleCheck(
+    checks,
+    "Power Creeps registry",
+    hasAnyPowerCreeps(),
+    hasAnyPowerCreeps() ? "available" : "Game.powerCreeps missing or empty",
+    LIFECYCLE.BLOCKED_NO_POWER_CREEPS,
+  );
+  addLifecycleCheck(
+    checks,
+    "named Power Creep",
+    !!powerCreep,
+    powerCreep ? powerCreep.name || powerCreepName : "not found",
+    LIFECYCLE.BLOCKED_MISSING_POWER_CREEP,
+  );
+  addLifecycleCheck(
+    checks,
+    "spawned Power Creep",
+    !!powerCreep && powerCreepSpawned,
+    powerCreepSpawned ? `in ${creepRoomName || "unknown"}` : "not spawned",
+    LIFECYCLE.BLOCKED_NOT_SPAWNED,
+  );
+  addLifecycleCheck(
+    checks,
+    "visible Power Creep position",
+    !!(powerCreep && powerCreep.pos),
+    powerCreep && powerCreep.pos ? formatPosition(powerCreep.pos) : "position unavailable",
+    LIFECYCLE.BLOCKED_NO_POSITION,
+  );
+  addLifecycleCheck(
+    checks,
+    "owned room",
+    !!(room && room.controller && room.controller.my),
+    room ? "visible" : "room not visible or not owned",
+    LIFECYCLE.BLOCKED_NOT_OWNED,
+  );
+  addLifecycleCheck(
+    checks,
+    "room controller target",
+    !!target.controller && !target.status,
+    target.detail,
+    target.status || LIFECYCLE.BLOCKED_NO_TARGET,
+  );
+  addLifecycleCheck(
+    checks,
+    "target position visible",
+    !!(target.controller && target.controller.pos),
+    target.controller && target.controller.pos ? formatPosition(target.controller.pos) : "position unavailable",
+    LIFECYCLE.BLOCKED_NO_TARGET,
+  );
+  addLifecycleCheck(
+    checks,
+    "Power Creep room",
+    !!powerCreep && !!creepRoomName && creepRoomName === roomName,
+    creepRoomName ? `in ${creepRoomName}` : "room unavailable",
+    LIFECYCLE.BLOCKED_ROOM_MISMATCH,
+  );
+  addLifecycleCheck(
+    checks,
+    "PWR_OPERATE_EXTENSION constant",
+    powerConstant !== null,
+    powerConstant !== null ? "available" : "missing in runtime",
+    LIFECYCLE.BLOCKED_MISSING_CONSTANT,
+  );
+  addLifecycleCheck(
+    checks,
+    "usePower method",
+    !!(powerCreep && typeof powerCreep.usePower === "function"),
+    powerCreep && typeof powerCreep.usePower === "function" ? "available" : "unavailable",
+    LIFECYCLE.BLOCKED_NO_USE_POWER,
+  );
+  addLifecycleCheck(
+    checks,
+    "OPERATE_EXTENSION power",
+    !!powerInfo,
+    powerInfo ? `level ${powerInfo.level || "?"}` : "missing PWR_OPERATE_EXTENSION",
+    LIFECYCLE.BLOCKED_MISSING_POWER,
+  );
+  addLifecycleCheck(
+    checks,
+    "OPERATE_EXTENSION cooldown",
+    !!powerInfo && cooldown <= 0,
+    powerInfo ? `cooldown ${cooldown}` : "power unavailable",
+    LIFECYCLE.BLOCKED_COOLDOWN,
+  );
+  addLifecycleCheck(
+    checks,
+    "ops cost",
+    opsCost === null || opsCarried >= opsCost,
+    opsCost === null ? `carried ${fmt(opsCarried)} cost unknown` : `${fmt(opsCarried)}/${fmt(opsCost)}`,
+    LIFECYCLE.BLOCKED_INSUFFICIENT_OPS,
+  );
+  addLifecycleCheck(
+    checks,
+    "Power Creep range",
+    requiredRange === null || (typeof range === "number" && range <= requiredRange),
+    typeof range === "number"
+      ? `range ${range}/${requiredRange === null ? "unknown" : requiredRange}`
+      : "range unavailable",
+    LIFECYCLE.BLOCKED_NOT_IN_RANGE,
+  );
+  addLifecycleCheck(
+    checks,
+    "no active threat",
+    !threat,
+    threat ? "active threat" : "clear",
+    LIFECYCLE.BLOCKED_THREAT,
+  );
+
+  const blocked = firstBlockedStatus(checks, LIFECYCLE.BLOCKED_INVALID_MODE);
+  return {
+    action: "operateExtension",
+    mode: normalizedMode || String(mode || ""),
+    roomName: roomName,
+    powerCreepName: powerCreepName,
+    powerCreep: powerCreep,
+    spawned: !!(powerCreep && powerCreepSpawned),
+    currentRoomName: creepRoomName,
+    opsCarried: opsCarried,
+    opsCost: opsCost,
+    cooldown: cooldown,
+    requiredRange: requiredRange,
+    range: range,
+    target: target.controller,
+    targetName: null,
+    targetId: target.controller ? target.controller.id : null,
+    targetRoomName: target.controller && target.controller.pos ? target.controller.pos.roomName : roomName,
+    targetDetail: target.detail,
+    nativeAction: nativeActionLabel("operateExtension"),
+    powerConstant: powerConstant,
+    status: blocked || LIFECYCLE.READY,
+    blockedReason: blocked,
+    checks: checks,
+  };
+}
+
+function formatOperateExtensionReport(report) {
+  const targetLabel = report.targetId || "none";
+  const lines = [
+    `[OPS][POWER_CREEP] action ${report.action} | mode ${report.mode || "?"} | ` +
+      `creep ${report.powerCreepName || "?"} | room ${report.roomName || "?"} | ` +
+      `target controller ${targetLabel} | status ${report.status}`,
+    `[OPS][POWER_CREEP] ops ${fmt(report.opsCarried)}/${report.opsCost === null ? "unknown" : fmt(report.opsCost)} | ` +
+      `cooldown ${report.cooldown} | range ${
+        typeof report.range === "number" ? report.range : "unavailable"
+      }/${report.requiredRange === null ? "unknown" : report.requiredRange}`,
+    `[OPS][POWER_CREEP] target name ${report.targetName || "unknown"} | id ${report.targetId || "unknown"} | ` +
+      `room ${report.targetRoomName || "unknown"} | resolution ${report.targetDetail}`,
+  ];
+
+  if (report.blockedReason) {
+    lines.push(`[OPS][POWER_CREEP] blocked ${report.blockedReason}`);
+  }
+
+  for (let i = 0; i < report.checks.length; i++) {
+    const item = report.checks[i];
+    lines.push(
+      `[OPS][POWER_CREEP] ${item.ok ? "OK" : "BLOCK"} ${item.key}` +
+        `${item.detail ? " - " + item.detail : ""}`,
+    );
+  }
+
+  lines.push(`[OPS][POWER_CREEP] native ${report.nativeAction}`);
+
+  if (report.mode === "check") {
+    lines.push("[OPS][POWER_CREEP] dry run only; usePower not called.");
+  } else if (report.executed) {
+    lines.push(
+      `[OPS][POWER_CREEP] usePower result ${report.apiResult} (${resultLabel(report.apiResult)})`,
+    );
+  } else {
+    lines.push("[OPS][POWER_CREEP] usePower not called.");
+  }
+
+  return lines.join("\n");
+}
+
 function evaluatePowerCreepLifecycle(powerCreepName, action, roomName, mode) {
   const normalizedAction = normalizeAction(action);
   const normalizedMode = normalizeMode(mode);
@@ -1770,6 +2004,20 @@ module.exports = {
     }
 
     return formatOperateSpawnReport(report);
+  },
+
+  formatOperateExtension(powerCreepName, roomName, mode) {
+    const report = evaluateOperateExtension(powerCreepName, roomName, mode);
+
+    if (report.mode === "confirm" && !report.blockedReason) {
+      report.executed = true;
+      report.apiResult = report.powerCreep.usePower(report.powerConstant, report.target);
+      report.status = report.apiResult === OK ? "EXECUTED" : "API_ERROR";
+    } else {
+      report.executed = false;
+    }
+
+    return formatOperateExtensionReport(report);
   },
 
   formatPowerCreepLifecycle(powerCreepName, action, roomName, mode) {
