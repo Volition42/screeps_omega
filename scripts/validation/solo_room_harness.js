@@ -9141,6 +9141,64 @@ function assertCleanOpsString(value, label) {
   assert(value.indexOf("[object Object]") === -1, `${label} should not contain raw objects`);
 }
 
+function addOpsLogisticsHaulers(room, count) {
+  for (let i = 0; i < count; i++) {
+    createCreep(`${room.name}_logistics_hauler_${i}`, "hauler", 24 + i, 27, {
+      roomName: room.name,
+      store: {},
+      storeCapacity: 200,
+    });
+  }
+}
+
+function seedOpsLogisticsRequest(room, options) {
+  const settings = options || {};
+  const result = opsLogisticsManager.createMoveRequest(
+    settings.resourceType || RESOURCE_ENERGY,
+    settings.amount || 500,
+    room.name,
+    settings.from || "storage",
+    settings.to || "terminal",
+    { priority: settings.priority || 50 },
+  );
+  assert(result.ok, `expected logistics request seed, got ${result.message}`);
+
+  const request = result.request;
+  if (settings.status) request.status = settings.status;
+  if (typeof settings.remaining === "number") request.remaining = settings.remaining;
+  if (typeof settings.createdAt === "number") request.createdAt = settings.createdAt;
+  if (typeof settings.updatedAt === "number") request.updatedAt = settings.updatedAt;
+  if (settings.reason) request.reason = settings.reason;
+  if (settings.claims) request.claims = settings.claims;
+
+  return request;
+}
+
+function captureOpsLogisticsSection(room) {
+  const captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "logistics");
+  });
+
+  assertCleanOpsString(captured.result, "ops.room logistics");
+  assert(
+    captured.lines.every(function (line) {
+      return typeof line === "string" && line.indexOf("[object Object]") === -1;
+    }),
+    `expected printable logistics lines, got ${captured.lines.join(" / ")}`,
+  );
+
+  return captured;
+}
+
+function assertLogisticsLine(lines, fragment) {
+  assert(
+    lines.some(function (line) {
+      return line.indexOf(fragment) !== -1;
+    }),
+    `expected logistics line containing ${fragment}, got ${lines.join(" / ")}`,
+  );
+}
+
 function captureConsoleLines(fn) {
   const originalLog = console.log;
   const lines = [];
@@ -10509,6 +10567,133 @@ function runOpsLogisticsHarnessCoverageScenario() {
       helpLines.some(function (line) { return line.indexOf('market.requests(roomName, "all"|"history")') !== -1; }),
     `expected Layer 2 market request help, got ${helpLines.join(" / ")}`,
   );
+}
+
+function runAdvancedHaulBacklogReportingScenario() {
+  let room = buildOpsLogisticsRoom("VAL_LOGISTICS_REPORT_HEALTHY", {
+    tick: 1500,
+    storageStore: { energy: 100000 },
+    terminalStore: { energy: 10000 },
+  });
+  addOpsLogisticsHaulers(room, 2);
+  ops.registerGlobals();
+
+  let report = roomReporting.build(room, null, { updateProgress: false });
+  assert(report.logistics.openRequests === 0, "healthy queue should count zero open requests");
+  assert(report.logistics.blockedRequests === 0, "healthy queue should count zero blocked requests");
+  assert(report.logistics.state === "clear", `healthy queue should be clear, got ${report.logistics.state}`);
+  let captured = captureOpsLogisticsSection(room);
+  assertLogisticsLine(captured.lines, "Open Requests 0 | Blocked Requests 0");
+  assertLogisticsLine(captured.lines, "Haulers 2 / 2 | State clear");
+  assertLogisticsLine(captured.lines, "Waiting: none");
+
+  room = buildOpsLogisticsRoom("VAL_LOGISTICS_REPORT_BLOCKED", {
+    tick: 1510,
+    storageStore: { energy: 100000 },
+    terminalStore: { energy: 10000 },
+  });
+  addOpsLogisticsHaulers(room, 2);
+  seedOpsLogisticsRequest(room, {
+    amount: 500,
+    status: "blocked",
+    reason: "target_full",
+    createdAt: Game.time - 30,
+    updatedAt: Game.time - 5,
+  });
+  ops.registerGlobals();
+  report = roomReporting.build(room, null, { updateProgress: false });
+  assert(report.logistics.openRequests === 0, `expected zero open blocked-state requests, got ${report.logistics.openRequests}`);
+  assert(report.logistics.blockedRequests === 1, `expected one blocked request, got ${report.logistics.blockedRequests}`);
+  assert(report.logistics.state === "blocked", `blocked queue should be blocked, got ${report.logistics.state}`);
+  captured = captureOpsLogisticsSection(room);
+  assertLogisticsLine(captured.lines, "Open Requests 0 | Blocked Requests 1");
+  assertLogisticsLine(captured.lines, "State blocked");
+  assertLogisticsLine(captured.lines, "blocked target_full");
+
+  room = buildOpsLogisticsRoom("VAL_LOGISTICS_REPORT_UNCLAIMED", {
+    tick: 1520,
+    storageStore: { energy: 100000 },
+    terminalStore: { energy: 10000 },
+  });
+  addOpsLogisticsHaulers(room, 2);
+  const claimedHauler = createCreep("VAL_LOGISTICS_REPORT_UNCLAIMED_claim", "hauler", 24, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 200,
+  });
+  seedOpsLogisticsRequest(room, {
+    amount: 500,
+    remaining: 500,
+    createdAt: Game.time - 80,
+    updatedAt: Game.time - 10,
+    claims: {
+      [claimedHauler.name]: {
+        amount: 200,
+        until: Game.time + 10,
+      },
+    },
+  });
+  ops.registerGlobals();
+  report = roomReporting.build(room, null, { updateProgress: false });
+  assert(report.logistics.openRequests === 1, `expected one open request, got ${report.logistics.openRequests}`);
+  assert(report.logistics.totalClaimed === 200, `expected claimed 200, got ${report.logistics.totalClaimed}`);
+  assert(report.logistics.totalUnclaimed === 300, `expected unclaimed 300, got ${report.logistics.totalUnclaimed}`);
+  assert(report.logistics.oldestUnclaimedAge === 80, `expected oldest unclaimed age 80, got ${report.logistics.oldestUnclaimedAge}`);
+  assert(report.logistics.state === "unclaimed", `old unclaimed work should be signaled, got ${report.logistics.state}`);
+  captured = captureOpsLogisticsSection(room);
+  assertLogisticsLine(captured.lines, "Remaining 500 | Claimed 200 | Unclaimed 300");
+  assertLogisticsLine(captured.lines, "Oldest Open 80 ticks | Oldest Unclaimed 80 ticks");
+  assertLogisticsLine(captured.lines, "State unclaimed");
+
+  room = buildOpsLogisticsRoom("VAL_LOGISTICS_REPORT_ADVANCED", {
+    tick: 1530,
+    storageStore: { energy: 100000 },
+    terminalStore: { energy: 10000 },
+  });
+  addOpsLogisticsHaulers(room, 2);
+  if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+  Memory.rooms[room.name].advancedOps = {
+    summary: {
+      labStatus: "inactive",
+      factoryStatus: "ready",
+      powerSpawnStatus: "inactive",
+      nukerStatus: "inactive",
+      taskLabel: "factory_input",
+      taskBacklog: [
+        { label: "factory_input", resourceType: "H", amount: 300 },
+        { label: "lab_input", resourceType: "O", amount: 200 },
+      ],
+    },
+  };
+  ops.registerGlobals();
+  report = roomReporting.build(room, null, { updateProgress: false });
+  assert(
+    report.logistics.advancedBacklog.labels.indexOf("factory_input") !== -1 &&
+      report.logistics.advancedBacklog.labels.indexOf("lab_input") !== -1,
+    `expected advanced backlog labels, got ${JSON.stringify(report.logistics.advancedBacklog)}`,
+  );
+  captured = captureOpsLogisticsSection(room);
+  assertLogisticsLine(captured.lines, "Advanced Backlog factory_input, lab_input");
+
+  room = buildOpsLogisticsRoom("VAL_LOGISTICS_REPORT_HAULER_SHORT", {
+    tick: 1540,
+    storageStore: { energy: 100000 },
+    terminalStore: { energy: 10000 },
+  });
+  seedOpsLogisticsRequest(room, {
+    amount: 500,
+    remaining: 500,
+    createdAt: Game.time - 5,
+    updatedAt: Game.time - 5,
+  });
+  ops.registerGlobals();
+  report = roomReporting.build(room, null, { updateProgress: false });
+  assert(report.logistics.haulers.current === 0, `expected zero haulers, got ${report.logistics.haulers.current}`);
+  assert(report.logistics.haulers.desired === 2, `expected desired haulers 2, got ${report.logistics.haulers.desired}`);
+  assert(report.logistics.state === "hauler_short", `visible demand without haulers should be hauler_short, got ${report.logistics.state}`);
+  captured = captureOpsLogisticsSection(room);
+  assertLogisticsLine(captured.lines, "Haulers 0 / 2 | State hauler_short");
+  assertLogisticsLine(captured.lines, "Waiting: Storage -> Terminal energy (500)");
 }
 
 function runTerminalBalanceManagerScenario() {
@@ -14393,6 +14578,7 @@ function main() {
     ["lab_tight_replan", runLabTightReplanScenario],
     ["ops_transfer", runOpsTransferScenario],
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
+    ["advanced_haul_backlog_reporting", runAdvancedHaulBacklogReportingScenario],
     ["terminal_balance_manager", runTerminalBalanceManagerScenario],
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
     ["operator_report_cleanup", runOperatorReportCleanupScenario],

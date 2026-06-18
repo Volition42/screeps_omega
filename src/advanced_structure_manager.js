@@ -1104,6 +1104,19 @@ module.exports = {
   },
 
   buildSummary(plan) {
+    var taskBacklog = [];
+    var labels = Object.keys(plan.taskCandidates || {}).sort();
+
+    for (var i = 0; i < labels.length; i++) {
+      var task = plan.taskCandidates[labels[i]];
+      if (!this.isTaskValid(task)) continue;
+      taskBacklog.push({
+        label: task.label,
+        resourceType: task.resourceType,
+        amount: task.amount || 0,
+      });
+    }
+
     return {
       labStatus: plan.lab.status,
       labProduct: plan.lab.product || null,
@@ -1116,6 +1129,8 @@ module.exports = {
       powerSpawnRefillOwner: "power_manager",
       nukerStatus: plan.nukerPlan.status,
       taskLabel: plan.task ? plan.task.label : null,
+      taskBacklog: taskBacklog,
+      taskBacklogCount: taskBacklog.length,
     };
   },
 

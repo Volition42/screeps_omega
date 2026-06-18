@@ -4,6 +4,8 @@ const VERSION = "2.1.0-ops-logistics";
 
 const REQUEST_TTL = 50000;
 const CLAIM_TTL = 25;
+const UNCLAIMED_STARVATION_AGE = 50;
+const AGING_STARVATION_AGE = 100;
 
 const ENDPOINTS = {
   storage: true,
@@ -592,6 +594,161 @@ function listRequests(roomName) {
   return rows;
 }
 
+function formatEndpoint(endpoint) {
+  if (!endpoint) return "unknown";
+  if (endpoint === "powerSpawn") return "Power Spawn";
+  return endpoint.charAt(0).toUpperCase() + endpoint.slice(1);
+}
+
+function formatRequestSummary(row) {
+  if (!row) return "none";
+
+  const details = [];
+  details.push(formatEndpoint(row.from) + " -> " + formatEndpoint(row.to));
+  details.push(row.resourceType || "resource");
+  details.push("(" + Math.round(row.remaining || row.amount || 0) + ")");
+
+  if (row.status === "blocked") {
+    details.push("blocked " + (row.reason || "unknown"));
+  }
+
+  if (typeof row.age === "number" && row.age > 0) {
+    details.push("age " + row.age + "t");
+  }
+
+  return details.join(" ");
+}
+
+function summarizeAdvancedBacklog(advanced) {
+  if (!advanced) {
+    return {
+      count: 0,
+      labels: [],
+      summary: "none",
+    };
+  }
+
+  const labels = [];
+  const source =
+    advanced.taskBacklog && Array.isArray(advanced.taskBacklog)
+      ? advanced.taskBacklog
+      : advanced.taskCandidates && Array.isArray(advanced.taskCandidates)
+        ? advanced.taskCandidates
+        : [];
+
+  for (let i = 0; i < source.length; i++) {
+    const entry = source[i];
+    const label = typeof entry === "string" ? entry : entry && entry.label;
+    if (label && labels.indexOf(label) === -1) labels.push(label);
+  }
+
+  if (labels.length === 0 && advanced.taskLabel) {
+    labels.push(advanced.taskLabel);
+  }
+
+  return {
+    count: labels.length,
+    labels: labels,
+    summary: labels.length > 0 ? labels.slice(0, 3).join(", ") : "none",
+  };
+}
+
+function getRoomDiagnostics(roomName, options) {
+  const settings = options || {};
+  const rows = listRequests(roomName);
+  const active = rows.filter(function (row) {
+    return row.status === "open" || row.status === "blocked";
+  });
+  const open = active.filter(function (row) {
+    return row.status === "open";
+  });
+  const blocked = active.filter(function (row) {
+    return row.status === "blocked";
+  });
+
+  let totalRemaining = 0;
+  let totalClaimed = 0;
+  let totalUnclaimed = 0;
+  let oldestOpenAge = 0;
+  let oldestUnclaimedAge = 0;
+
+  for (let i = 0; i < active.length; i++) {
+    const row = active[i];
+    const remaining = Math.max(0, row.remaining || 0);
+    const claimed = Math.max(0, row.claimed || 0);
+    const unclaimed = Math.max(0, remaining - claimed);
+
+    totalRemaining += remaining;
+    totalClaimed += Math.min(remaining, claimed);
+    totalUnclaimed += unclaimed;
+
+    if (row.status === "open") {
+      oldestOpenAge = Math.max(oldestOpenAge, row.age || 0);
+    }
+    if (unclaimed > 0) {
+      oldestUnclaimedAge = Math.max(oldestUnclaimedAge, row.age || 0);
+    }
+  }
+
+  const waiting = active
+    .slice()
+    .sort(function (a, b) {
+      if (a.status !== b.status) return a.status === "blocked" ? -1 : 1;
+      if ((b.age || 0) !== (a.age || 0)) return (b.age || 0) - (a.age || 0);
+      if ((b.remaining || 0) !== (a.remaining || 0)) {
+        return (b.remaining || 0) - (a.remaining || 0);
+      }
+      return String(a.id).localeCompare(String(b.id));
+    })
+    .slice(0, 3)
+    .map(function (row) {
+      return {
+        id: row.id,
+        status: row.status,
+        resourceType: row.resourceType,
+        remaining: row.remaining || 0,
+        claimed: row.claimed || 0,
+        unclaimed: Math.max(0, (row.remaining || 0) - (row.claimed || 0)),
+        age: row.age || 0,
+        summary: formatRequestSummary(row),
+      };
+    });
+
+  const currentHaulers =
+    typeof settings.currentHaulers === "number" ? settings.currentHaulers : 0;
+  const desiredHaulers =
+    typeof settings.desiredHaulers === "number" ? settings.desiredHaulers : 0;
+  const haulerShort = totalRemaining > 0 && currentHaulers < desiredHaulers;
+  const advancedBacklog = summarizeAdvancedBacklog(settings.advanced);
+  let state = "clear";
+
+  if (haulerShort) state = "hauler_short";
+  else if (blocked.length > 0) state = "blocked";
+  else if (totalUnclaimed > 0 && oldestUnclaimedAge >= UNCLAIMED_STARVATION_AGE) {
+    state = "unclaimed";
+  } else if (oldestOpenAge >= AGING_STARVATION_AGE) state = "aging";
+  else if (open.length > 0) state = "pending";
+
+  return {
+    roomName: roomName,
+    openRequests: open.length,
+    blockedRequests: blocked.length,
+    totalRemaining: totalRemaining,
+    totalClaimed: totalClaimed,
+    totalUnclaimed: totalUnclaimed,
+    oldestOpenAge: oldestOpenAge,
+    oldestUnclaimedAge: oldestUnclaimedAge,
+    waiting: waiting,
+    advancedBacklog: advancedBacklog,
+    state: state,
+    haulers: {
+      current: currentHaulers,
+      desired: desiredHaulers,
+      short: haulerShort,
+    },
+  };
+}
+
 function refreshRequestEndpoints(request, room) {
   const source = getEndpointStructure(room, request.from);
   const target = getEndpointStructure(room, request.to);
@@ -938,6 +1095,7 @@ module.exports = {
   cancelRequest: cancelRequest,
   cancelBlockedRequests: cancelBlockedRequests,
   listRequests: listRequests,
+  getRoomDiagnostics: getRoomDiagnostics,
   getHaulerTask: getHaulerTask,
   completeHaulerTask: completeHaulerTask,
   releaseHaulerTask: releaseHaulerTask,

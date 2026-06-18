@@ -17,6 +17,7 @@ const SECTION_ORDER = [
   "creeps",
   "sources",
   "resources",
+  "logistics",
   "advanced",
   "power",
   "observer",
@@ -577,6 +578,24 @@ function formatTerminalMinerals(summary) {
       return `${row.resourceType} ${fmtAmount(row.amount)}/${fmtAmount(row.target)}`;
     })
     .join(", ");
+}
+
+function formatWaitingLogisticsLines(logistics) {
+  if (!logistics || !logistics.waiting || logistics.waiting.length === 0) {
+    return ["Waiting: none"];
+  }
+
+  return logistics.waiting.map(function (row) {
+    return "Waiting: " + row.summary;
+  });
+}
+
+function formatAdvancedBacklogLine(logistics) {
+  const backlog = logistics && logistics.advancedBacklog
+    ? logistics.advancedBacklog
+    : null;
+
+  return "Advanced Backlog " + (backlog ? backlog.summary : "none");
 }
 
 function getExpansionPlanForRoom(roomName) {
@@ -1447,6 +1466,13 @@ module.exports = {
         ? "REFILL_REQUEST_PENDING"
         : power.refillState;
     const terminalBalance = summaryState.terminalBalance || {};
+    const roleCounts = summaryState.roleCounts || {};
+    const sources = summaryState.sources || [];
+    const logistics = opsLogisticsManager.getRoomDiagnostics(room.name, {
+      currentHaulers: roleCounts.hauler || 0,
+      desiredHaulers: desiredTotalHaulers,
+      advanced: advanced,
+    });
     const mineralMining = getMineralMiningSummary(room, summaryState);
     const mineralLine = formatMineralMiningLine(mineralMining);
     const mineralHudLine = formatMineralHudLine(mineralMining);
@@ -1454,8 +1480,6 @@ module.exports = {
     const buildIntentLine = formatBuildIntentLine(summaryState);
     const storagePlanningLine = formatStoragePlanningLine(buildStatus);
     const infrastructure = summaryState.infrastructure || {};
-    const roleCounts = summaryState.roleCounts || {};
-    const sources = summaryState.sources || [];
     const remoteSiteCount = getRemoteSiteCount(room);
     const shortBuild = formatBuildLine(summaryState.phase, buildStatus, 3);
     const progressLabel = progress && progress.targetLevel
@@ -1601,6 +1625,14 @@ module.exports = {
         `Terminal Minerals ${formatTerminalMinerals(terminalBalance)} | target ${fmtAmount(terminalBalance.mineralTarget)}`,
         `Balance State ${terminalBalance.state || "unknown"} | pending ${terminalBalance.pendingMoves || 0}`,
       ],
+      logistics: [
+        `[OPS][${room.name}][LOGISTICS]`,
+        `Open Requests ${logistics.openRequests} | Blocked Requests ${logistics.blockedRequests}`,
+        `Remaining ${fmtAmount(logistics.totalRemaining)} | Claimed ${fmtAmount(logistics.totalClaimed)} | Unclaimed ${fmtAmount(logistics.totalUnclaimed)}`,
+        `Oldest Open ${logistics.oldestOpenAge} ticks | Oldest Unclaimed ${logistics.oldestUnclaimedAge} ticks`,
+        `Haulers ${logistics.haulers.current} / ${logistics.haulers.desired} | State ${logistics.state}`,
+        formatAdvancedBacklogLine(logistics),
+      ].concat(formatWaitingLogisticsLines(logistics)),
     };
 
     if (cpu.available) {
@@ -1661,6 +1693,7 @@ module.exports = {
       progress: progress,
       alert: alert,
       cpu: cpu,
+      logistics: logistics,
       nextPhase: nextPhase,
       statusLabel: statusLabel,
       nextTask: nextTask,
