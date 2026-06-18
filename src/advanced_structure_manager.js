@@ -784,8 +784,9 @@ module.exports = {
   },
 
   addPowerSpawnTaskCandidates(tasks, plan) {
-    this.addTaskCandidate(tasks, this.getPowerSpawnPowerTask(plan));
-    this.addTaskCandidate(tasks, this.getPowerSpawnEnergyTask(plan));
+    if (plan) {
+      plan.powerSpawnTaskOwner = "power_manager";
+    }
   },
 
   addNukerTaskCandidates(tasks, plan) {
@@ -1040,72 +1041,6 @@ module.exports = {
     return this.getFactoryInputTask(plan);
   },
 
-  buildPowerSpawnTask(plan) {
-    return this.getPowerSpawnPowerTask(plan) || this.getPowerSpawnEnergyTask(plan);
-  },
-
-  getPowerSpawnPowerTask(plan) {
-    var powerSpawnPlan = plan.powerSpawnPlan;
-    if (!powerSpawnPlan.enabled) return null;
-
-    var powerSpawn = Game.getObjectById(powerSpawnPlan.powerSpawnId);
-    if (!powerSpawn) return null;
-
-    var powerPickup = this.getPickupHub(RESOURCE_POWER, plan.storage, plan.terminal);
-    if (!powerPickup) return null;
-    if (
-      this.getStoredAmount(powerSpawn, RESOURCE_POWER) >=
-      this.getPowerSpawnPowerTarget()
-    ) {
-      return null;
-    }
-
-    return this.createTask(
-      "power_spawn_power",
-      powerPickup,
-      powerSpawn,
-      RESOURCE_POWER,
-      Math.min(
-        this.getPowerSpawnPowerTarget() -
-          this.getStoredAmount(powerSpawn, RESOURCE_POWER),
-        this.getStoredAmount(powerPickup, RESOURCE_POWER),
-      ),
-    );
-  },
-
-  getPowerSpawnEnergyTask(plan) {
-    var powerSpawnPlan = plan.powerSpawnPlan;
-    if (!powerSpawnPlan.enabled) return null;
-
-    var powerSpawn = Game.getObjectById(powerSpawnPlan.powerSpawnId);
-    if (!powerSpawn) return null;
-
-    if (
-      !plan.storage ||
-      (plan.storage.store[RESOURCE_ENERGY] || 0) < this.getPowerSpawnMinStorageEnergy()
-    ) {
-      return null;
-    }
-    if (
-      this.getStoredAmount(powerSpawn, RESOURCE_ENERGY) >=
-      this.getPowerSpawnEnergyTarget()
-    ) {
-      return null;
-    }
-
-    return this.createTask(
-      "power_spawn_energy",
-      plan.storage,
-      powerSpawn,
-      RESOURCE_ENERGY,
-      Math.min(
-        this.getPowerSpawnEnergyTarget() -
-          this.getStoredAmount(powerSpawn, RESOURCE_ENERGY),
-        plan.storage.store[RESOURCE_ENERGY] || 0,
-      ),
-    );
-  },
-
   buildNukerTask(plan) {
     return this.getNukerGhodiumTask(plan) || this.getNukerEnergyTask(plan);
   },
@@ -1178,6 +1113,7 @@ module.exports = {
       factoryStatus: plan.factoryPlan.status,
       factoryProduct: plan.factoryPlan.product || null,
       powerSpawnStatus: plan.powerSpawnPlan.status,
+      powerSpawnRefillOwner: "power_manager",
       nukerStatus: plan.nukerPlan.status,
       taskLabel: plan.task ? plan.task.label : null,
     };
@@ -1392,8 +1328,6 @@ module.exports = {
       "factory_output",
       "factory_input",
       "factory_energy",
-      "power_spawn_power",
-      "power_spawn_energy",
       "nuker_ghodium",
       "nuker_energy",
     ];

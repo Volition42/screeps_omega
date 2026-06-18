@@ -442,7 +442,8 @@ function getPowerSummaryLine(room) {
     `ready ${power.readiness || "UNKNOWN"} | refill ${power.refillState || "REFILL_UNKNOWN"} | ` +
     `E ${fmt(power.powerSpawnEnergy || power.energy || 0)}/${fmt(power.energyTarget || (powerManager.getSettings().POWER_SPAWN_ENERGY_TARGET || 0))} | ` +
     `P ${fmt(power.powerSpawnPower || power.power || 0)}/${fmt(power.powerTarget || (powerManager.getSettings().POWER_SPAWN_POWER_TARGET || 0))} | ` +
-    `pending ${power.refillPendingRequests || 0} | last ${typeof power.lastProcessed === "number" ? power.lastProcessed : "--"} total ${fmt(power.totalProcessed || 0)}`
+    `pending ${power.refillPendingRequests || 0} | owner power_manager execution ops_logistics | ` +
+    `last ${typeof power.lastProcessed === "number" ? power.lastProcessed : "--"} total ${fmt(power.totalProcessed || 0)}`
   );
 }
 

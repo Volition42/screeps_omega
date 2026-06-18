@@ -8757,9 +8757,95 @@ function runPowerSpawnRefillReportShapeScenario() {
       `expected recent created line in report, got ${captured.lines.join(" / ")}`,
     );
     assert(
+      captured.lines.some(function (line) { return line.indexOf("Refill owner power_manager | execution ops_logistics") !== -1; }),
+      `expected refill ownership line in report, got ${captured.lines.join(" / ")}`,
+    );
+    assert(
       !captured.lines.some(function (line) { return line.indexOf("{") !== -1 || line.indexOf("}") !== -1; }),
       `power report should not dump raw request objects, got ${captured.lines.join(" / ")}`,
     );
+  });
+}
+
+function runPowerSpawnRefillOwnershipScenario() {
+  withPowerSettings({ POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_OWNER", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 0,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 250 },
+    });
+    room.storage.store.power = 25;
+    const state = roomState.collect(room);
+    const hauler = createCreep("VAL_POWER_REFILL_OWNER_hauler", "hauler", 24, 27, {
+      roomName: room.name,
+      store: {},
+      storeCapacity: 100,
+    });
+
+    const advancedSummary = advancedStructureManager.getStatus(room, state);
+    const advancedTask = advancedStructureManager.getHaulerTask(room, hauler, state);
+    assert(advancedSummary.powerSpawnStatus === "ready", `expected advanced Power Spawn status ready, got ${advancedSummary.powerSpawnStatus}`);
+    assert(advancedSummary.powerSpawnRefillOwner === "power_manager", `expected power_manager owner, got ${advancedSummary.powerSpawnRefillOwner}`);
+    assert(!advancedTask, `advanced structure manager should not create Power Spawn haul tasks, got ${advancedTask ? advancedTask.label : "none"}`);
+    assert(!hauler.memory.advancedTask, "advanced Power Spawn check should not store an advanced task on the hauler");
+
+    powerManager.run(room, state);
+    const requests = getOpenPowerSpawnRefillRequests(room.name);
+    assert(requests.length === 2, `power_manager should create energy and power ops logistics requests, got ${requests.length}`);
+    assert(
+      requests.some(function (request) {
+        return request.resourceType === RESOURCE_ENERGY && request.from === "storage";
+      }),
+      "expected power_manager energy refill request from storage",
+    );
+    assert(
+      requests.some(function (request) {
+        return request.resourceType === RESOURCE_POWER && request.from === "terminal";
+      }),
+      "expected power_manager power refill request from terminal",
+    );
+  });
+}
+
+function runPowerSpawnRefillHaulerExecutionScenario() {
+  withPowerSettings({ ENABLED: false, REFILL_ENABLED: true, POWER_SPAWN_ENERGY_TARGET: 5000, POWER_SPAWN_POWER_TARGET: 100 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_HAULER", {
+      powerSpawnEnergy: 5000,
+      powerSpawnPower: 20,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 250 },
+    });
+    const state = roomState.collect(room);
+    utils.setRoomRuntimeState(room, state);
+    const hauler = createCreep("VAL_POWER_REFILL_HAULER_hauler", "hauler", 25, 32, {
+      roomName: room.name,
+      store: {},
+      storeCapacity: 80,
+    });
+
+    powerManager.run(room, state);
+    let requests = getOpenPowerSpawnRefillRequests(room.name, RESOURCE_POWER);
+    assert(requests.length === 1, `expected one power refill request, got ${requests.length}`);
+    const requestId = requests[0].id;
+
+    roleHauler.run(hauler, { thinkInterval: 1 });
+    assert(hauler.memory.opsLogisticsTask, "hauler should claim the Power Spawn ops logistics request");
+    assert(hauler.memory.opsLogisticsTask.requestId === requestId, "hauler should claim the expected Power Spawn request");
+    assert(!hauler.memory.advancedTask, "hauler should not use advanced task memory for Power Spawn refill");
+    assertHaulerAction(hauler, "withdraw", room.terminal.id, "Power Spawn refill pickup");
+    assert(hauler.store.power === 80, `expected hauler to carry 80 power, got ${hauler.store.power || 0}`);
+
+    const powerSpawn = state.structuresByType[STRUCTURE_POWER_SPAWN][0];
+    hauler.pos = new RoomPosition(powerSpawn.pos.x, powerSpawn.pos.y, room.name);
+    roleHauler.run(hauler, { thinkInterval: 1 });
+    assertHaulerAction(hauler, "transfer", powerSpawn.id, "Power Spawn refill delivery");
+    requests = opsLogisticsManager.listRequests(room.name).filter(function (request) {
+      return request.id === requestId;
+    });
+    assert(requests.length === 1, "expected original Power Spawn refill request to remain visible");
+    assert(requests[0].status === "done", `expected request done after hauler delivery, got ${requests[0].status}`);
+    assert(powerSpawn.store.power === 100, `expected Power Spawn power to reach 100, got ${powerSpawn.store.power}`);
   });
 }
 
@@ -14075,6 +14161,8 @@ function main() {
     ["power_spawn_refill_threat_block", runPowerSpawnRefillThreatBlockScenario],
     ["power_spawn_refill_duplicate_suppression", runPowerSpawnRefillDuplicateSuppressionScenario],
     ["power_spawn_refill_report_shape", runPowerSpawnRefillReportShapeScenario],
+    ["power_spawn_refill_ownership", runPowerSpawnRefillOwnershipScenario],
+    ["power_spawn_refill_hauler_execution", runPowerSpawnRefillHaulerExecutionScenario],
     ["lab_boost_direct", runLabBoostDirectScenario],
     ["lab_boost_intermediate", runLabBoostIntermediateScenario],
     ["lab_loaded_reaction_preserved", runLabLoadedReactionPreservedScenario],

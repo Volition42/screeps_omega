@@ -1088,10 +1088,6 @@ function getPowerSummary(room) {
   };
 }
 
-function isPowerSpawnRefillTaskLabel(label) {
-  return label === "power_spawn_energy" || label === "power_spawn_power";
-}
-
 function isPowerSpawnRefillRequest(row, powerSpawnId) {
   if (!row || row.status !== "open") return false;
   if (row.resourceType !== RESOURCE_ENERGY && row.resourceType !== RESOURCE_POWER) {
@@ -1102,19 +1098,13 @@ function isPowerSpawnRefillRequest(row, powerSpawnId) {
     row.to === "powerSpawn" ||
     row.to === "power_spawn" ||
     row.targetType === STRUCTURE_POWER_SPAWN ||
-    (powerSpawnId && row.targetId === powerSpawnId) ||
-    isPowerSpawnRefillTaskLabel(row.label)
+    (powerSpawnId && row.targetId === powerSpawnId)
   );
 }
 
 function getPowerRefillPendingSummary(room, power, advanced) {
   const summaries = [];
   let count = 0;
-
-  if (advanced && isPowerSpawnRefillTaskLabel(advanced.taskLabel)) {
-    count += 1;
-    summaries.push("advanced:" + advanced.taskLabel);
-  }
 
   const requests = opsLogisticsManager.listRequests(room.name).filter(function (row) {
     return isPowerSpawnRefillRequest(row, power.powerSpawnId);
@@ -1522,7 +1512,7 @@ module.exports = {
       `Labs ${String(advanced.labStatus || "inactive")} ${advanced.labProduct || ""}`.trim(),
       labGoalLine,
       `Factory ${String(advanced.factoryStatus || "inactive")} ${advanced.factoryProduct || ""}`.trim(),
-      `PowerSpawn ${String(advanced.powerSpawnStatus || "inactive")} | Nuker ${String(advanced.nukerStatus || "inactive")}`,
+      `PowerSpawn ${String(advanced.powerSpawnStatus || "inactive")} refill owner ${advanced.powerSpawnRefillOwner || "power_manager"} | Nuker ${String(advanced.nukerStatus || "inactive")}`,
     ];
     if (mineralLine) {
       advancedLines.push(mineralLine);
@@ -1565,6 +1555,7 @@ module.exports = {
         `Readiness ${power.readiness} | Blocked ${power.blockedReason || "none"}`,
         `Enablement ${powerEnablement.status} | Next ${powerEnablement.nextSteps[0] || "none"}`,
         `PowerSpawns ${power.powerSpawns} | Energy ${fmtAmount(power.powerSpawnEnergy)}/${fmtAmount(power.energyTarget)} | Power ${fmtAmount(power.powerSpawnPower)}/${fmtAmount(power.powerTarget)}`,
+        `Refill owner power_manager | execution ops_logistics`,
         `Storage Energy ${fmtAmount(power.storageEnergy)}/${fmtAmount(power.minStorageEnergy)} | Terminal Energy ${fmtAmount(power.terminalEnergy)}/${fmtAmount(power.minTerminalEnergy)}`,
         `Terminal Power ${fmtAmount(power.terminalPower)} | Balance ${terminalBalance.state || "unknown"} | pending ${terminalBalance.pendingMoves || 0}`,
         `Refill ${refillState} | Energy need ${fmtAmount(power.refillEnergyNeeded)} | Power need ${fmtAmount(power.refillPowerNeeded)}`,

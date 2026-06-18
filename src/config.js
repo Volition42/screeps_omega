@@ -384,8 +384,6 @@ module.exports = {
       "factory_output",
       "factory_input",
       "factory_energy",
-      "power_spawn_power",
-      "power_spawn_energy",
       "nuker_ghodium",
       "nuker_energy",
     ],

@@ -2,11 +2,11 @@
 
 Repository: `screeps_omega`
 
-Repository version used: `410d1ce52281b2502403c299c02bee91e1d4aedc`
+Repository version used: `efce137699be0c8aebb8313077f57aeb3d8530d3`
 
-Generation date: `2026-06-17 18:18:01 PDT`
+Generation date: `2026-06-17 20:53:19 PDT`
 
-Source authority: `src/main.js`, `src/ops.js`, `src/market_console.js`, `src/room_reporting.js`, `src/pcl_manager.js`, `src/power_manager.js`, `src/empire_manager.js`, `src/reservation_manager.js`, `src/attack_manager.js`, `src/ops_logistics_manager.js`, and `src/terminal_balance_manager.js`.
+Source authority: `src/main.js`, `src/ops.js`, `src/transfer_manager.js`, `src/market_console.js`, `src/room_reporting.js`, `src/pcl_manager.js`, `src/power_manager.js`, `src/empire_manager.js`, `src/reservation_manager.js`, `src/attack_manager.js`, `src/ops_logistics_manager.js`, and `src/terminal_balance_manager.js`.
 
 This manual documents commands discovered from the source tree. Existing documentation was not used as command authority.
 
@@ -25,6 +25,7 @@ Approval-gated workflow:
 
 - Power Creep actions use a `check` versus `confirm` pattern. `check` reports readiness and does not call the Screeps API action. `confirm` is required before commands call `powerCreep.usePower(...)` or `powerCreep.enableRoom(...)`.
 - Market plan execution is a two-step workflow: create or inspect a saved plan, run `market.executionDryRun(planId)`, then intentionally run `market.executePlan(planId)`.
+- Staged room-to-room transfers use `ops.transfer(..., "check")` versus `ops.transfer(..., "confirm")`. `check` reports readiness only. `confirm` creates a bounded transfer plan in `Memory.ops.transfers`; Omega then advances the approved plan through room-local logistics requests and terminal sends.
 - Direct manual market commands `market.buy(...)`, `market.sell(...)`, and `market.send(...)` execute immediately after local validation. They are not dry-run commands.
 
 Execution levels used in this manual:
@@ -87,6 +88,10 @@ Execution levels used in this manual:
 - `ops.terminalStatus([roomName])`
 - `ops.tickRate([sampleTicks|status|cancel])`
 - `ops.tickSpeed([sampleTicks|status|cancel])`
+- `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)`
+- `ops.transfers()`
+- `ops.transferStatus(id)`
+- `ops.cancelTransfer(id)`
 
 ### Market commands
 
@@ -178,6 +183,10 @@ Execution levels used in this manual:
 | `ops.ops(roomName, action, from, to, amount, powerCreepName)` | Show ops resource inventory or stage `RESOURCE_OPS` between room storage and terminal. | `roomName`: optional room. `action`: optional `stage`. `from`/`to`: `storage` or `terminal`. `amount`: positive number. | `ops.ops("W5N5", "stage", "storage", "terminal", 1000)` | Printable inventory block or request line. | Stage creates an ops logistics move request. | Planning | `src/ops.js:972`, `src/ops.js:1331` |
 | `ops.powerEnable(roomName, mode, powerCreepName)` | Check room power enablement readiness or confirm `enableRoom`. | `roomName`: owned room. `mode`: `check` or `confirm`. `powerCreepName`: required when confirming if more than one candidate exists. | `ops.powerEnable("W5N5", "check")` | Printable report string. | `confirm` calls `powerCreep.enableRoom`. | Approval Required | `src/ops.js:975`, `src/ops.js:1409`, `src/pcl_manager.js:2578` |
 | `ops.move(resource, amount, roomName, from, to)` | Create a room-local logistics request between storage and terminal. | `resource`: resource constant or string. `amount`: positive number. `roomName`: room. `from`/`to`: endpoints. | `ops.move("H", 50000, "W42N9", "terminal", "storage")` | Logistics result object. | Creates a move request in ops logistics memory. | Planning | `src/ops.js:978`, `src/ops.js:1451` |
+| `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)` | Check or confirm an explicit staged transfer plan. Supports `storage -> terminal`, `terminal -> storage`, `storage -> storage`, and `terminal -> terminal`. | `resource`: resource constant or string. `amount`: positive number. `fromRoom`/`toRoom`: room names. `fromLocation`/`toLocation`: `storage` or `terminal`. `mode`: `check` or `confirm`; omitted mode defaults to `check`. | `ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "confirm")` | Printable transfer line. | `check` is report-only. `confirm` creates a plan in `Memory.ops.transfers`; approved plans may create ops logistics requests and call `terminal.send` as they advance. | Approval Required | `src/ops.js:1009`, `src/ops.js:1588`, `src/transfer_manager.js:676` |
+| `ops.transfers()` | Show active staged transfer plans. | None. | `ops.transfers()` | Printable summary block. | Prints active transfer summaries. | Read Only | `src/ops.js:1012`, `src/ops.js:1600`, `src/transfer_manager.js:731` |
+| `ops.transferStatus(id)` | Show detailed status for one staged transfer plan. | `id`: transfer plan id. | `ops.transferStatus("ot_123_W41N7_W42N9_4567")` | Printable detail block. | Prints plan detail and may refresh delivered/completion progress from visible storage. | Read Only | `src/ops.js:1015`, `src/ops.js:1604`, `src/transfer_manager.js:741` |
+| `ops.cancelTransfer(id)` | Cancel an active staged transfer plan. | `id`: transfer plan id. | `ops.cancelTransfer("ot_123_W41N7_W42N9_4567")` | Printable cancellation line. | Marks the transfer `CANCELLED` and cancels associated source/destination ops logistics requests when present. | Planning | `src/ops.js:1018`, `src/ops.js:1608`, `src/transfer_manager.js:772` |
 | `ops.terminalStatus(roomName)` | Show terminal capacity, energy, resources, and congestion status. | `roomName`: optional owned room. | `ops.terminalStatus("W42N9")` | Printable block. | Prints report. | Read Only | `src/ops.js:981`, `src/ops.js:1460` |
 | `ops.clearTerminal(roomName, resource, amount)` | Create terminal-to-storage logistics requests for terminal cleanup. | `roomName`: owned room. Optional `resource` and `amount`; when omitted, source selects cleanup resources. | `ops.clearTerminal("W42N9", "H", 50000)` | Result object or cleanup summary. | Creates one or more logistics requests. | Planning | `src/ops.js:984`, `src/ops.js:1518` |
 | `ops.fillTerminal(roomName, resource, amount)` | Create a storage-to-terminal logistics request for market staging. | `roomName`, `resource`, `amount`. | `ops.fillTerminal("W42N9", "energy", 10000)` | Logistics result object. | Creates a logistics request. | Planning | `src/ops.js:987`, `src/ops.js:1684` |
@@ -263,6 +272,9 @@ Economy:
 Logistics:
 
 - `ops.move(resource, amount, roomName, from, to)`: create storage/terminal movement requests.
+- `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "check")`: preview an explicit staged cross-room transfer without creating a plan.
+- `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "confirm")`: approve what should move; Omega executes how it moves through `Memory.ops.transfers`, room-local logistics requests, and terminal sends.
+- `ops.transfers()`, `ops.transferStatus(id)`, and `ops.cancelTransfer(id)`: list, inspect, and cancel staged transfers. The command is `ops.cancelTransfer(id)`; `ops.transferCancel(id)` is not implemented.
 - `ops.clearTerminal(...)`, `ops.fillTerminal(...)`, `ops.balanceTerminal(...)`, and `ops.balanceTerminals()`: terminal hygiene and balance workflows.
 - `ops.requests(...)`, `ops.cancel(...)`, `market.stage(...)`, `market.unstage(...)`, `market.requests(...)`, and `market.cancel(...)`: logistics request visibility and control.
 
@@ -308,6 +320,7 @@ Power Spawn:
 - `ops.power()` shows empire Power Spawn status.
 - `ops.power("ROOM", "detail")` or `ops.room("ROOM", "power")` shows a room power report.
 - `ops.power("ROOM", "process", "on"|"off")`, `ops.power("ROOM", "refill", "on"|"off")`, and reserve forms set room-local Power Spawn policy.
+- Power Spawn refill policy is owned by `power_manager`; execution uses `ops_logistics_manager` requests, and haulers execute those requests through the normal ops logistics priority. `advanced_structure_manager` reports Power Spawn readiness only and does not create Power Spawn refill haul tasks.
 
 Power Creeps:
 
@@ -390,6 +403,7 @@ Power Spawn not processing:
 - Run `ops.power()` for empire summary.
 - Run `ops.power("ROOM", "detail")` or `ops.room("ROOM", "power")`.
 - Check global and room-local process/refill overrides, energy/power levels, terminal balance, refill pending count, and blocked reason.
+- For refill stalls, inspect the `Refill owner power_manager | execution ops_logistics` line plus pending refill ids; stale blocked requests should be canceled or allowed to expire through existing ops logistics controls.
 - Use `ops.power("ROOM", "process", "on")` or `ops.power("ROOM", "refill", "on")` only when you intend to change policy.
 
 Remote reservation lost:
@@ -437,7 +451,7 @@ Planning and memory updates:
 - Reservations: `ops.reserve("TARGET", "PARENT")`, `ops.cancelReserve("TARGET")`
 - Expansions: `ops.expand("TARGET", "PARENT")`, `ops.cancelExpansion("TARGET")`
 - Attack plans: `ops.attack("TARGET", "expand", "PARENT", ["ALLY"])`, `ops.cancelAttack("TARGET")`
-- Logistics: `ops.move("H", 50000, "ROOM", "terminal", "storage")`, `ops.fillTerminal("ROOM", "energy", 10000)`, `ops.clearTerminal("ROOM")`
+- Logistics: `ops.move("H", 50000, "ROOM", "terminal", "storage")`, `ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "confirm")`, `ops.fillTerminal("ROOM", "energy", 10000)`, `ops.clearTerminal("ROOM")`
 - Market plans: `market.planSell("H", 10000, "ROOM")`, `market.planReview(planId)`, `market.executionDryRun(planId)`
 
 Executing commands:
@@ -451,10 +465,10 @@ Counts by category:
 
 - Global callable aliases: 1 (`view`).
 - Global convenience constants: 2 (`on`, `off`).
-- `ops.*` callable functions: 37.
+- `ops.*` callable functions: 41.
 - `market.*` callable functions: 51.
-- Total callable operator commands documented: 89.
-- Ops help signature rows: 40.
+- Total callable operator commands documented: 93.
+- Ops help signature rows: 45.
 - Market help signature rows: 65.
 
 Missing documentation:
