@@ -31,6 +31,8 @@ const ENDPOINTS = {
   powerSpawn: true,
 };
 
+const ENDPOINT_LABELS = Object.keys(ENDPOINTS).sort().join(", ");
+
 const BALANCE = {
   terminalEnergyTarget: 30000,
   terminalFreeCapacityTarget: 50000,
@@ -315,7 +317,9 @@ function validateMove(resourceType, amount, roomName, from, to) {
     return {
       ok: false,
       message:
-        "[OPS] logistics: endpoints must be storage -> terminal or terminal -> storage.",
+        "[OPS] logistics: endpoints must be different supported endpoints: " +
+        ENDPOINT_LABELS +
+        ".",
     };
   }
 
@@ -715,6 +719,34 @@ function buildSnapshot(roomName, summary) {
   };
 }
 
+function compactHistorySnapshot(snapshot) {
+  return {
+    t: Math.round(snapshot && snapshot.t || 0),
+    roomName: String(snapshot && snapshot.roomName || "unknown"),
+    state: String(snapshot && snapshot.state || "clear"),
+    open: Math.round(snapshot && snapshot.open || 0),
+    blocked: Math.round(snapshot && snapshot.blocked || 0),
+    unclaimed: Math.round(snapshot && snapshot.unclaimed || 0),
+    claimed: Math.round(snapshot && snapshot.claimed || 0),
+    remaining: Math.round(snapshot && snapshot.remaining || 0),
+    oldestOpenAge: Math.round(snapshot && snapshot.oldestOpenAge || 0),
+    oldestUnclaimedAge: Math.round(snapshot && snapshot.oldestUnclaimedAge || 0),
+    haulers: Math.round(snapshot && snapshot.haulers || 0),
+    desiredHaulers: Math.round(snapshot && snapshot.desiredHaulers || 0),
+  };
+}
+
+function compactHistory(history) {
+  const compacted = [];
+
+  for (let i = 0; i < history.length; i++) {
+    if (!history[i]) continue;
+    compacted.push(compactHistorySnapshot(history[i]));
+  }
+
+  return compacted;
+}
+
 function getWorstState(history) {
   let worst = "clear";
 
@@ -726,6 +758,10 @@ function getWorstState(history) {
   }
 
   return worst;
+}
+
+function getStateSeverity(state) {
+  return STARVATION_SEVERITY[state] || 0;
 }
 
 function getTrendLabel(history) {
@@ -779,21 +815,9 @@ function comparePressureRows(a, b) {
   const bTrend = getTrendRank(b.trend);
   if (aTrend !== bTrend) return bTrend - aTrend;
 
-  if (a.state === "hauler_short" || b.state === "hauler_short") {
-    if (a.state !== b.state) return a.state === "hauler_short" ? -1 : 1;
-  }
-
-  if (a.state === "blocked" || b.state === "blocked") {
-    if (a.state !== b.state) return a.state === "blocked" ? -1 : 1;
-  }
-
-  if (a.state === "unclaimed" || b.state === "unclaimed") {
-    if (a.state !== b.state) return a.state === "unclaimed" ? -1 : 1;
-  }
-
-  if (a.state === "aging" || b.state === "aging") {
-    if (a.state !== b.state) return a.state === "aging" ? -1 : 1;
-  }
+  const aSeverity = getStateSeverity(a.state);
+  const bSeverity = getStateSeverity(b.state);
+  if (aSeverity !== bSeverity) return bSeverity - aSeverity;
 
   if ((a.blockedRequests || 0) !== (b.blockedRequests || 0)) {
     return (b.blockedRequests || 0) - (a.blockedRequests || 0);
@@ -928,7 +952,7 @@ function formatEmpirePressureRollup(rollup) {
 
 function recordHistorySnapshot(roomName, summary) {
   const root = getHistoryRoot();
-  const history = Array.isArray(root[roomName]) ? root[roomName] : [];
+  const history = compactHistory(Array.isArray(root[roomName]) ? root[roomName] : []);
   const snapshot = buildSnapshot(roomName, summary);
 
   if (history.length > 0 && history[history.length - 1].t === Game.time) {

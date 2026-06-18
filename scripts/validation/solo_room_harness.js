@@ -9141,6 +9141,36 @@ function assertCleanOpsString(value, label) {
   assert(value.indexOf("[object Object]") === -1, `${label} should not contain raw objects`);
 }
 
+function assertCompactLogisticsHistory(history, label) {
+  const allowedKeys = {
+    t: true,
+    roomName: true,
+    state: true,
+    open: true,
+    blocked: true,
+    unclaimed: true,
+    claimed: true,
+    remaining: true,
+    oldestOpenAge: true,
+    oldestUnclaimedAge: true,
+    haulers: true,
+    desiredHaulers: true,
+  };
+
+  assert(Array.isArray(history), `${label} should be an array`);
+  for (let i = 0; i < history.length; i++) {
+    const snapshot = history[i];
+    const keys = Object.keys(snapshot).sort();
+    for (let j = 0; j < keys.length; j++) {
+      assert(allowedKeys[keys[j]], `${label} should not retain ${keys[j]} in snapshot ${i}`);
+      assert(
+        typeof snapshot[keys[j]] !== "object" || snapshot[keys[j]] === null,
+        `${label} should keep compact primitive values in snapshot ${i}`,
+      );
+    }
+  }
+}
+
 function addOpsLogisticsHaulers(room, count) {
   for (let i = 0; i < count; i++) {
     createCreep(`${room.name}_logistics_hauler_${i}`, "hauler", 24 + i, 27, {
@@ -10749,6 +10779,23 @@ function runLogisticsStarvationHistoryScenario() {
   sample(1650, { age: 10 });
   sample(1700, { age: 120 });
   sample(1750, { status: "blocked", age: 20, reason: "target_full" });
+  Memory.ops.logistics.history[room.name].push({
+    t: 1775,
+    roomName: room.name,
+    state: "blocked",
+    open: 1,
+    blocked: 1,
+    unclaimed: 900,
+    claimed: 0,
+    remaining: 900,
+    oldestOpenAge: 20,
+    oldestUnclaimedAge: 20,
+    haulers: 2,
+    desiredHaulers: 2,
+    rawRequest: request,
+    rawCreep: claimedHauler,
+    rawRoom: room,
+  });
   sample(1800, { age: 80, claimed: 200 });
   sample(1850, { haulers: 0, age: 5 });
   sample(1900, { haulers: 0, age: 10 });
@@ -10762,6 +10809,7 @@ function runLogisticsStarvationHistoryScenario() {
     history.length === opsLogisticsManager.getHistoryLimit(),
     `expected bounded history length ${opsLogisticsManager.getHistoryLimit()}, got ${history.length}`,
   );
+  assertCompactLogisticsHistory(history, "logistics history");
   assert(report.logistics.history.trend === "persistent", `expected persistent trend, got ${report.logistics.history.trend}`);
   assert(report.logistics.history.starvationSamples >= 5, `expected repeated starvation samples, got ${report.logistics.history.starvationSamples}`);
   assert(report.logistics.history.blockedSamples >= 1, `expected blocked sample count, got ${report.logistics.history.blockedSamples}`);
@@ -10812,12 +10860,17 @@ function runEmpireLogisticsPressureRollupScenario() {
     storageStore: { energy: 200000 },
     terminalStore: { energy: 10000 },
   });
+  const tieRoom = addOwnedMarketIntelRoom("VAL_EMPIRE_LOG_AA", {
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
   const clearRoom = addOwnedMarketIntelRoom("VAL_EMPIRE_LOG_D", {
     storageStore: { energy: 200000 },
     terminalStore: { energy: 10000 },
   });
 
   addOpsLogisticsHaulers(recurringRoom, 1);
+  addOpsLogisticsHaulers(tieRoom, 1);
   addOpsLogisticsHaulers(blockedRoom, 1);
   addOpsLogisticsHaulers(clearRoom, 1);
 
@@ -10914,6 +10967,14 @@ function runEmpireLogisticsPressureRollupScenario() {
     createdAt: Game.time - 20,
     updatedAt: Game.time - 5,
   });
+  seedOpsLogisticsRequest(tieRoom, {
+    amount: 700,
+    remaining: 700,
+    status: "blocked",
+    reason: "target_full",
+    createdAt: Game.time - 20,
+    updatedAt: Game.time - 5,
+  });
   Memory.ops.logistics.history[clearRoom.name] = [
     {
       t: Game.time - 1,
@@ -10944,23 +11005,24 @@ function runEmpireLogisticsPressureRollupScenario() {
   const lines = captured.lines;
 
   assert(result && result.section === "logistics", "ops.empire(logistics) should return logistics section result");
-  assert(result.rollup.roomsEvaluated === 4, `expected four rooms evaluated, got ${result.rollup.roomsEvaluated}`);
-  assert(result.rollup.pressuredRooms === 3, `expected three currently pressured rooms, got ${result.rollup.pressuredRooms}`);
+  assert(result.rollup.roomsEvaluated === 5, `expected five rooms evaluated, got ${result.rollup.roomsEvaluated}`);
+  assert(result.rollup.pressuredRooms === 4, `expected four currently pressured rooms, got ${result.rollup.pressuredRooms}`);
   assert(result.rollup.recurringRooms === 1, `expected one recurring room, got ${result.rollup.recurringRooms}`);
   assert(result.rollup.persistentRooms === 1, `expected one persistent room, got ${result.rollup.persistentRooms}`);
-  assert(result.rollup.blockedSampleRooms === 1, `expected one blocked sample room, got ${result.rollup.blockedSampleRooms}`);
+  assert(result.rollup.blockedSampleRooms === 2, `expected two blocked sample rooms, got ${result.rollup.blockedSampleRooms}`);
   assert(result.rollup.unclaimedAgingSampleRooms === 1, `expected one unclaimed aging room, got ${result.rollup.unclaimedAgingSampleRooms}`);
   assert(result.rollup.haulerShortSampleRooms === 1, `expected one hauler short room, got ${result.rollup.haulerShortSampleRooms}`);
   assert(result.rollup.topRows[0].roomName === persistentRoom.name, `expected persistent room first, got ${result.rollup.topRows[0].roomName}`);
   assert(result.rollup.topRows[1].roomName === recurringRoom.name, `expected recurring room second, got ${result.rollup.topRows[1].roomName}`);
-  assert(result.rollup.topRows[2].roomName === blockedRoom.name, `expected blocked room third, got ${result.rollup.topRows[2].roomName}`);
+  assert(result.rollup.topRows[2].roomName === tieRoom.name, `expected alphabetic tie room third, got ${result.rollup.topRows[2].roomName}`);
+  assert(result.rollup.topRows[3].roomName === blockedRoom.name, `expected blocked room fourth, got ${result.rollup.topRows[3].roomName}`);
 
   assert(lines.some(function (line) { return line === "Empire Logistics Pressure"; }), `expected rollup title, got ${lines.join(" / ")}`);
-  assert(lines.some(function (line) { return line === "Rooms Evaluated: 4"; }), `expected room count, got ${lines.join(" / ")}`);
-  assert(lines.some(function (line) { return line === "Pressured Rooms: 3"; }), `expected pressure count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Rooms Evaluated: 5"; }), `expected room count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Pressured Rooms: 4"; }), `expected pressure count, got ${lines.join(" / ")}`);
   assert(lines.some(function (line) { return line === "Recurring: 1"; }), `expected recurring count, got ${lines.join(" / ")}`);
   assert(lines.some(function (line) { return line === "Persistent: 1"; }), `expected persistent count, got ${lines.join(" / ")}`);
-  assert(lines.some(function (line) { return line === "Blocked Samples: 1"; }), `expected blocked sample count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Blocked Samples: 2"; }), `expected blocked sample count, got ${lines.join(" / ")}`);
   assert(lines.some(function (line) { return line === "Unclaimed Aging Samples: 1"; }), `expected unclaimed aging sample count, got ${lines.join(" / ")}`);
   assert(lines.some(function (line) { return line === "Hauler Short Samples: 1"; }), `expected hauler short sample count, got ${lines.join(" / ")}`);
   assert(
