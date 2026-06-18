@@ -6,6 +6,17 @@ const REQUEST_TTL = 50000;
 const CLAIM_TTL = 25;
 const UNCLAIMED_STARVATION_AGE = 50;
 const AGING_STARVATION_AGE = 100;
+const HISTORY_LIMIT = 8;
+const RECENT_VISIBLE_LIMIT = 3;
+
+const STARVATION_SEVERITY = {
+  clear: 0,
+  pending: 1,
+  aging: 2,
+  blocked: 3,
+  unclaimed: 4,
+  hauler_short: 5,
+};
 
 const ENDPOINTS = {
   storage: true,
@@ -38,6 +49,13 @@ function getMemoryRoot() {
   if (!Memory.ops.logistics) Memory.ops.logistics = {};
   if (!Memory.ops.logistics.requests) Memory.ops.logistics.requests = {};
   return Memory.ops.logistics.requests;
+}
+
+function getHistoryRoot() {
+  if (!Memory.ops) Memory.ops = {};
+  if (!Memory.ops.logistics) Memory.ops.logistics = {};
+  if (!Memory.ops.logistics.history) Memory.ops.logistics.history = {};
+  return Memory.ops.logistics.history;
 }
 
 function isValidEndpoint(endpoint) {
@@ -653,6 +671,113 @@ function summarizeAdvancedBacklog(advanced) {
   };
 }
 
+function isStarvedSnapshot(snapshot) {
+  return !!snapshot && snapshot.state !== "clear";
+}
+
+function isUnclaimedAgingSnapshot(snapshot) {
+  return (
+    !!snapshot &&
+    snapshot.unclaimed > 0 &&
+    snapshot.oldestUnclaimedAge >= UNCLAIMED_STARVATION_AGE
+  );
+}
+
+function isHaulerShortSnapshot(snapshot) {
+  return (
+    !!snapshot &&
+    snapshot.remaining > 0 &&
+    snapshot.haulers < snapshot.desiredHaulers
+  );
+}
+
+function buildSnapshot(roomName, summary) {
+  return {
+    t: Game.time,
+    roomName: roomName,
+    state: summary.state,
+    open: summary.openRequests,
+    blocked: summary.blockedRequests,
+    unclaimed: Math.round(summary.totalUnclaimed || 0),
+    claimed: Math.round(summary.totalClaimed || 0),
+    remaining: Math.round(summary.totalRemaining || 0),
+    oldestOpenAge: summary.oldestOpenAge || 0,
+    oldestUnclaimedAge: summary.oldestUnclaimedAge || 0,
+    haulers: summary.haulers.current || 0,
+    desiredHaulers: summary.haulers.desired || 0,
+  };
+}
+
+function getWorstState(history) {
+  let worst = "clear";
+
+  for (let i = 0; i < history.length; i++) {
+    const state = history[i].state || "clear";
+    if ((STARVATION_SEVERITY[state] || 0) > (STARVATION_SEVERITY[worst] || 0)) {
+      worst = state;
+    }
+  }
+
+  return worst;
+}
+
+function getTrendLabel(history) {
+  const starvationSamples = history.filter(isStarvedSnapshot).length;
+
+  if (starvationSamples === 0) return "clear";
+  if (starvationSamples === 1) return "isolated";
+
+  const lastThree = history.slice(-3);
+  if (
+    lastThree.length >= 3 &&
+    lastThree.every(isStarvedSnapshot)
+  ) {
+    return "persistent";
+  }
+
+  return "recurring";
+}
+
+function summarizeHistory(history) {
+  const starvationSamples = history.filter(isStarvedSnapshot).length;
+  const blockedSamples = history.filter(function (snapshot) {
+    return (snapshot.blocked || 0) > 0 || snapshot.state === "blocked";
+  }).length;
+  const unclaimedAgingSamples = history.filter(isUnclaimedAgingSnapshot).length;
+  const haulerShortSamples = history.filter(isHaulerShortSnapshot).length;
+
+  return {
+    limit: HISTORY_LIMIT,
+    sampleCount: history.length,
+    trend: getTrendLabel(history),
+    starvationSamples: starvationSamples,
+    blockedSamples: blockedSamples,
+    unclaimedAgingSamples: unclaimedAgingSamples,
+    haulerShortSamples: haulerShortSamples,
+    worstState: getWorstState(history),
+    recent: history.slice(-RECENT_VISIBLE_LIMIT).reverse(),
+  };
+}
+
+function recordHistorySnapshot(roomName, summary) {
+  const root = getHistoryRoot();
+  const history = Array.isArray(root[roomName]) ? root[roomName] : [];
+  const snapshot = buildSnapshot(roomName, summary);
+
+  if (history.length > 0 && history[history.length - 1].t === Game.time) {
+    history[history.length - 1] = snapshot;
+  } else {
+    history.push(snapshot);
+  }
+
+  while (history.length > HISTORY_LIMIT) {
+    history.shift();
+  }
+
+  root[roomName] = history;
+  return summarizeHistory(history);
+}
+
 function getRoomDiagnostics(roomName, options) {
   const settings = options || {};
   const rows = listRequests(roomName);
@@ -729,7 +854,7 @@ function getRoomDiagnostics(roomName, options) {
   } else if (oldestOpenAge >= AGING_STARVATION_AGE) state = "aging";
   else if (open.length > 0) state = "pending";
 
-  return {
+  const summary = {
     roomName: roomName,
     openRequests: open.length,
     blockedRequests: blocked.length,
@@ -747,6 +872,9 @@ function getRoomDiagnostics(roomName, options) {
       short: haulerShort,
     },
   };
+
+  summary.history = recordHistorySnapshot(roomName, summary);
+  return summary;
 }
 
 function refreshRequestEndpoints(request, room) {
@@ -1096,6 +1224,9 @@ module.exports = {
   cancelBlockedRequests: cancelBlockedRequests,
   listRequests: listRequests,
   getRoomDiagnostics: getRoomDiagnostics,
+  getHistoryLimit: function () {
+    return HISTORY_LIMIT;
+  },
   getHaulerTask: getHaulerTask,
   completeHaulerTask: completeHaulerTask,
   releaseHaulerTask: releaseHaulerTask,

@@ -10696,6 +10696,106 @@ function runAdvancedHaulBacklogReportingScenario() {
   assertLogisticsLine(captured.lines, "Waiting: Storage -> Terminal energy (500)");
 }
 
+function runLogisticsStarvationHistoryScenario() {
+  const room = buildOpsLogisticsRoom("VAL_LOGISTICS_HISTORY", {
+    tick: 1600,
+    storageStore: { energy: 100000 },
+    terminalStore: { energy: 10000 },
+  });
+  addOpsLogisticsHaulers(room, 2);
+  const claimedHauler = createCreep("VAL_LOGISTICS_HISTORY_claim", "hauler", 24, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 200,
+  });
+  const request = seedOpsLogisticsRequest(room, {
+    amount: 900,
+    remaining: 900,
+    createdAt: Game.time - 10,
+    updatedAt: Game.time - 5,
+  });
+  const originalRequestId = request.id;
+  ops.registerGlobals();
+
+  function sample(tick, settings) {
+    Game.time = tick;
+    request.status = settings.status || "open";
+    request.remaining = typeof settings.remaining === "number" ? settings.remaining : 900;
+    request.createdAt = tick - (settings.age || 0);
+    request.updatedAt = tick;
+    request.reason = settings.reason || null;
+    request.claims = settings.claimed
+      ? {
+          [claimedHauler.name]: {
+            amount: settings.claimed,
+            until: tick + 10,
+          },
+        }
+      : {};
+
+    if (settings.haulers === 0) {
+      delete Game.creeps[`${room.name}_logistics_hauler_0`];
+      delete Game.creeps[`${room.name}_logistics_hauler_1`];
+    } else {
+      if (!Game.creeps[`${room.name}_logistics_hauler_0`]) {
+        addOpsLogisticsHaulers(room, 2);
+      }
+    }
+
+    return roomReporting.build(room, null, { updateProgress: false });
+  }
+
+  sample(1600, { remaining: 0, age: 0 });
+  sample(1650, { age: 10 });
+  sample(1700, { age: 120 });
+  sample(1750, { status: "blocked", age: 20, reason: "target_full" });
+  sample(1800, { age: 80, claimed: 200 });
+  sample(1850, { haulers: 0, age: 5 });
+  sample(1900, { haulers: 0, age: 10 });
+  sample(1950, { haulers: 0, age: 15 });
+  sample(2000, { haulers: 0, age: 20 });
+  const report = sample(2050, { haulers: 0, age: 25 });
+
+  const history = Memory.ops.logistics.history[room.name];
+  assert(Array.isArray(history), "expected logistics history array");
+  assert(
+    history.length === opsLogisticsManager.getHistoryLimit(),
+    `expected bounded history length ${opsLogisticsManager.getHistoryLimit()}, got ${history.length}`,
+  );
+  assert(report.logistics.history.trend === "persistent", `expected persistent trend, got ${report.logistics.history.trend}`);
+  assert(report.logistics.history.starvationSamples >= 5, `expected repeated starvation samples, got ${report.logistics.history.starvationSamples}`);
+  assert(report.logistics.history.blockedSamples >= 1, `expected blocked sample count, got ${report.logistics.history.blockedSamples}`);
+  assert(report.logistics.history.unclaimedAgingSamples >= 1, `expected unclaimed aging sample count, got ${report.logistics.history.unclaimedAgingSamples}`);
+  assert(report.logistics.history.haulerShortSamples >= 3, `expected hauler-short samples, got ${report.logistics.history.haulerShortSamples}`);
+  assert(report.logistics.history.worstState === "hauler_short", `expected hauler_short worst state, got ${report.logistics.history.worstState}`);
+  assert(report.logistics.history.recent.length === 3, `expected three recent samples, got ${report.logistics.history.recent.length}`);
+
+  const captured = captureOpsLogisticsSection(room);
+  assertLogisticsLine(captured.lines, "Trend persistent");
+  assertLogisticsLine(captured.lines, "Blocked Samples");
+  assertLogisticsLine(captured.lines, "Unclaimed Aging Samples");
+  assertLogisticsLine(captured.lines, "Hauler Short Samples");
+  assertLogisticsLine(captured.lines, "Worst Recent State hauler_short");
+  assertLogisticsLine(captured.lines, "Recent 2050: hauler_short");
+  assert(
+    captured.lines.every(function (line) {
+      return line.indexOf("[object Object]") === -1 && line.indexOf("{") === -1;
+    }),
+    `expected no raw object dumps in logistics output, got ${captured.lines.join(" / ")}`,
+  );
+
+  assert(Object.keys(Memory.ops.logistics.requests).length === 1, "reporting should not create logistics requests");
+  assert(Memory.ops.logistics.requests[originalRequestId].status === "open", "reporting should not complete or cancel logistics requests");
+  assert(
+    !Memory.rooms[room.name].spawnQueue || Memory.rooms[room.name].spawnQueue.length === 0,
+    "reporting should not create spawn requests",
+  );
+  assert(
+    !claimedHauler.memory.opsLogisticsTask && !claimedHauler.memory.advancedTask && !claimedHauler.memory.marketTask,
+    "reporting should not assign hauler tasks or change logistics priority",
+  );
+}
+
 function runTerminalBalanceManagerScenario() {
   let room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE", {
     tick: 1320,
@@ -14579,6 +14679,7 @@ function main() {
     ["ops_transfer", runOpsTransferScenario],
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
     ["advanced_haul_backlog_reporting", runAdvancedHaulBacklogReportingScenario],
+    ["logistics_starvation_history", runLogisticsStarvationHistoryScenario],
     ["terminal_balance_manager", runTerminalBalanceManagerScenario],
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
     ["operator_report_cleanup", runOperatorReportCleanupScenario],

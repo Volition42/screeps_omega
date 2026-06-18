@@ -590,6 +590,32 @@ function formatWaitingLogisticsLines(logistics) {
   });
 }
 
+function formatRecentLogisticsLines(logistics) {
+  const recent =
+    logistics && logistics.history && Array.isArray(logistics.history.recent)
+      ? logistics.history.recent
+      : [];
+
+  if (recent.length === 0) {
+    return ["Recent: none"];
+  }
+
+  return recent.map(function (snapshot) {
+    return (
+      "Recent " +
+      snapshot.t +
+      ": " +
+      snapshot.state +
+      ", open " +
+      snapshot.open +
+      ", blocked " +
+      snapshot.blocked +
+      ", unclaimed " +
+      fmtAmount(snapshot.unclaimed)
+    );
+  });
+}
+
 function formatAdvancedBacklogLine(logistics) {
   const backlog = logistics && logistics.advancedBacklog
     ? logistics.advancedBacklog
@@ -1631,8 +1657,10 @@ module.exports = {
         `Remaining ${fmtAmount(logistics.totalRemaining)} | Claimed ${fmtAmount(logistics.totalClaimed)} | Unclaimed ${fmtAmount(logistics.totalUnclaimed)}`,
         `Oldest Open ${logistics.oldestOpenAge} ticks | Oldest Unclaimed ${logistics.oldestUnclaimedAge} ticks`,
         `Haulers ${logistics.haulers.current} / ${logistics.haulers.desired} | State ${logistics.state}`,
+        `Trend ${logistics.history.trend} | Recent Samples ${logistics.history.starvationSamples}/${logistics.history.sampleCount} | Worst Recent State ${logistics.history.worstState}`,
+        `Blocked Samples ${logistics.history.blockedSamples} | Unclaimed Aging Samples ${logistics.history.unclaimedAgingSamples} | Hauler Short Samples ${logistics.history.haulerShortSamples}`,
         formatAdvancedBacklogLine(logistics),
-      ].concat(formatWaitingLogisticsLines(logistics)),
+      ].concat(formatRecentLogisticsLines(logistics), formatWaitingLogisticsLines(logistics)),
     };
 
     if (cpu.available) {
