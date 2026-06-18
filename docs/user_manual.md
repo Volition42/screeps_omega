@@ -2,7 +2,7 @@
 
 Repository: `screeps_omega`
 
-Repository version used: `2751b35911042a164c0b0a3dd7438ad325f9daf8`
+Repository version used: `0cc71c9e0f81bc94e02c8b06509e8d680bc13648`
 
 Generation date: `2026-06-18 00:18:13 PDT`
 
@@ -30,7 +30,7 @@ Treat `/release` as the conservative live tree. Treat `/dev` as the primary deve
 ## 3. Validation Status
 
 - Primary validation is the deterministic harness at `scripts/validation/solo_room_harness.js`.
-- The harness currently passes `bootstrap`, `foundation`, `development`, `logistics`, `specialization`, `fortification`, `command`, `bootstrap_harvest_spread`, `bootstrap_spawn_cap`, `storage_cap`, `container_usage`, and `factory_ops`.
+- The harness is the current source for scenario coverage. In addition to phase scenarios from `bootstrap` through `command`, current logistics validation includes `ops_logistics_harness_coverage`, `logistics_starvation_history`, and `empire_logistics_pressure_rollup`.
 - Live PTR validation is sufficient to confirm first-spawn bootstrap to foundation under the 20 CPU cap.
 - During March 24, 2026 PTR checks, bootstrap and foundation stayed well below the 20 CPU limit. A forced high-RCL staging pass stayed roughly in the 3 to 6 CPU range while planning and running a larger workforce.
 - Observer scans, power processing, nuker firing policy, and a full organic late-game solo climb remain short of full live validation.
@@ -93,7 +93,7 @@ Treat `/release` as the conservative live tree. Treat `/dev` as the primary deve
 
 `ops.help()` prints the available console commands with a short description and one-line example, keeping operator discovery in-game and current with the code.
 
-Use `view("on")` for a quick operator dashboard, `ops.cpuStatus()` for runtime pressure, `ops.nextRCL()` for controller ETA, and `ops.hud()` or `ops.reports()` to toggle display noise independently.
+Use `view("on")` for a quick operator dashboard, `ops.cpuStatus()` for runtime pressure, `ops.room("ROOM", "logistics")` for room logistics diagnostics, `ops.empire("logistics")` for empire logistics pressure, and `ops.hud()` or `ops.reports()` to toggle display noise independently.
 
 ## 11. Configuration Surfaces
 

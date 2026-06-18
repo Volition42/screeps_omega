@@ -11,6 +11,8 @@ Market buy and sell actions remain manual console commands. Terminal hygiene is 
 Ops logistics and terminal hygiene:
 
 - `ops.help()`
+- `ops.room(roomName, "logistics")`
+- `ops.empire("logistics")`
 - `ops.move(resource, amount, roomName, from, to)`
 - `ops.requests()`
 - `ops.requests(roomName)`
@@ -52,12 +54,30 @@ Market prep and manual market commands:
 ## Safe Live Workflow
 
 1. Inspect the room before issuing logistics commands.
-2. Create one request at a time for high-value resources.
-3. Watch `ops.requests()` until the request is done or blocked.
-4. Use `ops.requests("all")` when you need canceled, done, or expired history.
-5. Cancel stale or incorrect requests with `ops.cancel(requestId)`.
+2. Use `ops.room(roomName, "logistics")` for room backlog/starvation diagnostics before creating or canceling requests.
+3. Use `ops.empire("logistics")` when more than one room may be under logistics pressure.
+4. Create one request at a time for high-value resources.
+5. Watch `ops.requests()` until the request is done or blocked.
+6. Use `ops.requests("all")` when you need canceled, done, or expired history.
+7. Cancel stale or incorrect requests with `ops.cancel(requestId)`.
 
 Default request views show active work only. Canceled and done requests are intentionally hidden unless `all` or `history` is requested.
+
+## Reporting-Only Diagnostics
+
+Room diagnostics:
+
+```js
+ops.room("W42N9", "logistics")
+```
+
+Empire pressure rollup:
+
+```js
+ops.empire("logistics")
+```
+
+These diagnostics report open and blocked logistics requests, claimed and unclaimed work, oldest ages, hauler pressure, advanced backlog labels, recent bounded history, and trend labels. They are read-only/reporting-only: they do not create or cancel requests, assign haulers, change logistics priority, spawn creeps, send terminal resources, or execute market deals.
 
 ## Terminal Hygiene Workflow
 
@@ -132,6 +152,8 @@ Layer 2 does not provide:
 
 - Request missing from default view: run `ops.requests("all")` or `market.requests("all")` and check for `done`, `canceled`, or `expired`.
 - Request blocked: inspect the source and target. A storage-to-terminal request can block if storage is empty or terminal capacity is full.
+- Room starvation unclear: run `ops.room(roomName, "logistics")` and check state, trend, oldest unclaimed age, and recent samples.
+- Empire pressure unclear: run `ops.empire("logistics")` and inspect the suggested room-level commands.
 - Terminal clogged: run `ops.terminalStatus(roomName)`, then `ops.clearTerminal(roomName)` or a resource-specific clear request.
 - Market sell did less than requested: check the sell report for `limited by order amount`, terminal energy, cooldown, or `maxNow`.
 - Duplicate request skipped: an open request already moves the same resource in the same direction for that room. Use `ops.requests(roomName)` before creating another.
