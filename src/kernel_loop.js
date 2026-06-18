@@ -4,6 +4,7 @@ const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const roomManager = require("room_manager");
 const pclManager = require("pcl_manager");
+const transferManager = require("transfer_manager");
 const hud = require("hud");
 const kernelProfiler = require("kernel_profiler");
 const statsManager = require("stats_manager");
@@ -75,6 +76,8 @@ module.exports = {
     );
 
     profiler.wrap("powerCreeps.renewalAssist", pclManager.runRenewalAssist, pclManager);
+
+    profiler.wrap("ops.transfers", transferManager.run, transferManager);
 
     profiler.wrap(
       "attack.run",

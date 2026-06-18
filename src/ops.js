@@ -763,14 +763,29 @@ function getConsoleCommandHelp() {
     {
       command: "ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)",
       description:
-        "Check or confirm an explicit room-to-room terminal transfer.",
-      example: 'ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "check")',
+        "Check or confirm an explicit staged room-to-room transfer plan.",
+      example: 'ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "check")',
     },
     {
       command: "ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)",
       description:
         "Confirm only after reviewing the check output.",
-      example: 'ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm")',
+      example: 'ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "confirm")',
+    },
+    {
+      command: "ops.transfers()",
+      description: "Show active staged transfer plans.",
+      example: "ops.transfers()",
+    },
+    {
+      command: "ops.transferStatus(id)",
+      description: "Show detailed status for a staged transfer plan.",
+      example: 'ops.transferStatus("ot_123_W41N7_W42N9_4567")',
+    },
+    {
+      command: "ops.cancelTransfer(id)",
+      description: "Cancel an active staged transfer plan.",
+      example: 'ops.cancelTransfer("ot_123_W41N7_W42N9_4567")',
     },
     {
       command: "ops.terminalStatus([roomName])",
@@ -993,6 +1008,15 @@ module.exports = {
       },
       transfer: function (resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode) {
         return module.exports.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode);
+      },
+      transfers: function () {
+        return module.exports.transfers();
+      },
+      transferStatus: function (id) {
+        return module.exports.transferStatus(id);
+      },
+      cancelTransfer: function (id) {
+        return module.exports.cancelTransfer(id);
       },
       terminalStatus: function (roomName) {
         return module.exports.terminalStatus(roomName);
@@ -1571,6 +1595,18 @@ module.exports = {
         mode,
       ),
     );
+  },
+
+  transfers() {
+    return printBlock(transferManager.transfers().split("\n"));
+  },
+
+  transferStatus(id) {
+    return printBlock(transferManager.transferStatus(id).split("\n"));
+  },
+
+  cancelTransfer(id) {
+    return printLine(transferManager.cancelTransfer(id));
   },
 
   terminalStatus(roomName) {
