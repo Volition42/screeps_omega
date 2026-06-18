@@ -2,11 +2,11 @@
 
 Repository: `screeps_omega`
 
-Repository version used: `efce137699be0c8aebb8313077f57aeb3d8530d3`
+Repository version used: `2751b35911042a164c0b0a3dd7438ad325f9daf8`
 
-Generation date: `2026-06-17 20:53:19 PDT`
+Generation date: `2026-06-17 23:16:00 PDT`
 
-Source authority: `src/main.js`, `src/ops.js`, `src/transfer_manager.js`, `src/market_console.js`, `src/room_reporting.js`, `src/pcl_manager.js`, `src/power_manager.js`, `src/empire_manager.js`, `src/reservation_manager.js`, `src/attack_manager.js`, `src/ops_logistics_manager.js`, and `src/terminal_balance_manager.js`.
+Source authority: `src/main.js`, `src/kernel_loop.js`, `src/ops.js`, `src/transfer_manager.js`, `src/market_console.js`, `src/room_reporting.js`, `src/pcl_manager.js`, `src/power_manager.js`, `src/empire_manager.js`, `src/reservation_manager.js`, `src/attack_manager.js`, `src/ops_logistics_manager.js`, `src/terminal_balance_manager.js`, and `src/config.js`.
 
 This manual documents commands discovered from the source tree. Existing documentation was not used as command authority.
 
@@ -25,7 +25,7 @@ Approval-gated workflow:
 
 - Power Creep actions use a `check` versus `confirm` pattern. `check` reports readiness and does not call the Screeps API action. `confirm` is required before commands call `powerCreep.usePower(...)` or `powerCreep.enableRoom(...)`.
 - Market plan execution is a two-step workflow: create or inspect a saved plan, run `market.executionDryRun(planId)`, then intentionally run `market.executePlan(planId)`.
-- Staged room-to-room transfers use `ops.transfer(..., "check")` versus `ops.transfer(..., "confirm")`. `check` reports readiness only. `confirm` creates a bounded transfer plan in `Memory.ops.transfers`; Omega then advances the approved plan through room-local logistics requests and terminal sends.
+- Staged room-to-room transfers use `ops.transfer(..., "check")` versus `ops.transfer(..., "confirm")`. `check` reports readiness only. `confirm` creates a bounded transfer plan in `Memory.ops.transfers`; Omega advances approved plans each tick through room-local logistics requests and terminal sends.
 - Direct manual market commands `market.buy(...)`, `market.sell(...)`, and `market.send(...)` execute immediately after local validation. They are not dry-run commands.
 
 Execution levels used in this manual:
@@ -52,6 +52,7 @@ Execution levels used in this manual:
 - `ops.cancel(requestId)`
 - `ops.cancelAttack(targetRoom)`
 - `ops.cancelExpansion(targetRoom)`
+- `ops.cancelRequests(roomName, "blocked", [filters])`
 - `ops.cancelReserve(targetRoom)`
 - `ops.clearTerminal(roomName, [resource], [amount])`
 - `ops.cpu([roomName])`
@@ -84,7 +85,7 @@ Execution levels used in this manual:
 - `ops.reserved([parentRoom])`
 - `ops.room([roomName], [section])`
 - `ops.rooms()`
-- `ops.requests([roomName], ["all"|"history"])`
+- `ops.requests([roomName], ["blocked"|"all"|"history"])`
 - `ops.terminalStatus([roomName])`
 - `ops.tickRate([sampleTicks|status|cancel])`
 - `ops.tickSpeed([sampleTicks|status|cancel])`
@@ -154,55 +155,56 @@ Execution levels used in this manual:
 
 | Command | Description | Parameters | Example | Returns | Side Effects | Execution Level | Source |
 |---|---|---|---|---|---|---|---|
-| `view(mode)` | Toggle HUD and critical reports together and optionally print the current room report when enabling. | `mode`: boolean, number, or string toggle. | `view(on)` | Object with enabled, HUD, and report state. | Updates ops view, HUD, and report flags. | Planning | `src/ops.js:1037`, `src/ops.js:1987` |
-| `on` | Convenience global value for `true`. | None. | `ops.hud(on)` | Boolean constant. | None. | Read Only | `src/ops.js:920` |
-| `off` | Convenience global value for `false`. | None. | `ops.reports(off)` | Boolean constant. | None. | Read Only | `src/ops.js:921` |
+| `view(mode)` | Toggle HUD and critical reports together and optionally print the current room report when enabling. | `mode`: boolean, number, or string toggle. | `view(on)` | Object with enabled, HUD, and report state. | Updates ops view, HUD, and report flags. | Planning | `src/ops.js:1122`, `src/ops.js:2124` |
+| `on` | Convenience global value for `true`. | None. | `ops.hud(on)` | Boolean constant. | None. | Read Only | `src/ops.js:990` |
+| `off` | Convenience global value for `false`. | None. | `ops.reports(off)` | Boolean constant. | None. | Read Only | `src/ops.js:991` |
 
 ### Ops
 
 | Command | Description | Parameters | Example | Returns | Side Effects | Execution Level | Source |
 |---|---|---|---|---|---|---|---|
-| `ops.help()` | Print the ops help surface. | None. | `ops.help()` | Help row array. | Prints help. | Read Only | `src/ops.js:930`, `src/ops.js:1042` |
-| `ops.hud(mode)` | Toggle the room HUD overlay. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.hud(on)` | Toggle result object. | Updates HUD flag in ops state. | Planning | `src/ops.js:924`, `src/ops.js:1050` |
-| `ops.reports(mode)` | Toggle critical room reports. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.reports(off)` | Toggle result object. | Updates reports flag in ops state. | Planning | `src/ops.js:927`, `src/ops.js:1064` |
-| `ops.room(arg1, arg2)` | Show one room report. If one argument is a section, uses the current/default room. | `arg1`: room name or section. `arg2`: section. Sections: `overview`, `economy`, `build`, `defense`, `creeps`, `sources`, `advanced`, `power`, `observer`, `cpu`, `resources`, `all`. | `ops.room("W5N5", "power")` | Report object, except CPU returns a printable string. | Sets current room and may update room progress. | Read Only | `src/ops.js:933`, `src/ops.js:1078`, `src/room_reporting.js:1396` |
-| `ops.cpu(roomName)` | Show measured room CPU, top section costs, pressure, and scheduler skips. | `roomName`: optional owned room. | `ops.cpu("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:936`, `src/ops.js:1983` |
-| `ops.cpuStatus(roomName)` | Alias for `ops.room(roomName, "cpu")`. | `roomName`: optional owned room. | `ops.cpuStatus("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1029`, `src/ops.js:1979` |
-| `ops.phase(roomName)` | Alias for the build section of `ops.room`. | `roomName`: optional owned room. | `ops.phase("W5N5")` | Room report object for build section. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1032`, `src/ops.js:1987` |
-| `ops.rooms()` | Show overview lines for all owned rooms. | None. | `ops.rooms()` | Room reports array. | Updates progress in generated reports. | Read Only | `src/ops.js:939`, `src/ops.js:1713` |
-| `ops.empire()` | Show empire summary and owned-room overview. | None. | `ops.empire()` | Empire report object. | Updates progress in generated reports. | Read Only | `src/ops.js:942`, `src/ops.js:1728` |
-| `ops.log(arg1, arg2)` | Show compact invasion history. | `arg1`: room name or limit. `arg2`: optional limit. | `ops.log("W43N6")` | Lines array. | Prints invasion log lines. | Read Only | `src/ops.js:945`, `src/ops.js:1745` |
-| `ops.logClear(roomName)` | Clear invasion history for one room, or all rooms when omitted. | `roomName`: optional room or `all`. | `ops.logClear("W43N6")` | Clear result object. | Deletes invasion log entries. | Planning | `src/ops.js:948`, `src/ops.js:1772` |
-| `ops.tickRate(sampleTicks)` | Sample wall-clock milliseconds per tick over a short window; supports status and cancel. | `sampleTicks`: positive integer, `status`, or `cancel`. | `ops.tickRate(5)` | Printable status line. | Stores or clears probe state under runtime ops console memory. | Planning | `src/ops.js:951`, `src/ops.js:1787` |
-| `ops.tickSpeed(sampleTicks)` | Alias for `ops.tickRate`. | Same as `ops.tickRate`. | `ops.tickSpeed("status")` | Printable status line. | Same as `ops.tickRate`. | Planning | `src/ops.js:954` |
-| `ops.power(roomName, arg1, arg2)` | Show empire Power Spawn status, show a room power report, or set room-local processing/refill policy. | `roomName`: optional room. `arg1`: `detail`, `on`, `off`, `process`, `refill`, or reserve amount. `arg2`: toggle or amount depending on mode. | `ops.power("W5N5", "process", "off")` | Printable report or policy line. | Policy forms update room power policy memory. | Planning | `src/ops.js:957`, `src/ops.js:1107`, `src/power_manager.js:242` |
-| `ops.pcl(roomName)` | Show GPL/PCL status and optional room enablement readiness. | `roomName`: optional room. | `ops.pcl("W5N5")` | Printable report string. | Prints report. | Read Only | `src/ops.js:960`, `src/ops.js:1155`, `src/pcl_manager.js:2265` |
-| `ops.powerCreeps()` | List friendly Power Creeps without controlling them. | None. | `ops.powerCreeps()` | Printable report string. | Prints report. | Read Only | `src/ops.js:963`, `src/ops.js:1161`, `src/pcl_manager.js:2289` |
-| `ops.operator(powerCreepName, roomName, mode, targetOrMode, maybeMode)` | Report operator readiness or check/confirm manual `OPERATE_SPAWN` and `OPERATE_EXTENSION`. | `powerCreepName`: name. `roomName`: room. `mode`: `powers`, `operateSpawn`, or `operateExtension`. Additional target/mode args as needed. | `ops.operator("OperatorOne", "W5N5", "operateSpawn", "Spawn1", "check")` | Printable report string. | `confirm` for operate commands calls `powerCreep.usePower`; report mode does not. | Approval Required | `src/ops.js:966`, `src/ops.js:1167`, `src/pcl_manager.js:2379` |
-| `ops.powerCreep(powerCreepName, action, roomName, targetOrMode, mode)` | Assign, unassign, report, check, or confirm Power Creep lifecycle and movement actions. | `action`: `assign`, `unassign`, `renewAssist`, `renewStatus`, `spawn`, `renew`, `position`, `move`, `generateOps`. | `ops.powerCreep("OperatorOne", "move", "W5N5", "powerSpawn", "check")` | Printable line or report string. | Assignment and renew-assist update memory. `confirm` lifecycle/generateOps calls Power Creep API actions. | Approval Required | `src/ops.js:969`, `src/ops.js:1226`, `src/pcl_manager.js:2407` |
-| `ops.ops(roomName, action, from, to, amount, powerCreepName)` | Show ops resource inventory or stage `RESOURCE_OPS` between room storage and terminal. | `roomName`: optional room. `action`: optional `stage`. `from`/`to`: `storage` or `terminal`. `amount`: positive number. | `ops.ops("W5N5", "stage", "storage", "terminal", 1000)` | Printable inventory block or request line. | Stage creates an ops logistics move request. | Planning | `src/ops.js:972`, `src/ops.js:1331` |
-| `ops.powerEnable(roomName, mode, powerCreepName)` | Check room power enablement readiness or confirm `enableRoom`. | `roomName`: owned room. `mode`: `check` or `confirm`. `powerCreepName`: required when confirming if more than one candidate exists. | `ops.powerEnable("W5N5", "check")` | Printable report string. | `confirm` calls `powerCreep.enableRoom`. | Approval Required | `src/ops.js:975`, `src/ops.js:1409`, `src/pcl_manager.js:2578` |
-| `ops.move(resource, amount, roomName, from, to)` | Create a room-local logistics request between storage and terminal. | `resource`: resource constant or string. `amount`: positive number. `roomName`: room. `from`/`to`: endpoints. | `ops.move("H", 50000, "W42N9", "terminal", "storage")` | Logistics result object. | Creates a move request in ops logistics memory. | Planning | `src/ops.js:978`, `src/ops.js:1451` |
-| `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)` | Check or confirm an explicit staged transfer plan. Supports `storage -> terminal`, `terminal -> storage`, `storage -> storage`, and `terminal -> terminal`. | `resource`: resource constant or string. `amount`: positive number. `fromRoom`/`toRoom`: room names. `fromLocation`/`toLocation`: `storage` or `terminal`. `mode`: `check` or `confirm`; omitted mode defaults to `check`. | `ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "confirm")` | Printable transfer line. | `check` is report-only. `confirm` creates a plan in `Memory.ops.transfers`; approved plans may create ops logistics requests and call `terminal.send` as they advance. | Approval Required | `src/ops.js:1009`, `src/ops.js:1588`, `src/transfer_manager.js:676` |
-| `ops.transfers()` | Show active staged transfer plans. | None. | `ops.transfers()` | Printable summary block. | Prints active transfer summaries. | Read Only | `src/ops.js:1012`, `src/ops.js:1600`, `src/transfer_manager.js:731` |
-| `ops.transferStatus(id)` | Show detailed status for one staged transfer plan. | `id`: transfer plan id. | `ops.transferStatus("ot_123_W41N7_W42N9_4567")` | Printable detail block. | Prints plan detail and may refresh delivered/completion progress from visible storage. | Read Only | `src/ops.js:1015`, `src/ops.js:1604`, `src/transfer_manager.js:741` |
-| `ops.cancelTransfer(id)` | Cancel an active staged transfer plan. | `id`: transfer plan id. | `ops.cancelTransfer("ot_123_W41N7_W42N9_4567")` | Printable cancellation line. | Marks the transfer `CANCELLED` and cancels associated source/destination ops logistics requests when present. | Planning | `src/ops.js:1018`, `src/ops.js:1608`, `src/transfer_manager.js:772` |
-| `ops.terminalStatus(roomName)` | Show terminal capacity, energy, resources, and congestion status. | `roomName`: optional owned room. | `ops.terminalStatus("W42N9")` | Printable block. | Prints report. | Read Only | `src/ops.js:981`, `src/ops.js:1460` |
-| `ops.clearTerminal(roomName, resource, amount)` | Create terminal-to-storage logistics requests for terminal cleanup. | `roomName`: owned room. Optional `resource` and `amount`; when omitted, source selects cleanup resources. | `ops.clearTerminal("W42N9", "H", 50000)` | Result object or cleanup summary. | Creates one or more logistics requests. | Planning | `src/ops.js:984`, `src/ops.js:1518` |
-| `ops.fillTerminal(roomName, resource, amount)` | Create a storage-to-terminal logistics request for market staging. | `roomName`, `resource`, `amount`. | `ops.fillTerminal("W42N9", "energy", 10000)` | Logistics result object. | Creates a logistics request. | Planning | `src/ops.js:987`, `src/ops.js:1684` |
-| `ops.requests(roomName, mode)` | Show active or historical ops logistics requests. | `roomName`: optional room. `mode`: optional `all` or `history`. | `ops.requests("W42N9", "all")` | Printable block. | Prints report. | Read Only | `src/ops.js:990`, `src/ops.js:1692` |
-| `ops.cancel(requestId)` | Cancel an ops logistics request. | `requestId`: request id. | `ops.cancel("ol_123_W42N9_H_1")` | Cancel result object. | Marks request canceled. | Planning | `src/ops.js:993`, `src/ops.js:1735` |
-| `ops.balanceTerminal(roomName)` | Evaluate one terminal balance target set and create conservative logistics requests. | `roomName`: owned room. | `ops.balanceTerminal("W42N9")` | Terminal balance result object. | May create logistics requests. | Planning | `src/ops.js:996`, `src/ops.js:1741` |
-| `ops.balanceTerminals()` | Evaluate terminal balance targets for all owned rooms with storage and terminal. | None. | `ops.balanceTerminals()` | Aggregate result object. | May create logistics requests. | Planning | `src/ops.js:999`, `src/ops.js:1760` |
-| `ops.expand(targetRoom, parentRoom)` | Start or update a manual expansion plan. | `targetRoom`: room to claim. `parentRoom`: optional support room. | `ops.expand("W5N6", "W5N5")` | Expansion result object. | Creates/updates expansion memory; may convert reservation to expansion. | Planning | `src/ops.js:1002`, `src/ops.js:1809`, `src/empire_manager.js:1390` |
-| `ops.reserve(targetRoom, parentRoom)` | Start or update a reserved-room plan. | `targetRoom`: remote room. `parentRoom`: optional parent; current room is used when omitted. | `ops.reserve("W5N6", "W5N5")` | Reservation result object. | Creates/updates reservation memory; may convert expansion to reservation. | Planning | `src/ops.js:1005`, `src/ops.js:1836`, `src/reservation_manager.js:806` |
-| `ops.reserved(parentRoom)` | Show active reserved rooms grouped by parent. | `parentRoom`: optional parent filter. | `ops.reserved("W5N5")` | Lines array. | Prints report. | Read Only | `src/ops.js:1008`, `src/ops.js:1874` |
-| `ops.expansions()` | Show active expansion plans. | None. | `ops.expansions()` | Lines array. | Prints report. | Read Only | `src/ops.js:1011`, `src/ops.js:1880` |
-| `ops.attack(targetRoom, postActionOrOptions, parentRoom, allies)` | Start or update a manual attack plan. | `targetRoom`: target. `postAction`: `expand`, `reserve`, or `none`; options object also accepted. `parentRoom`: support room. `allies`: array. | `ops.attack("W5N6", "expand", "W5N5", ["W4N6"])` | Attack result object. | Creates/updates attack memory. | Planning | `src/ops.js:1014`, `src/ops.js:1886`, `src/attack_manager.js:301` |
-| `ops.attacks()` | Show active attack plans. | None. | `ops.attacks()` | Lines array. | Prints report. | Read Only | `src/ops.js:1017`, `src/ops.js:1936` |
-| `ops.cancelAttack(targetRoom)` | Cancel an active attack plan. | `targetRoom`: target room. | `ops.cancelAttack("W5N6")` | Cancel result object. | Cancels attack plan memory. | Planning | `src/ops.js:1020`, `src/ops.js:1943`, `src/attack_manager.js:395` |
-| `ops.cancelExpansion(targetRoom)` | Cancel an active expansion plan. | `targetRoom`: target room. | `ops.cancelExpansion("W5N6")` | Cancel result object. | Cancels expansion plan memory. | Planning | `src/ops.js:1023`, `src/ops.js:1949`, `src/empire_manager.js:1516` |
-| `ops.cancelReserve(targetRoom)` | Cancel an active reserved-room plan. | `targetRoom`: reserved room. | `ops.cancelReserve("W5N6")` | Cancel result object. | Cancels reservation plan memory. | Planning | `src/ops.js:1026`, `src/ops.js:1955`, `src/reservation_manager.js:871` |
+| `ops.help()` | Print the ops help surface. | None. | `ops.help()` | Help row array. | Prints help. | Read Only | `src/ops.js:1000`, `src/ops.js:1127` |
+| `ops.hud(mode)` | Toggle the room HUD overlay. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.hud(on)` | Toggle result object. | Updates HUD flag in ops state. | Planning | `src/ops.js:994`, `src/ops.js:1135` |
+| `ops.reports(mode)` | Toggle critical room reports. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.reports(off)` | Toggle result object. | Updates reports flag in ops state. | Planning | `src/ops.js:997`, `src/ops.js:1149` |
+| `ops.room(arg1, arg2)` | Show one room report. If one argument is a section, uses the current/default room. | `arg1`: room name or section. `arg2`: section. Sections: `overview`, `economy`, `build`, `defense`, `creeps`, `sources`, `advanced`, `power`, `observer`, `cpu`, `resources`, `all`. | `ops.room("W5N5", "power")` | Report object, except CPU returns a printable string. | Sets current room and may update room progress. | Read Only | `src/ops.js:1003`, `src/ops.js:1163`, `src/room_reporting.js:1396` |
+| `ops.cpu(roomName)` | Show measured room CPU, top section costs, pressure, and scheduler skips. | `roomName`: optional owned room. | `ops.cpu("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1006`, `src/ops.js:2116` |
+| `ops.cpuStatus(roomName)` | Alias for `ops.room(roomName, "cpu")`. | `roomName`: optional owned room. | `ops.cpuStatus("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1114`, `src/ops.js:2112` |
+| `ops.phase(roomName)` | Alias for the build section of `ops.room`. | `roomName`: optional owned room. | `ops.phase("W5N5")` | Room report object for build section. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1117`, `src/ops.js:2120` |
+| `ops.rooms()` | Show overview lines for all owned rooms. | None. | `ops.rooms()` | Room reports array. | Updates progress in generated reports. | Read Only | `src/ops.js:1009`, `src/ops.js:1509` |
+| `ops.empire()` | Show empire summary and owned-room overview. | None. | `ops.empire()` | Empire report object. | Updates progress in generated reports. | Read Only | `src/ops.js:1012`, `src/ops.js:1525` |
+| `ops.log(arg1, arg2)` | Show compact invasion history. | `arg1`: room name or limit. `arg2`: optional limit. | `ops.log("W43N6")` | Lines array. | Prints invasion log lines. | Read Only | `src/ops.js:1015`, `src/ops.js:1541` |
+| `ops.logClear(roomName)` | Clear invasion history for one room, or all rooms when omitted. | `roomName`: optional room or `all`. | `ops.logClear("W43N6")` | Clear result object. | Deletes invasion log entries. | Planning | `src/ops.js:1018`, `src/ops.js:1567` |
+| `ops.tickRate(sampleTicks)` | Sample wall-clock milliseconds per tick over a short window; supports status and cancel. | `sampleTicks`: positive integer, `status`, or `cancel`. | `ops.tickRate(5)` | Printable status line. | Stores or clears probe state under runtime ops console memory. | Planning | `src/ops.js:1021`, `src/ops.js:1579` |
+| `ops.tickSpeed(sampleTicks)` | Alias for `ops.tickRate`. | Same as `ops.tickRate`. | `ops.tickSpeed("status")` | Printable status line. | Same as `ops.tickRate`. | Planning | `src/ops.js:1024`, `src/ops.js:1579` |
+| `ops.power(roomName, arg1, arg2)` | Show empire Power Spawn status, show a room power report, or set room-local processing/refill policy. | `roomName`: optional room. `arg1`: `detail`, `on`, `off`, `process`, `refill`, or reserve amount. `arg2`: toggle or amount depending on mode. | `ops.power("W5N5", "process", "off")` | Printable report or policy line. | Policy forms update room power policy memory. | Planning | `src/ops.js:1027`, `src/ops.js:1192`, `src/power_manager.js:242` |
+| `ops.pcl(roomName)` | Show GPL/PCL status and optional room enablement readiness. | `roomName`: optional room. | `ops.pcl("W5N5")` | Printable report string. | Prints report. | Read Only | `src/ops.js:1030`, `src/ops.js:1239`, `src/pcl_manager.js:2265` |
+| `ops.powerCreeps()` | List friendly Power Creeps without controlling them. | None. | `ops.powerCreeps()` | Printable report string. | Prints report. | Read Only | `src/ops.js:1033`, `src/ops.js:1245`, `src/pcl_manager.js:2289` |
+| `ops.operator(powerCreepName, roomName, mode, targetOrMode, maybeMode)` | Report operator readiness or check/confirm manual `OPERATE_SPAWN` and `OPERATE_EXTENSION`. | `powerCreepName`: name. `roomName`: room. `mode`: `powers`, `operateSpawn`, or `operateExtension`. Additional target/mode args as needed. | `ops.operator("OperatorOne", "W5N5", "operateSpawn", "Spawn1", "check")` | Printable report string. | `confirm` for operate commands calls `powerCreep.usePower`; report mode does not. | Approval Required | `src/ops.js:1036`, `src/ops.js:1251`, `src/pcl_manager.js:2379` |
+| `ops.powerCreep(powerCreepName, action, roomName, targetOrMode, mode)` | Assign, unassign, report, check, or confirm Power Creep lifecycle and movement actions. | `action`: `assign`, `unassign`, `renewAssist`, `renewStatus`, `spawn`, `renew`, `position`, `move`, `generateOps`. | `ops.powerCreep("OperatorOne", "move", "W5N5", "powerSpawn", "check")` | Printable line or report string. | Assignment and renew-assist update memory. `confirm` lifecycle/generateOps calls Power Creep API actions. | Approval Required | `src/ops.js:1039`, `src/ops.js:1311`, `src/pcl_manager.js:2407` |
+| `ops.ops(roomName, action, from, to, amount, powerCreepName)` | Show ops resource inventory or stage `RESOURCE_OPS` between room storage and terminal. | `roomName`: optional room. `action`: optional `stage`. `from`/`to`: `storage` or `terminal`. `amount`: positive number. | `ops.ops("W5N5", "stage", "storage", "terminal", 1000)` | Printable inventory block or request line. | Stage creates an ops logistics move request. | Planning | `src/ops.js:1042`, `src/ops.js:1387` |
+| `ops.powerEnable(roomName, mode, powerCreepName)` | Check room power enablement readiness or confirm `enableRoom`. | `roomName`: owned room. `mode`: `check` or `confirm`. `powerCreepName`: required when confirming if more than one candidate exists. | `ops.powerEnable("W5N5", "check")` | Printable report string. | `confirm` calls `powerCreep.enableRoom`. | Approval Required | `src/ops.js:1045`, `src/ops.js:1488`, `src/pcl_manager.js:2578` |
+| `ops.move(resource, amount, roomName, from, to)` | Create a room-local logistics request between storage and terminal. | `resource`: resource constant or string. `amount`: positive number. `roomName`: room. `from`/`to`: endpoints. | `ops.move("H", 50000, "W42N9", "terminal", "storage")` | Logistics result object. | Creates a move request in ops logistics memory. | Planning | `src/ops.js:1048`, `src/ops.js:1619` |
+| `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)` | Check or confirm an explicit staged transfer plan. Supports `storage -> terminal`, `terminal -> storage`, `storage -> storage`, and `terminal -> terminal`. | `resource`: resource constant or string. `amount`: positive number. `fromRoom`/`toRoom`: room names. `fromLocation`/`toLocation`: `storage` or `terminal`. `mode`: `check` or `confirm`; omitted mode defaults to `check`. | `ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "confirm")` | Printable transfer line. | `check` is report-only. `confirm` creates a plan in `Memory.ops.transfers`; approved plans may create ops logistics requests and call `terminal.send` as they advance each tick. | Approval Required | `src/ops.js:1051`, `src/ops.js:1631`, `src/transfer_manager.js:676` |
+| `ops.transfers()` | Show active staged transfer plans. | None. | `ops.transfers()` | Printable summary block. | Prints active transfer summaries. | Read Only | `src/ops.js:1054`, `src/ops.js:1645`, `src/transfer_manager.js:731` |
+| `ops.transferStatus(id)` | Show detailed status for one staged transfer plan. | `id`: transfer plan id. | `ops.transferStatus("ot_123_W41N7_W42N9_4567")` | Printable detail block. | Prints plan detail and may refresh delivered/completion progress from visible storage. | Read Only | `src/ops.js:1057`, `src/ops.js:1649`, `src/transfer_manager.js:741` |
+| `ops.cancelTransfer(id)` | Cancel an active staged transfer plan. | `id`: transfer plan id. | `ops.cancelTransfer("ot_123_W41N7_W42N9_4567")` | Printable cancellation line. | Marks the transfer `CANCELLED` and cancels associated source/destination ops logistics requests when present. | Planning | `src/ops.js:1060`, `src/ops.js:1653`, `src/transfer_manager.js:772` |
+| `ops.terminalStatus(roomName)` | Show terminal capacity, energy, resources, and congestion status. | `roomName`: optional owned room. | `ops.terminalStatus("W42N9")` | Printable block. | Prints report. | Read Only | `src/ops.js:1063`, `src/ops.js:1657` |
+| `ops.clearTerminal(roomName, resource, amount)` | Create terminal-to-storage logistics requests for terminal cleanup. | `roomName`: owned room. Optional `resource` and `amount`; when omitted, source selects cleanup resources. | `ops.clearTerminal("W42N9", "H", 50000)` | Result object or cleanup summary. | Creates one or more logistics requests. | Planning | `src/ops.js:1066`, `src/ops.js:1714` |
+| `ops.fillTerminal(roomName, resource, amount)` | Create a storage-to-terminal logistics request for market staging. | `roomName`, `resource`, `amount`. | `ops.fillTerminal("W42N9", "energy", 10000)` | Logistics result object. | Creates a logistics request. | Planning | `src/ops.js:1069`, `src/ops.js:1795` |
+| `ops.requests(roomName, mode)` | Show active, blocked-only, or historical ops logistics requests. | `roomName`: optional room. `mode`: optional `blocked`, `all`, or `history`; `blocked` can also be the first argument. | `ops.requests("W42N9", "blocked")` | Printable block with counts, age, reason, created, and updated fields. | Prints report. | Read Only | `src/ops.js:1072`, `src/ops.js:1807` |
+| `ops.cancelRequests(roomName, status, filters)` | Cancel stale blocked unclaimed ops logistics requests for one room. | `roomName`: owned room. `status`: only `blocked`. `filters`: optional `resource` or `resourceType`, `from`, `to`, and `olderThan`; default age is 1000 ticks. | `ops.cancelRequests("W42N9", "blocked", { resource: RESOURCE_POWER, from: "terminal", to: "powerSpawn", olderThan: 1000 })` | Printable cleanup block. | Marks matching blocked, unclaimed requests as canceled; skips open, done, expired, canceled, claimed, or non-matching requests. | Planning | `src/ops.js:1075`, `src/ops.js:1881`, `src/ops_logistics_manager.js:496` |
+| `ops.cancel(requestId)` | Cancel an ops logistics request. | `requestId`: request id. | `ops.cancel("ol_123_W42N9_H_1")` | Cancel result object. | Marks request canceled. | Planning | `src/ops.js:1078`, `src/ops.js:1910` |
+| `ops.balanceTerminal(roomName)` | Evaluate one terminal balance target set and create conservative logistics requests. | `roomName`: owned room. | `ops.balanceTerminal("W42N9")` | Terminal balance result object. | May create logistics requests. | Planning | `src/ops.js:1081`, `src/ops.js:1916` |
+| `ops.balanceTerminals()` | Evaluate terminal balance targets for all owned rooms with storage and terminal. | None. | `ops.balanceTerminals()` | Aggregate result object. | May create logistics requests. | Planning | `src/ops.js:1084`, `src/ops.js:1934` |
+| `ops.expand(targetRoom, parentRoom)` | Start or update a manual expansion plan. | `targetRoom`: room to claim. `parentRoom`: optional support room. | `ops.expand("W5N6", "W5N5")` | Expansion result object. | Creates/updates expansion memory; may convert reservation to expansion. | Planning | `src/ops.js:1087`, `src/ops.js:1963`, `src/empire_manager.js:1390` |
+| `ops.reserve(targetRoom, parentRoom)` | Start or update a reserved-room plan. | `targetRoom`: remote room. `parentRoom`: optional parent; current room is used when omitted. | `ops.reserve("W5N6", "W5N5")` | Reservation result object. | Creates/updates reservation memory; may convert expansion to reservation. | Planning | `src/ops.js:1090`, `src/ops.js:1988`, `src/reservation_manager.js:806` |
+| `ops.reserved(parentRoom)` | Show active reserved rooms grouped by parent. | `parentRoom`: optional parent filter. | `ops.reserved("W5N5")` | Lines array. | Prints report. | Read Only | `src/ops.js:1093`, `src/ops.js:2033` |
+| `ops.expansions()` | Show active expansion plans. | None. | `ops.expansions()` | Lines array. | Prints report. | Read Only | `src/ops.js:1096`, `src/ops.js:2039` |
+| `ops.attack(targetRoom, postActionOrOptions, parentRoom, allies)` | Start or update a manual attack plan. | `targetRoom`: target. `postAction`: `expand`, `reserve`, or `none`; options object also accepted. `parentRoom`: support room. `allies`: array. | `ops.attack("W5N6", "expand", "W5N5", ["W4N6"])` | Attack result object. | Creates/updates attack memory. | Planning | `src/ops.js:1099`, `src/ops.js:2045`, `src/attack_manager.js:301` |
+| `ops.attacks()` | Show active attack plans. | None. | `ops.attacks()` | Lines array. | Prints report. | Read Only | `src/ops.js:1102`, `src/ops.js:2088` |
+| `ops.cancelAttack(targetRoom)` | Cancel an active attack plan. | `targetRoom`: target room. | `ops.cancelAttack("W5N6")` | Cancel result object. | Cancels attack plan memory. | Planning | `src/ops.js:1105`, `src/ops.js:2094`, `src/attack_manager.js:395` |
+| `ops.cancelExpansion(targetRoom)` | Cancel an active expansion plan. | `targetRoom`: target room. | `ops.cancelExpansion("W5N6")` | Cancel result object. | Cancels expansion plan memory. | Planning | `src/ops.js:1108`, `src/ops.js:2100`, `src/empire_manager.js:1516` |
+| `ops.cancelReserve(targetRoom)` | Cancel an active reserved-room plan. | `targetRoom`: reserved room. | `ops.cancelReserve("W5N6")` | Cancel result object. | Cancels reservation plan memory. | Planning | `src/ops.js:1111`, `src/ops.js:2106`, `src/reservation_manager.js:871` |
 
 ### Market
 
@@ -273,10 +275,10 @@ Logistics:
 
 - `ops.move(resource, amount, roomName, from, to)`: create storage/terminal movement requests.
 - `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "check")`: preview an explicit staged cross-room transfer without creating a plan.
-- `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "confirm")`: approve what should move; Omega executes how it moves through `Memory.ops.transfers`, room-local logistics requests, and terminal sends.
+- `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "confirm")`: approve what should move; Omega advances the plan each tick through source staging, terminal send, destination staging, completion, block, or cancellation states.
 - `ops.transfers()`, `ops.transferStatus(id)`, and `ops.cancelTransfer(id)`: list, inspect, and cancel staged transfers. The command is `ops.cancelTransfer(id)`; `ops.transferCancel(id)` is not implemented.
 - `ops.clearTerminal(...)`, `ops.fillTerminal(...)`, `ops.balanceTerminal(...)`, and `ops.balanceTerminals()`: terminal hygiene and balance workflows.
-- `ops.requests(...)`, `ops.cancel(...)`, `market.stage(...)`, `market.unstage(...)`, `market.requests(...)`, and `market.cancel(...)`: logistics request visibility and control.
+- `ops.requests(...)`, `ops.requests("blocked")`, `ops.cancelRequests(room, "blocked", filters)`, `ops.cancel(...)`, `market.stage(...)`, `market.unstage(...)`, `market.requests(...)`, and `market.cancel(...)`: logistics request visibility and control.
 
 Construction:
 
@@ -422,7 +424,8 @@ Terminal clogged or market blocked:
 
 - Run `ops.terminalStatus("ROOM")` and `market.readiness("ROOM")`.
 - Use `ops.clearTerminal("ROOM")` for source-selected cleanup or `ops.clearTerminal("ROOM", resource, amount)` for a specific resource.
-- Run `market.requests("ROOM", "all")` to find stuck logistics.
+- Run `ops.requests("ROOM", "blocked")` or `market.requests("ROOM", "all")` to find stuck logistics.
+- Use `ops.cancelRequests("ROOM", "blocked", filters)` only for stale blocked requests that are unclaimed and safe to clear.
 
 Market plan will not execute:
 
@@ -451,7 +454,7 @@ Planning and memory updates:
 - Reservations: `ops.reserve("TARGET", "PARENT")`, `ops.cancelReserve("TARGET")`
 - Expansions: `ops.expand("TARGET", "PARENT")`, `ops.cancelExpansion("TARGET")`
 - Attack plans: `ops.attack("TARGET", "expand", "PARENT", ["ALLY"])`, `ops.cancelAttack("TARGET")`
-- Logistics: `ops.move("H", 50000, "ROOM", "terminal", "storage")`, `ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "confirm")`, `ops.fillTerminal("ROOM", "energy", 10000)`, `ops.clearTerminal("ROOM")`
+- Logistics: `ops.move("H", 50000, "ROOM", "terminal", "storage")`, `ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "storage", "confirm")`, `ops.cancelRequests("ROOM", "blocked", { olderThan: 1000 })`, `ops.fillTerminal("ROOM", "energy", 10000)`, `ops.clearTerminal("ROOM")`
 - Market plans: `market.planSell("H", 10000, "ROOM")`, `market.planReview(planId)`, `market.executionDryRun(planId)`
 
 Executing commands:
@@ -465,10 +468,10 @@ Counts by category:
 
 - Global callable aliases: 1 (`view`).
 - Global convenience constants: 2 (`on`, `off`).
-- `ops.*` callable functions: 41.
+- `ops.*` callable functions: 42.
 - `market.*` callable functions: 51.
-- Total callable operator commands documented: 93.
-- Ops help signature rows: 45.
+- Total callable operator commands documented: 94.
+- Ops help signature rows: 46.
 - Market help signature rows: 65.
 
 Missing documentation:
