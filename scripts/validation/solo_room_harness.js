@@ -1389,6 +1389,11 @@ function resetRuntime(tick) {
         return roomA === roomB ? 0 : Math.ceil(amount * 0.1);
       },
     },
+    market: {
+      calcTransactionCost(amount, roomA, roomB) {
+        return Game.map.calcTransactionCost(amount, roomA, roomB);
+      },
+    },
     cpu: {
       limit: 20,
       tickLimit: 500,
@@ -8997,6 +9002,43 @@ function buildOpsLogisticsRoom(name, options) {
   return room;
 }
 
+function addTransferRoom(name, options) {
+  const settings = options || {};
+  const room = new FakeRoom(name, new FakeTerrain());
+  room.setController(
+    createController(20, 20, {
+      roomName: name,
+      level: settings.controllerLevel || 8,
+      my: settings.owned !== false,
+      owner: settings.owned === false ? null : { username: "tester" },
+    }),
+  );
+
+  if (settings.withTerminal !== false) {
+    room.addStructure(
+      createStructure(STRUCTURE_TERMINAL, 25, 25, {
+        roomName: name,
+        my: settings.terminalOwned !== false,
+        store: settings.terminalStore || { energy: 10000, power: 5000 },
+        storeCapacity: settings.terminalCapacity || 300000,
+        cooldown: settings.cooldown || 0,
+      }),
+    );
+  }
+
+  if (settings.withStorage) {
+    room.addStructure(
+      createStructure(STRUCTURE_STORAGE, 24, 25, {
+        roomName: name,
+        store: settings.storageStore || { energy: 10000, power: 5000 },
+        storeCapacity: settings.storageCapacity || 1000000,
+      }),
+    );
+  }
+
+  return room;
+}
+
 function assertOpsLogisticsRequestShape(request, expected) {
   assert(request, "expected an ops logistics request");
   assert(request.status === expected.status, `expected status ${expected.status}, got ${request.status}`);
@@ -9486,6 +9528,163 @@ function runTerminalHygieneCommandsScenario() {
     }),
     "automatic clearTerminal should not create energy cleanup requests",
   );
+}
+
+function runOpsTransferScenario() {
+  resetRuntime(1340);
+  const source = addTransferRoom("W41N7", {
+    terminalStore: { energy: 10000, power: 5000 },
+  });
+  const destination = addTransferRoom("W42N9", {
+    terminalStore: { energy: 5000 },
+    terminalCapacity: 300000,
+  });
+  ops.registerGlobals();
+
+  assert(typeof global.ops.transfer === "function", "ops.transfer should be registered");
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "check");
+  });
+  assert(typeof captured.result === "string", "ops.transfer check should return a clean string");
+  assert(captured.result.indexOf("[object Object]") === -1, "ops.transfer check must not return raw object text");
+  assert(captured.result.indexOf("status CHECK") !== -1, `expected check status, got ${captured.result}`);
+  assert(captured.result.indexOf("resource power") !== -1, `expected normalized power resource, got ${captured.result}`);
+  assert(captured.result.indexOf("cost 100") !== -1, `expected transaction cost, got ${captured.result}`);
+  assert(captured.result.indexOf("source 5,000") !== -1, `expected source resource amount, got ${captured.result}`);
+  assert(captured.result.indexOf("energy 10,000") !== -1, `expected source energy amount, got ${captured.result}`);
+  assert(captured.result.indexOf("destFree") !== -1, `expected destination free capacity, got ${captured.result}`);
+  assert(currentRuntime.terminalSends.length === 0, "check mode must not call terminal.send");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer("power", 1000, "W41N7", "terminal", "W42N9", "terminal");
+  });
+  assert(captured.result.indexOf("mode check") !== -1, `omitted mode should default to check, got ${captured.result}`);
+  assert(currentRuntime.terminalSends.length === 0, "omitted mode check must not call terminal.send");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer("power", 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("status SENT") !== -1, `confirm should send when valid, got ${captured.result}`);
+  assert(captured.result.indexOf("result OK") !== -1, `confirm should report result code, got ${captured.result}`);
+  assert(currentRuntime.terminalSends.length === 1, "confirm mode should call terminal.send exactly once");
+  assert(currentRuntime.terminalSends[0].description === "Omega ops.transfer", "terminal.send should use ops.transfer description");
+  assert(source.terminal.store[RESOURCE_POWER] === 4000, "confirm should debit source power");
+  assert(destination.terminal.store[RESOURCE_POWER] === 1000, "confirm should credit visible destination power");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "storage", "W42N9", "terminal", "check");
+  });
+  assert(
+    captured.result === "[OPS][TRANSFER] unsupported staged endpoint path; currently supports terminal -> terminal only",
+    `unsupported staged endpoint should be clear, got ${captured.result}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 0, "W41N7", "terminal", "W42N9", "terminal", "check");
+  });
+  assert(captured.result.indexOf("blocked invalid_amount") !== -1, `invalid amount should block, got ${captured.result}`);
+
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "not-a-room", "terminal", "W42N9", "terminal", "check");
+  });
+  assert(captured.result.indexOf("blocked invalid_room") !== -1, `invalid room should block, got ${captured.result}`);
+
+  resetRuntime(1341);
+  addTransferRoom("W41N7", { owned: false });
+  addTransferRoom("W42N9", {});
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked source_room_not_owned") !== -1, `unowned source should block, got ${captured.result}`);
+  assert(currentRuntime.terminalSends.length === 0, "blocked unowned source must not send");
+
+  resetRuntime(1342);
+  addTransferRoom("W41N7", { withTerminal: false });
+  addTransferRoom("W42N9", {});
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked source_terminal_missing") !== -1, `missing source terminal should block, got ${captured.result}`);
+
+  resetRuntime(1343);
+  addTransferRoom("W41N7", { cooldown: 7 });
+  addTransferRoom("W42N9", {});
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked source_terminal_cooldown") !== -1, `cooldown should block, got ${captured.result}`);
+
+  resetRuntime(1344);
+  addTransferRoom("W41N7", { terminalStore: { energy: 10000, power: 50 } });
+  addTransferRoom("W42N9", {});
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked source_resource_insufficient") !== -1, `source amount should block, got ${captured.result}`);
+
+  resetRuntime(1345);
+  addTransferRoom("W41N7", { terminalStore: { energy: 50, power: 5000 } });
+  addTransferRoom("W42N9", {});
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked transaction_energy_insufficient") !== -1, `transaction energy should block, got ${captured.result}`);
+
+  resetRuntime(1346);
+  addTransferRoom("W41N7", { terminalStore: { energy: 10000, power: 5000 } });
+  addTransferRoom("W42N9", { terminalStore: { energy: 300000 }, terminalCapacity: 300000 });
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked destination_capacity_insufficient") !== -1, `destination capacity should block, got ${captured.result}`);
+
+  resetRuntime(1347);
+  addTransferRoom("W41N7", { terminalStore: { energy: 10000, power: 5000 } });
+  addTransferRoom("W42N9", { withTerminal: false });
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked destination_terminal_missing") !== -1, `visible owned destination without terminal should block, got ${captured.result}`);
+
+  resetRuntime(1348);
+  addTransferRoom("W41N7", { terminalStore: { energy: 10000, power: 5000 } });
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "check");
+  });
+  assert(captured.result.indexOf("destFree not_visible") !== -1, `invisible destination should be allowed for check, got ${captured.result}`);
+
+  resetRuntime(1349);
+  addTransferRoom("W41N7", { terminalStore: { energy: 10000, power: 5000 } });
+  addTransferRoom("W42N9", {});
+  Memory.rooms.W41N7 = { state: { defense: { hasThreats: true } } };
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked source_room_threat") !== -1, `source threat should block, got ${captured.result}`);
+
+  resetRuntime(1350);
+  addTransferRoom("W41N7", { terminalStore: { energy: 10000, power: 5000 } });
+  addTransferRoom("W42N9", {});
+  Game.cpu.bucket = 500;
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm");
+  });
+  assert(captured.result.indexOf("blocked critical_cpu_pressure") !== -1, `critical CPU should block, got ${captured.result}`);
+
+  const moveSource = ops.move.toString();
+  assert(moveSource.indexOf("opsLogisticsManager.createMoveRequest") !== -1, "ops.move should remain delegated to opsLogisticsManager.createMoveRequest");
+  assert(moveSource.indexOf("transferManager") === -1, "ops.move should not be rewritten to use transferManager");
 }
 
 function runOpsLogisticsHarnessCoverageScenario() {
@@ -13757,6 +13956,7 @@ function main() {
     ["lab_switch_after_target_met", runLabSwitchAfterTargetMetScenario],
     ["lab_targets_met", runLabTargetsMetScenario],
     ["lab_tight_replan", runLabTightReplanScenario],
+    ["ops_transfer", runOpsTransferScenario],
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
     ["terminal_balance_manager", runTerminalBalanceManagerScenario],
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],

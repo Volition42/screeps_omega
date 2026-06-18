@@ -6,6 +6,7 @@ const attackManager = require("attack_manager");
 const invasionLog = require("invasion_log");
 const opsLogisticsManager = require("ops_logistics_manager");
 const terminalBalanceManager = require("terminal_balance_manager");
+const transferManager = require("transfer_manager");
 const powerManager = require("power_manager");
 const pclManager = require("pcl_manager");
 
@@ -760,6 +761,18 @@ function getConsoleCommandHelp() {
       example: 'ops.move("H", 50000, "W42N9", "terminal", "storage")',
     },
     {
+      command: "ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)",
+      description:
+        "Check or confirm an explicit room-to-room terminal transfer.",
+      example: 'ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "check")',
+    },
+    {
+      command: "ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode)",
+      description:
+        "Confirm only after reviewing the check output.",
+      example: 'ops.transfer(RESOURCE_POWER, 1000, "W41N7", "terminal", "W42N9", "terminal", "confirm")',
+    },
+    {
       command: "ops.terminalStatus([roomName])",
       description:
         "Show terminal capacity, energy, resources, and congestion status.",
@@ -977,6 +990,9 @@ module.exports = {
       },
       move: function (resource, amount, roomName, from, to) {
         return module.exports.move(resource, amount, roomName, from, to);
+      },
+      transfer: function (resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode) {
+        return module.exports.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode);
       },
       terminalStatus: function (roomName) {
         return module.exports.terminalStatus(roomName);
@@ -1541,6 +1557,20 @@ module.exports = {
     );
     printLine(result.message);
     return result;
+  },
+
+  transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, mode) {
+    return printLine(
+      transferManager.transfer(
+        resource,
+        amount,
+        fromRoom,
+        fromLocation,
+        toRoom,
+        toLocation,
+        mode,
+      ),
+    );
   },
 
   terminalStatus(roomName) {
