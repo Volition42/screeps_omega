@@ -6317,7 +6317,8 @@ function runCommandScenario() {
     helpLines.some(function (line) { return line === "ops.terminalStatus([roomName])"; }) &&
       helpLines.some(function (line) { return line === "ops.clearTerminal(roomName, [resource], [amount])"; }) &&
       helpLines.some(function (line) { return line === "ops.fillTerminal(roomName, resource, amount)"; }) &&
-      helpLines.some(function (line) { return line === "ops.requests([roomName])"; }),
+      helpLines.some(function (line) { return line === "ops.requests([roomName], [mode])"; }) &&
+      helpLines.some(function (line) { return line === 'ops.cancelRequests(roomName, "blocked", [filters])'; }),
     `expected Layer 2 terminal hygiene help, got ${helpLines.join(" / ")}`,
   );
   assert(
@@ -9135,6 +9136,11 @@ function assertOpsLogisticsRequestShape(request, expected) {
   assert(request.to === expected.to, `expected to ${expected.to}, got ${request.to}`);
 }
 
+function assertCleanOpsString(value, label) {
+  assert(typeof value === "string", `${label} should return a printable string`);
+  assert(value.indexOf("[object Object]") === -1, `${label} should not contain raw objects`);
+}
+
 function captureConsoleLines(fn) {
   const originalLog = console.log;
   const lines = [];
@@ -10112,6 +10118,222 @@ function runOpsLogisticsHarnessCoverageScenario() {
   assert(Memory.ops.logistics.requests.blocked_empty.reason === "source_empty", "empty source should record source_empty reason");
   requestReport = ops.requests(room.name);
   assert(requestReport.indexOf("blocked_empty") !== -1, "ops.requests should show blocked requests as active");
+  assertCleanOpsString(requestReport, "ops.requests active");
+  requestReport = ops.requests(room.name, "blocked");
+  assertCleanOpsString(requestReport, "ops.requests blocked");
+  assert(requestReport.indexOf("blocked_empty") !== -1, "ops.requests blocked should include blocked requests");
+
+  room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_CANCEL_BLOCKED", {
+    tick: 5000,
+    storageStore: { energy: 1000, power: 1000, H: 1000 },
+    terminalStore: { energy: 1000, power: 1000, H: 1000 },
+  });
+  const claimedHauler = createCreep("opsBlockedClaimed", "hauler", 25, 27, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  Memory.ops = {
+    logistics: {
+      requests: {
+        cancel_power_old: {
+          id: "cancel_power_old",
+          type: "move",
+          status: "blocked",
+          roomName: room.name,
+          resourceType: RESOURCE_POWER,
+          amount: 100,
+          remaining: 100,
+          from: "terminal",
+          to: "powerSpawn",
+          sourceId: "terminal_id",
+          targetId: "power_spawn_id",
+          priority: 50,
+          reason: "source_empty",
+          createdAt: Game.time - 1500,
+          updatedAt: Game.time - 1200,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+        cancel_energy_open: {
+          id: "cancel_energy_open",
+          type: "move",
+          status: "open",
+          roomName: room.name,
+          resourceType: RESOURCE_ENERGY,
+          amount: 100,
+          remaining: 100,
+          from: "storage",
+          to: "powerSpawn",
+          sourceId: "storage_id",
+          targetId: "power_spawn_id",
+          priority: 50,
+          createdAt: Game.time - 1500,
+          updatedAt: Game.time - 1200,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+        cancel_power_claimed: {
+          id: "cancel_power_claimed",
+          type: "move",
+          status: "blocked",
+          roomName: room.name,
+          resourceType: RESOURCE_POWER,
+          amount: 100,
+          remaining: 100,
+          from: "terminal",
+          to: "powerSpawn",
+          sourceId: "terminal_id",
+          targetId: "power_spawn_id",
+          priority: 50,
+          reason: "target_full",
+          createdAt: Game.time - 1500,
+          updatedAt: Game.time - 1200,
+          expiresAt: Game.time + 1000,
+          claims: {
+            opsBlockedClaimed: {
+              amount: 50,
+              until: Game.time + 100,
+            },
+          },
+        },
+        cancel_done: {
+          id: "cancel_done",
+          type: "move",
+          status: "done",
+          roomName: room.name,
+          resourceType: RESOURCE_POWER,
+          amount: 100,
+          remaining: 0,
+          from: "terminal",
+          to: "powerSpawn",
+          sourceId: "terminal_id",
+          targetId: "power_spawn_id",
+          priority: 50,
+          createdAt: Game.time - 1500,
+          updatedAt: Game.time - 1200,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+        cancel_canceled: {
+          id: "cancel_canceled",
+          type: "move",
+          status: "canceled",
+          roomName: room.name,
+          resourceType: RESOURCE_POWER,
+          amount: 100,
+          remaining: 100,
+          from: "terminal",
+          to: "powerSpawn",
+          sourceId: "terminal_id",
+          targetId: "power_spawn_id",
+          priority: 50,
+          createdAt: Game.time - 1500,
+          updatedAt: Game.time - 1200,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+        cancel_expired: {
+          id: "cancel_expired",
+          type: "move",
+          status: "expired",
+          roomName: room.name,
+          resourceType: RESOURCE_POWER,
+          amount: 100,
+          remaining: 100,
+          from: "terminal",
+          to: "powerSpawn",
+          sourceId: "terminal_id",
+          targetId: "power_spawn_id",
+          priority: 50,
+          createdAt: Game.time - 1500,
+          updatedAt: Game.time - 1200,
+          expiresAt: Game.time - 10,
+          claims: {},
+        },
+        cancel_power_young: {
+          id: "cancel_power_young",
+          type: "move",
+          status: "blocked",
+          roomName: room.name,
+          resourceType: RESOURCE_POWER,
+          amount: 100,
+          remaining: 100,
+          from: "terminal",
+          to: "powerSpawn",
+          sourceId: "terminal_id",
+          targetId: "power_spawn_id",
+          priority: 50,
+          reason: "source_empty",
+          createdAt: Game.time - 500,
+          updatedAt: Game.time - 200,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+        cancel_h_old: {
+          id: "cancel_h_old",
+          type: "move",
+          status: "blocked",
+          roomName: room.name,
+          resourceType: "H",
+          amount: 100,
+          remaining: 100,
+          from: "terminal",
+          to: "storage",
+          sourceId: "terminal_id",
+          targetId: "storage_id",
+          priority: 50,
+          reason: "target_full",
+          createdAt: Game.time - 1500,
+          updatedAt: Game.time - 1200,
+          expiresAt: Game.time + 1000,
+          claims: {},
+        },
+      },
+    },
+  };
+  assert(Game.creeps[claimedHauler.name], "claimed hauler should be visible for claim safety");
+  assert(typeof global.ops.cancelRequests === "function", "ops.cancelRequests should be registered");
+  let missingCancel = global.ops.cancelRequests();
+  assertCleanOpsString(missingCancel, "ops.cancelRequests missing room");
+  assert(missingCancel.indexOf("roomName required") !== -1, `missing room should be rejected, got ${missingCancel}`);
+
+  requestReport = ops.requests(room.name, "blocked");
+  assertCleanOpsString(requestReport, "ops.requests blocked seeded");
+  assert(requestReport.indexOf("cancel_power_old") !== -1, "blocked report should include old blocked request");
+  assert(requestReport.indexOf("cancel_energy_open") === -1, "blocked report should filter out open requests");
+  assert(requestReport.indexOf("age 1,500") !== -1, `blocked report should include age, got ${requestReport}`);
+  assert(requestReport.indexOf("reason source_empty") !== -1, "blocked report should include blocked reason");
+
+  let cancelReport = global.ops.cancelRequests(room.name, "blocked", {
+    resource: RESOURCE_POWER,
+    from: "terminal",
+    to: "powerSpawn",
+    olderThan: 1000,
+  });
+  assertCleanOpsString(cancelReport, "ops.cancelRequests filtered");
+  assert(cancelReport.indexOf("matched 5") !== -1, `filtered cancel should match five stale power requests, got ${cancelReport}`);
+  assert(cancelReport.indexOf("canceled 1") !== -1, `filtered cancel should cancel one safe request, got ${cancelReport}`);
+  assert(cancelReport.indexOf("skipped 4") !== -1, `filtered cancel should skip unsafe statuses/claims, got ${cancelReport}`);
+  assert(cancelReport.indexOf("cancel_power_old") !== -1, "cancel report should include canceled id");
+  assert(Memory.ops.logistics.requests.cancel_power_old.status === "canceled", "stale blocked unclaimed request should be canceled");
+  assert(Memory.ops.logistics.requests.cancel_energy_open.status === "open", "open request must not be canceled");
+  assert(Memory.ops.logistics.requests.cancel_power_claimed.status === "blocked", "claimed blocked request must not be canceled");
+  assert(Memory.ops.logistics.requests.cancel_done.status === "done", "done request must not be canceled");
+  assert(Memory.ops.logistics.requests.cancel_canceled.status === "canceled", "already canceled request should remain canceled");
+  assert(Memory.ops.logistics.requests.cancel_expired.status === "expired", "expired request must not be canceled");
+  assert(Memory.ops.logistics.requests.cancel_power_young.status === "blocked", "younger blocked request should not match olderThan filter");
+  assert(Memory.ops.logistics.requests.cancel_h_old.status === "blocked", "resource/from/to filters should leave non-matching blocked request");
+
+  cancelReport = global.ops.cancelRequests(room.name, "blocked", { resource: "H", from: "terminal", to: "storage", olderThan: 1000 });
+  assertCleanOpsString(cancelReport, "ops.cancelRequests resource from to");
+  assert(cancelReport.indexOf("canceled 1") !== -1, `resource/from/to filters should cancel matching H request, got ${cancelReport}`);
+  assert(Memory.ops.logistics.requests.cancel_h_old.status === "canceled", "resource/from/to filtered blocked request should be canceled");
+
+  cancelReport = global.ops.cancelRequests(room.name, "blocked", { resource: RESOURCE_POWER, from: "terminal", to: "powerSpawn", olderThan: 100 });
+  assertCleanOpsString(cancelReport, "ops.cancelRequests olderThan");
+  assert(cancelReport.indexOf("cancel_power_young") !== -1, "olderThan filter should allow younger request when threshold is lower");
+  assert(Memory.ops.logistics.requests.cancel_power_young.status === "canceled", "olderThan filter should cancel matching stale-enough blocked request");
 
   room = buildOpsLogisticsRoom("VAL_OPS_LOGISTICS_FULL_TARGET", {
     tick: 1307,

@@ -807,10 +807,16 @@ function getConsoleCommandHelp() {
       example: 'ops.fillTerminal("W42N9", "energy", 10000)',
     },
     {
-      command: "ops.requests([roomName])",
+      command: "ops.requests([roomName], [mode])",
       description:
-        "Show active ops logistics requests. Pass all or history to include completed, canceled, and expired requests.",
-      example: 'ops.requests("W42N9", "all")',
+        "Show ops logistics requests. Pass blocked for blocked only, or all/history for completed, canceled, and expired requests.",
+      example: 'ops.requests("W42N9", "blocked")',
+    },
+    {
+      command: 'ops.cancelRequests(roomName, "blocked", [filters])',
+      description:
+        "Safely cancel stale blocked unclaimed ops logistics requests with optional resource/from/to/olderThan filters.",
+      example: 'ops.cancelRequests("W42N9", "blocked", { resource: RESOURCE_POWER, from: "terminal", to: "powerSpawn", olderThan: 1000 })',
     },
     {
       command: "ops.cancel(requestId)",
@@ -942,6 +948,41 @@ function parseRoomCommandArgs(arg1, arg2) {
   };
 }
 
+function formatRequestFilters(filters) {
+  const parts = [];
+
+  if (!filters) return "none";
+  if (filters.resourceType) parts.push("resource " + filters.resourceType);
+  if (filters.from) parts.push("from " + filters.from);
+  if (filters.to) parts.push("to " + filters.to);
+  if (typeof filters.olderThan === "number") {
+    parts.push(
+      "olderThan " +
+        fmt(filters.olderThan) +
+        (filters.defaultOlderThan ? " default" : ""),
+    );
+  }
+
+  return parts.length > 0 ? parts.join(", ") : "none";
+}
+
+function formatSkippedReasons(skipped) {
+  if (!skipped || skipped.length === 0) return "none";
+
+  const counts = {};
+  for (let i = 0; i < skipped.length; i++) {
+    const reason = skipped[i].reason || "unknown";
+    counts[reason] = (counts[reason] || 0) + 1;
+  }
+
+  return Object.keys(counts)
+    .sort()
+    .map(function (reason) {
+      return reason + " " + counts[reason];
+    })
+    .join(", ");
+}
+
 module.exports = {
   registerGlobals() {
     processTickRateProbe();
@@ -1030,6 +1071,9 @@ module.exports = {
       },
       requests: function (roomName, mode) {
         return module.exports.requests(roomName, mode);
+      },
+      cancelRequests: function (roomName, status, filters) {
+        return module.exports.cancelRequests(roomName, status, filters);
       },
       cancel: function (requestId) {
         return module.exports.cancel(requestId);
@@ -1768,8 +1812,11 @@ module.exports = {
       firstArg === "history" ||
       secondArg === "all" ||
       secondArg === "history";
+    const blockedOnly = firstArg === "blocked" || secondArg === "blocked";
     const resolvedRoomName =
-      firstArg === "all" || firstArg === "history" ? null : roomName;
+      firstArg === "all" || firstArg === "history" || firstArg === "blocked"
+        ? null
+        : roomName;
     const allRows = opsLogisticsManager.listRequests(resolvedRoomName);
     const counts = {
       open: 0,
@@ -1786,16 +1833,20 @@ module.exports = {
       }
     }
 
-    const rows = includeAll
-      ? allRows
-      : allRows.filter(function (row) {
+    const rows = blockedOnly
+      ? allRows.filter(function (row) {
+          return row.status === "blocked";
+        })
+      : includeAll
+        ? allRows
+        : allRows.filter(function (row) {
           return row.status === "open" || row.status === "blocked";
         });
     const lines = [
       (resolvedRoomName
         ? `[OPS] Logistics requests for ${resolvedRoomName}`
         : "[OPS] Logistics requests") +
-        (includeAll ? " (all)" : " (active)") +
+        (blockedOnly ? " (blocked)" : includeAll ? " (all)" : " (active)") +
         ` | open ${counts.open}` +
         ` | blocked ${counts.blocked}` +
         ` | done ${counts.done}` +
@@ -1816,9 +1867,42 @@ module.exports = {
           ` | ${row.resourceType}` +
           ` | ${row.from} -> ${row.to}` +
           ` | remaining ${fmt(row.remaining)}/${fmt(row.amount)}` +
-          ` | claimed ${fmt(row.claimed)}`,
+          ` | claimed ${fmt(row.claimed)}` +
+          ` | age ${fmt(row.age)}` +
+          ` | reason ${row.reason || "none"}` +
+          ` | created ${typeof row.createdAt === "number" ? row.createdAt : "--"}` +
+          ` | updated ${typeof row.updatedAt === "number" ? row.updatedAt : "--"}`,
       );
     }
+
+    return printBlock(lines);
+  },
+
+  cancelRequests(roomName, status, filters) {
+    const normalizedStatus =
+      typeof status === "string" ? status.trim().toLowerCase() : status;
+
+    if (!roomName) {
+      return printLine("[OPS] cancelRequests: roomName required.");
+    }
+
+    if (normalizedStatus !== "blocked") {
+      return printLine('[OPS] cancelRequests: only "blocked" cleanup is supported.');
+    }
+
+    const result = opsLogisticsManager.cancelBlockedRequests(roomName, filters);
+    const canceledIds = result.canceled || [];
+    const visibleCanceled = canceledIds.slice(0, 10);
+    const lines = [
+      `[OPS] cancelRequests ${roomName} blocked`,
+      `  filters ${formatRequestFilters(result.filters)}`,
+      `  matched ${fmt(result.matched)} | canceled ${fmt(canceledIds.length)} | skipped ${fmt(result.skipped.length)}`,
+      `  skipped reasons ${formatSkippedReasons(result.skipped)}`,
+      `  canceled ids ${visibleCanceled.length > 0 ? visibleCanceled.join(", ") : "none"}` +
+        (canceledIds.length > visibleCanceled.length
+          ? `, ... +${fmt(canceledIds.length - visibleCanceled.length)} more`
+          : ""),
+    ];
 
     return printBlock(lines);
   },

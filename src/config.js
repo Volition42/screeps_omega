@@ -363,6 +363,10 @@ module.exports = {
     PRIORITY: 62,
   },
 
+  OPS_LOGISTICS: {
+    BLOCKED_CANCEL_DEFAULT_AGE: 1000,
+  },
+
   /*
   Developer Notes:
   Advanced Structure Operations

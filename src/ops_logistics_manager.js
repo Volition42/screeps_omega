@@ -1,3 +1,5 @@
+const config = require("config");
+
 const VERSION = "2.1.0-ops-logistics";
 
 const REQUEST_TTL = 50000;
@@ -15,6 +17,19 @@ const BALANCE = {
   mineralMax: 100000,
   priority: 60,
 };
+
+function getDefaultBlockedCancelAge() {
+  if (
+    config.OPS_LOGISTICS &&
+    typeof config.OPS_LOGISTICS.BLOCKED_CANCEL_DEFAULT_AGE === "number" &&
+    isFinite(config.OPS_LOGISTICS.BLOCKED_CANCEL_DEFAULT_AGE) &&
+    config.OPS_LOGISTICS.BLOCKED_CANCEL_DEFAULT_AGE >= 0
+  ) {
+    return Math.floor(config.OPS_LOGISTICS.BLOCKED_CANCEL_DEFAULT_AGE);
+  }
+
+  return 1000;
+}
 
 function getMemoryRoot() {
   if (!Memory.ops) Memory.ops = {};
@@ -178,6 +193,11 @@ function getClaimedAmount(request) {
   }
 
   return claimed;
+}
+
+function getRequestAge(request) {
+  if (!request || typeof request.createdAt !== "number") return 0;
+  return Math.max(0, Game.time - request.createdAt);
 }
 
 function expireAndNormalize(request) {
@@ -433,6 +453,111 @@ function cancelRequest(requestId) {
   };
 }
 
+function normalizeBlockedCancelFilters(filters) {
+  const normalized = {};
+
+  if (filters && typeof filters === "object") {
+    if (typeof filters.resource === "string") normalized.resourceType = filters.resource;
+    if (typeof filters.resourceType === "string") normalized.resourceType = filters.resourceType;
+    if (typeof filters.from === "string") normalized.from = filters.from;
+    if (typeof filters.to === "string") normalized.to = filters.to;
+
+    if (typeof filters.olderThan === "number" || typeof filters.olderThan === "string") {
+      const olderThan = Number(filters.olderThan);
+      if (isFinite(olderThan) && olderThan >= 0) {
+        normalized.olderThan = Math.floor(olderThan);
+      }
+    }
+  }
+
+  if (typeof normalized.olderThan !== "number") {
+    normalized.olderThan = getDefaultBlockedCancelAge();
+    normalized.defaultOlderThan = true;
+  }
+
+  return normalized;
+}
+
+function requestMatchesFilters(request, filters) {
+  if (filters.resourceType && request.resourceType !== filters.resourceType) return false;
+  if (filters.from && request.from !== filters.from) return false;
+  if (filters.to && request.to !== filters.to) return false;
+  if (getRequestAge(request) < filters.olderThan) return false;
+  return true;
+}
+
+function addSkip(skipped, request, reason) {
+  skipped.push({
+    id: request && request.id ? request.id : "unknown",
+    reason: reason,
+  });
+}
+
+function cancelBlockedRequests(roomName, filters) {
+  if (!roomName || typeof roomName !== "string") {
+    return {
+      ok: false,
+      roomName: roomName || null,
+      status: "blocked",
+      filters: normalizeBlockedCancelFilters(filters),
+      matched: 0,
+      canceled: [],
+      skipped: [],
+      message: "[OPS] cancelRequests: roomName required.",
+    };
+  }
+
+  const root = getMemoryRoot();
+  const normalizedFilters = normalizeBlockedCancelFilters(filters);
+  const ids = Object.keys(root).sort();
+  const canceled = [];
+  const skipped = [];
+
+  for (let i = 0; i < ids.length; i++) {
+    const request = root[ids[i]];
+    if (!request) continue;
+    expireAndNormalize(request);
+    if (request.roomName !== roomName) continue;
+    if (!requestMatchesFilters(request, normalizedFilters)) continue;
+
+    if (request.status !== "blocked") {
+      addSkip(skipped, request, "status_" + (request.status || "unknown"));
+      continue;
+    }
+
+    const claimed = getClaimedAmount(request);
+    if (claimed > 0) {
+      addSkip(skipped, request, "claimed_" + claimed);
+      continue;
+    }
+
+    request.status = "canceled";
+    request.updatedAt = Game.time;
+    request.canceledAt = Game.time;
+    request.cancelReason = "ops_cancel_blocked";
+    canceled.push(request.id);
+  }
+
+  return {
+    ok: true,
+    roomName: roomName,
+    status: "blocked",
+    filters: normalizedFilters,
+    matched: canceled.length + skipped.length,
+    canceled: canceled,
+    skipped: skipped,
+    message:
+      "[OPS] cancelRequests " +
+      roomName +
+      " blocked: matched " +
+      (canceled.length + skipped.length) +
+      " | canceled " +
+      canceled.length +
+      " | skipped " +
+      skipped.length,
+  };
+}
+
 function listRequests(roomName) {
   const root = getMemoryRoot();
   const ids = Object.keys(root).sort();
@@ -456,8 +581,11 @@ function listRequests(roomName) {
       to: request.to,
       priority: request.priority,
       claimed: getClaimedAmount(request),
+      reason: request.reason || request.blockedReason || null,
       createdAt: request.createdAt,
       updatedAt: request.updatedAt,
+      expiresAt: request.expiresAt,
+      age: getRequestAge(request),
     });
   }
 
@@ -805,8 +933,10 @@ function balanceTerminals() {
 module.exports = {
   VERSION: VERSION,
   BALANCE: BALANCE,
+  getDefaultBlockedCancelAge: getDefaultBlockedCancelAge,
   createMoveRequest: createMoveRequest,
   cancelRequest: cancelRequest,
+  cancelBlockedRequests: cancelBlockedRequests,
   listRequests: listRequests,
   getHaulerTask: getHaulerTask,
   completeHaulerTask: completeHaulerTask,
