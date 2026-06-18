@@ -10796,6 +10796,228 @@ function runLogisticsStarvationHistoryScenario() {
   );
 }
 
+function runEmpireLogisticsPressureRollupScenario() {
+  resetRuntime(2100);
+  Memory.ops = { logistics: { requests: {}, history: {} } };
+
+  const persistentRoom = addOwnedMarketIntelRoom("VAL_EMPIRE_LOG_A", {
+    storageStore: { energy: 200000, H: 1000, O: 1000, Z: 1000, K: 1000, L: 1000 },
+    terminalStore: { energy: 10000 },
+  });
+  const recurringRoom = addOwnedMarketIntelRoom("VAL_EMPIRE_LOG_B", {
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
+  const blockedRoom = addOwnedMarketIntelRoom("VAL_EMPIRE_LOG_C", {
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
+  const clearRoom = addOwnedMarketIntelRoom("VAL_EMPIRE_LOG_D", {
+    storageStore: { energy: 200000 },
+    terminalStore: { energy: 10000 },
+  });
+
+  addOpsLogisticsHaulers(recurringRoom, 1);
+  addOpsLogisticsHaulers(blockedRoom, 1);
+  addOpsLogisticsHaulers(clearRoom, 1);
+
+  const resources = [RESOURCE_ENERGY, "H", "O", "Z", "K", "L"];
+  for (let i = 0; i < resources.length; i++) {
+    seedOpsLogisticsRequest(persistentRoom, {
+      resourceType: resources[i],
+      amount: 500,
+      remaining: 500,
+      createdAt: Game.time - 20 - i,
+      updatedAt: Game.time - 5,
+    });
+  }
+  Memory.ops.logistics.history[persistentRoom.name] = [
+    {
+      t: Game.time - 2,
+      roomName: persistentRoom.name,
+      state: "hauler_short",
+      open: 3,
+      blocked: 0,
+      unclaimed: 1500,
+      claimed: 0,
+      remaining: 1500,
+      oldestOpenAge: 20,
+      oldestUnclaimedAge: 20,
+      haulers: 0,
+      desiredHaulers: 1,
+    },
+    {
+      t: Game.time - 1,
+      roomName: persistentRoom.name,
+      state: "hauler_short",
+      open: 4,
+      blocked: 0,
+      unclaimed: 2000,
+      claimed: 0,
+      remaining: 2000,
+      oldestOpenAge: 21,
+      oldestUnclaimedAge: 21,
+      haulers: 0,
+      desiredHaulers: 1,
+    },
+  ];
+
+  const recurringHauler = Game.creeps[`${recurringRoom.name}_logistics_hauler_0`];
+  seedOpsLogisticsRequest(recurringRoom, {
+    amount: 600,
+    remaining: 600,
+    createdAt: Game.time - 120,
+    updatedAt: Game.time - 5,
+    claims: {
+      [recurringHauler.name]: {
+        amount: 600,
+        until: Game.time + 10,
+      },
+    },
+  });
+  Memory.ops.logistics.history[recurringRoom.name] = [
+    {
+      t: Game.time - 3,
+      roomName: recurringRoom.name,
+      state: "aging",
+      open: 1,
+      blocked: 0,
+      unclaimed: 0,
+      claimed: 600,
+      remaining: 600,
+      oldestOpenAge: 120,
+      oldestUnclaimedAge: 0,
+      haulers: 1,
+      desiredHaulers: 1,
+    },
+    {
+      t: Game.time - 2,
+      roomName: recurringRoom.name,
+      state: "clear",
+      open: 0,
+      blocked: 0,
+      unclaimed: 0,
+      claimed: 0,
+      remaining: 0,
+      oldestOpenAge: 0,
+      oldestUnclaimedAge: 0,
+      haulers: 1,
+      desiredHaulers: 1,
+    },
+  ];
+
+  const blockedRequest = seedOpsLogisticsRequest(blockedRoom, {
+    amount: 700,
+    remaining: 700,
+    status: "blocked",
+    reason: "target_full",
+    createdAt: Game.time - 20,
+    updatedAt: Game.time - 5,
+  });
+  Memory.ops.logistics.history[clearRoom.name] = [
+    {
+      t: Game.time - 1,
+      roomName: clearRoom.name,
+      state: "unclaimed",
+      open: 1,
+      blocked: 0,
+      unclaimed: 700,
+      claimed: 0,
+      remaining: 700,
+      oldestOpenAge: 80,
+      oldestUnclaimedAge: 80,
+      haulers: 1,
+      desiredHaulers: 1,
+    },
+  ];
+
+  ops.registerGlobals();
+  const beforeRequestCount = opsLogisticsManager.listRequests().length;
+  const beforeSpawnEvents = currentRuntime.spawnEvents.length;
+  const beforeTerminalSends = currentRuntime.terminalSends.length;
+  const deals = installFakeMarket([]);
+
+  const captured = captureConsoleLines(function () {
+    return global.ops.empire("logistics");
+  });
+  const result = captured.result;
+  const lines = captured.lines;
+
+  assert(result && result.section === "logistics", "ops.empire(logistics) should return logistics section result");
+  assert(result.rollup.roomsEvaluated === 4, `expected four rooms evaluated, got ${result.rollup.roomsEvaluated}`);
+  assert(result.rollup.pressuredRooms === 3, `expected three currently pressured rooms, got ${result.rollup.pressuredRooms}`);
+  assert(result.rollup.recurringRooms === 1, `expected one recurring room, got ${result.rollup.recurringRooms}`);
+  assert(result.rollup.persistentRooms === 1, `expected one persistent room, got ${result.rollup.persistentRooms}`);
+  assert(result.rollup.blockedSampleRooms === 1, `expected one blocked sample room, got ${result.rollup.blockedSampleRooms}`);
+  assert(result.rollup.unclaimedAgingSampleRooms === 1, `expected one unclaimed aging room, got ${result.rollup.unclaimedAgingSampleRooms}`);
+  assert(result.rollup.haulerShortSampleRooms === 1, `expected one hauler short room, got ${result.rollup.haulerShortSampleRooms}`);
+  assert(result.rollup.topRows[0].roomName === persistentRoom.name, `expected persistent room first, got ${result.rollup.topRows[0].roomName}`);
+  assert(result.rollup.topRows[1].roomName === recurringRoom.name, `expected recurring room second, got ${result.rollup.topRows[1].roomName}`);
+  assert(result.rollup.topRows[2].roomName === blockedRoom.name, `expected blocked room third, got ${result.rollup.topRows[2].roomName}`);
+
+  assert(lines.some(function (line) { return line === "Empire Logistics Pressure"; }), `expected rollup title, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Rooms Evaluated: 4"; }), `expected room count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Pressured Rooms: 3"; }), `expected pressure count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Recurring: 1"; }), `expected recurring count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Persistent: 1"; }), `expected persistent count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Blocked Samples: 1"; }), `expected blocked sample count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Unclaimed Aging Samples: 1"; }), `expected unclaimed aging sample count, got ${lines.join(" / ")}`);
+  assert(lines.some(function (line) { return line === "Hauler Short Samples: 1"; }), `expected hauler short sample count, got ${lines.join(" / ")}`);
+  assert(
+    lines.some(function (line) {
+      return line.indexOf(`${persistentRoom.name}: persistent, state hauler_short`) !== -1 &&
+        line.indexOf("open 6") !== -1 &&
+        line.indexOf("haulers 0 / 1") !== -1;
+    }),
+    `expected top persistent room summary, got ${lines.join(" / ")}`,
+  );
+  assert(
+    lines.some(function (line) {
+      return line.indexOf(`${recurringRoom.name}: recurring, state aging`) !== -1 &&
+        line.indexOf("open 1") !== -1 &&
+        line.indexOf("haulers 1 / 1") !== -1;
+    }),
+    `expected recurring room summary, got ${lines.join(" / ")}`,
+  );
+  assert(
+    lines.some(function (line) {
+      return line.indexOf(`ops.room("${persistentRoom.name}", "logistics")`) !== -1;
+    }),
+    `expected inspect guidance, got ${lines.join(" / ")}`,
+  );
+  assert(
+    lines.every(function (line) {
+      return line.indexOf("[object Object]") === -1 && line.indexOf("{") === -1;
+    }),
+    `expected printable logistics rollup, got ${lines.join(" / ")}`,
+  );
+
+  const roomCaptured = captureConsoleLines(function () {
+    return global.ops.room(persistentRoom.name, "logistics");
+  });
+  assert(
+    roomCaptured.result === `[OPS][${persistentRoom.name}][LOGISTICS] report generated`,
+    `room-level logistics reporting should still return printable status, got ${roomCaptured.result}`,
+  );
+  assert(
+    roomCaptured.lines.some(function (line) { return line.indexOf("Open Requests 6") !== -1; }),
+    `room-level logistics report should still show open requests, got ${roomCaptured.lines.join(" / ")}`,
+  );
+
+  assert(opsLogisticsManager.listRequests().length === beforeRequestCount, "empire logistics rollup should not create logistics requests");
+  assert(blockedRequest.status === "blocked", "empire logistics rollup should not cancel blocked requests");
+  assert(currentRuntime.spawnEvents.length === beforeSpawnEvents, "empire logistics rollup should not spawn creeps");
+  assert(currentRuntime.terminalSends.length === beforeTerminalSends, "empire logistics rollup should not send terminal resources");
+  assert(deals.length === 0, "empire logistics rollup should not execute market deals");
+  assert(
+    Object.keys(Game.creeps).every(function (creepName) {
+      const memory = Game.creeps[creepName].memory || {};
+      return !memory.opsLogisticsTask && !memory.advancedTask && !memory.marketTask;
+    }),
+    "empire logistics rollup should not assign hauler tasks or change priorities",
+  );
+}
+
 function runTerminalBalanceManagerScenario() {
   let room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE", {
     tick: 1320,
@@ -14680,6 +14902,7 @@ function main() {
     ["ops_logistics_harness_coverage", runOpsLogisticsHarnessCoverageScenario],
     ["advanced_haul_backlog_reporting", runAdvancedHaulBacklogReportingScenario],
     ["logistics_starvation_history", runLogisticsStarvationHistoryScenario],
+    ["empire_logistics_pressure_rollup", runEmpireLogisticsPressureRollupScenario],
     ["terminal_balance_manager", runTerminalBalanceManagerScenario],
     ["terminal_hygiene_commands", runTerminalHygieneCommandsScenario],
     ["operator_report_cleanup", runOperatorReportCleanupScenario],

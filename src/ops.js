@@ -657,9 +657,9 @@ function getConsoleCommandHelp() {
       example: "ops.rooms()",
     },
     {
-      command: "ops.empire()",
-      description: "Show empire summary and owned-room overview.",
-      example: "ops.empire()",
+      command: 'ops.empire(["logistics"])',
+      description: "Show empire summary, or logistics pressure rollup across owned rooms.",
+      example: 'ops.empire("logistics")',
     },
     {
       command: "ops.log([roomName], [limit])",
@@ -1009,8 +1009,8 @@ module.exports = {
       rooms: function () {
         return module.exports.rooms();
       },
-      empire: function () {
-        return module.exports.empire();
+      empire: function (section) {
+        return module.exports.empire(section);
       },
       log: function (arg1, arg2) {
         return module.exports.log(arg1, arg2);
@@ -1525,7 +1525,7 @@ module.exports = {
     return reports;
   },
 
-  empire() {
+  empire(section) {
     const ownedRooms = getOwnedRooms();
     if (ownedRooms.length === 0) {
       return printLine("[OPS] empire: no owned rooms available.");
@@ -1534,6 +1534,20 @@ module.exports = {
     const reports = empireManager.buildRoomReports(ownedRooms, null, {
       updateProgress: true,
     });
+
+    const normalizedSection =
+      typeof section === "string" ? section.trim().toLowerCase() : null;
+    if (normalizedSection === "logistics") {
+      const rollup = opsLogisticsManager.buildEmpirePressureRollup(reports);
+      const lines = opsLogisticsManager.formatEmpirePressureRollup(rollup);
+      printBlock(lines);
+      return {
+        section: "logistics",
+        lines: lines,
+        rollup: rollup,
+      };
+    }
+
     const report = empireManager.buildReport(reports);
 
     printBlock(report.lines);

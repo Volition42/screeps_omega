@@ -18,6 +18,13 @@ const STARVATION_SEVERITY = {
   hauler_short: 5,
 };
 
+const TREND_PRESSURE_RANK = {
+  clear: 0,
+  isolated: 1,
+  recurring: 2,
+  persistent: 3,
+};
+
 const ENDPOINTS = {
   storage: true,
   terminal: true,
@@ -759,6 +766,166 @@ function summarizeHistory(history) {
   };
 }
 
+function hasCurrentPressure(row) {
+  return !!row && row.state !== "clear";
+}
+
+function getTrendRank(trend) {
+  return TREND_PRESSURE_RANK[trend] || 0;
+}
+
+function comparePressureRows(a, b) {
+  const aTrend = getTrendRank(a.trend);
+  const bTrend = getTrendRank(b.trend);
+  if (aTrend !== bTrend) return bTrend - aTrend;
+
+  if (a.state === "hauler_short" || b.state === "hauler_short") {
+    if (a.state !== b.state) return a.state === "hauler_short" ? -1 : 1;
+  }
+
+  if (a.state === "blocked" || b.state === "blocked") {
+    if (a.state !== b.state) return a.state === "blocked" ? -1 : 1;
+  }
+
+  if (a.state === "unclaimed" || b.state === "unclaimed") {
+    if (a.state !== b.state) return a.state === "unclaimed" ? -1 : 1;
+  }
+
+  if (a.state === "aging" || b.state === "aging") {
+    if (a.state !== b.state) return a.state === "aging" ? -1 : 1;
+  }
+
+  if ((a.blockedRequests || 0) !== (b.blockedRequests || 0)) {
+    return (b.blockedRequests || 0) - (a.blockedRequests || 0);
+  }
+
+  if ((a.totalUnclaimed || 0) !== (b.totalUnclaimed || 0)) {
+    return (b.totalUnclaimed || 0) - (a.totalUnclaimed || 0);
+  }
+
+  if ((a.openRequests || 0) !== (b.openRequests || 0)) {
+    return (b.openRequests || 0) - (a.openRequests || 0);
+  }
+
+  return String(a.roomName).localeCompare(String(b.roomName));
+}
+
+function buildEmpirePressureRow(report) {
+  const logistics = report && report.logistics ? report.logistics : null;
+  const history = logistics && logistics.history ? logistics.history : {};
+  const haulers = logistics && logistics.haulers ? logistics.haulers : {};
+
+  return {
+    roomName: report && report.room ? report.room : logistics ? logistics.roomName : "unknown",
+    state: logistics ? logistics.state || "clear" : "clear",
+    trend: history.trend || "clear",
+    openRequests: logistics ? logistics.openRequests || 0 : 0,
+    blockedRequests: logistics ? logistics.blockedRequests || 0 : 0,
+    totalUnclaimed: logistics ? Math.round(logistics.totalUnclaimed || 0) : 0,
+    haulers: haulers.current || 0,
+    desiredHaulers: haulers.desired || 0,
+    worstState: history.worstState || "clear",
+    blockedSamples: history.blockedSamples || 0,
+    unclaimedAgingSamples: history.unclaimedAgingSamples || 0,
+    haulerShortSamples: history.haulerShortSamples || 0,
+  };
+}
+
+function buildEmpirePressureRollup(reports, options) {
+  const settings = options || {};
+  const topLimit = settings.topLimit || 5;
+  const rows = (reports || []).map(buildEmpirePressureRow);
+  const pressured = rows.filter(function (row) {
+    return (
+      hasCurrentPressure(row) ||
+      row.trend === "recurring" ||
+      row.trend === "persistent" ||
+      row.blockedSamples > 0 ||
+      row.unclaimedAgingSamples > 0 ||
+      row.haulerShortSamples > 0
+    );
+  });
+  const ranked = pressured.slice().sort(comparePressureRows);
+
+  return {
+    roomsEvaluated: rows.length,
+    pressuredRooms: rows.filter(hasCurrentPressure).length,
+    recurringRooms: rows.filter(function (row) {
+      return row.trend === "recurring";
+    }).length,
+    persistentRooms: rows.filter(function (row) {
+      return row.trend === "persistent";
+    }).length,
+    blockedSampleRooms: rows.filter(function (row) {
+      return row.blockedSamples > 0;
+    }).length,
+    unclaimedAgingSampleRooms: rows.filter(function (row) {
+      return row.unclaimedAgingSamples > 0;
+    }).length,
+    haulerShortSampleRooms: rows.filter(function (row) {
+      return row.haulerShortSamples > 0;
+    }).length,
+    worstRoom: ranked.length > 0 ? ranked[0] : null,
+    rows: rows,
+    rankedRows: ranked,
+    topRows: ranked.slice(0, topLimit),
+  };
+}
+
+function formatEmpirePressureRow(row) {
+  return (
+    row.roomName +
+    ": " +
+    row.trend +
+    ", state " +
+    row.state +
+    ", open " +
+    row.openRequests +
+    ", blocked " +
+    row.blockedRequests +
+    ", unclaimed " +
+    row.totalUnclaimed +
+    ", haulers " +
+    row.haulers +
+    " / " +
+    row.desiredHaulers +
+    ", worst " +
+    row.worstState
+  );
+}
+
+function formatEmpirePressureRollup(rollup) {
+  const report = rollup || buildEmpirePressureRollup([]);
+  const lines = [
+    "[OPS][EMPIRE][LOGISTICS]",
+    "Empire Logistics Pressure",
+    "Rooms Evaluated: " + report.roomsEvaluated,
+    "Pressured Rooms: " + report.pressuredRooms,
+    "Recurring: " + report.recurringRooms,
+    "Persistent: " + report.persistentRooms,
+    "Blocked Samples: " + report.blockedSampleRooms,
+    "Unclaimed Aging Samples: " + report.unclaimedAgingSampleRooms,
+    "Hauler Short Samples: " + report.haulerShortSampleRooms,
+    "Worst Room: " + (report.worstRoom ? formatEmpirePressureRow(report.worstRoom) : "none"),
+    "Top Pressure:",
+  ];
+
+  if (report.topRows.length === 0) {
+    lines.push("  none");
+  } else {
+    for (let i = 0; i < report.topRows.length; i++) {
+      lines.push("  " + formatEmpirePressureRow(report.topRows[i]));
+    }
+  }
+
+  const inspectRooms = report.topRows.map(function (row) {
+    return 'ops.room("' + row.roomName + '", "logistics")';
+  });
+  lines.push("Inspect: " + (inspectRooms.length > 0 ? inspectRooms.join("; ") : "none"));
+
+  return lines;
+}
+
 function recordHistorySnapshot(roomName, summary) {
   const root = getHistoryRoot();
   const history = Array.isArray(root[roomName]) ? root[roomName] : [];
@@ -1224,6 +1391,8 @@ module.exports = {
   cancelBlockedRequests: cancelBlockedRequests,
   listRequests: listRequests,
   getRoomDiagnostics: getRoomDiagnostics,
+  buildEmpirePressureRollup: buildEmpirePressureRollup,
+  formatEmpirePressureRollup: formatEmpirePressureRollup,
   getHistoryLimit: function () {
     return HISTORY_LIMIT;
   },
