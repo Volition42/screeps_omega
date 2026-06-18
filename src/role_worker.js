@@ -42,6 +42,26 @@ const ROOM_TRAVEL_OPTIONS = {
   range: 20,
 };
 
+const PRESSURE_CONSTRUCTION_PRIORITY = {
+  spawn: 1,
+  tower: 2,
+  storage: 3,
+  container: 4,
+};
+
+const CONSTRUCTION_PRIORITY = {
+  spawn: 1,
+  tower: 2,
+  storage: 3,
+  extension: 4,
+  container: 5,
+  link: 6,
+  terminal: 7,
+  road: 8,
+  rampart: 9,
+  constructedWall: 10,
+};
+
 module.exports = {
   run(creep, options) {
     var thinkInterval =
@@ -105,6 +125,13 @@ module.exports = {
     const workTarget = this.getWorkTarget(creep, thinkInterval);
 
     if (this.isRoomEnergyDeliveryTarget(workTarget)) {
+      if (creep.transfer(workTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        utils.moveTo(creep, workTarget, MOVE_OPTIONS);
+      }
+      return;
+    }
+
+    if (this.isReserveBankDeliveryTarget(workTarget)) {
       if (creep.transfer(workTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         utils.moveTo(creep, workTarget, MOVE_OPTIONS);
       }
@@ -240,6 +267,8 @@ module.exports = {
       return cached;
     }
 
+    const bankingReserve = reservePolicy.shouldBankStorageEnergy(creep.room, state);
+
     let target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
       filter: function (s) {
         return (
@@ -253,11 +282,21 @@ module.exports = {
       target = logisticsManager.getExtensionDeliveryTarget(creep.room, creep);
     }
 
-    if (!target) {
-      target = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+    if (!target && bankingReserve) {
+      target = this.getConstructionTarget(creep, state, {
+        pressureOnly: true,
+      });
     }
 
-    if (!target && reservePolicy.shouldBankStorageEnergy(creep.room, state)) {
+    if (!target && bankingReserve) {
+      target = utils.getStorageDeliveryTarget(creep.room);
+    }
+
+    if (!target) {
+      target = this.getConstructionTarget(creep, state);
+    }
+
+    if (!target && bankingReserve) {
       target = utils.getStorageDeliveryTarget(creep.room);
     }
 
@@ -335,6 +374,20 @@ module.exports = {
       return null;
     }
 
+    if (target.progressTotal !== undefined) {
+      if (
+        target.progress >= target.progressTotal ||
+        !this.isConstructionAllowed(
+          creep.room,
+          this.getRuntimeState(creep.room),
+          target,
+        )
+      ) {
+        delete creep.memory.workTargetId;
+        return null;
+      }
+    }
+
     if (
       this.isRoomEnergyDeliveryTarget(target) &&
       target.store.getFreeCapacity(RESOURCE_ENERGY) <= 0
@@ -360,6 +413,69 @@ module.exports = {
     return target;
   },
 
+  getConstructionTarget(creep, state, options) {
+    const settings = options || {};
+    const sites =
+      state && state.sites
+        ? state.sites
+        : creep.room.find(FIND_CONSTRUCTION_SITES);
+    const candidates = [];
+
+    for (let i = 0; i < sites.length; i++) {
+      const site = sites[i];
+      if (!site || site.progress >= site.progressTotal) continue;
+      if (
+        settings.pressureOnly &&
+        !Object.prototype.hasOwnProperty.call(
+          PRESSURE_CONSTRUCTION_PRIORITY,
+          site.structureType,
+        )
+      ) {
+        continue;
+      }
+      candidates.push(site);
+    }
+
+    return this.pickStableTarget(creep, candidates, function (site) {
+      if (settings.pressureOnly) {
+        return PRESSURE_CONSTRUCTION_PRIORITY[site.structureType] || 100;
+      }
+      return CONSTRUCTION_PRIORITY[site.structureType] || 100;
+    });
+  },
+
+  isConstructionAllowed(room, state, site) {
+    if (!site || site.progress >= site.progressTotal) return false;
+    if (!reservePolicy.shouldBankStorageEnergy(room, state)) return true;
+
+    return Object.prototype.hasOwnProperty.call(
+      PRESSURE_CONSTRUCTION_PRIORITY,
+      site.structureType,
+    );
+  },
+
+  pickStableTarget(creep, targets, priorityFn) {
+    if (!targets || targets.length === 0) return null;
+
+    const scored = targets.slice();
+    scored.sort(function (a, b) {
+      const aPriority = priorityFn ? priorityFn(a) : 0;
+      const bPriority = priorityFn ? priorityFn(b) : 0;
+      if (aPriority !== bPriority) return aPriority - bPriority;
+
+      const aRange = creep.pos.getRangeTo(a);
+      const bRange = creep.pos.getRangeTo(b);
+      if (aRange !== bRange) return aRange - bRange;
+
+      if (a.pos.y !== b.pos.y) return a.pos.y - b.pos.y;
+      if (a.pos.x !== b.pos.x) return a.pos.x - b.pos.x;
+
+      return String(a.id || "").localeCompare(String(b.id || ""));
+    });
+
+    return scored[0];
+  },
+
   isRoomEnergyDeliveryTarget(target) {
     return !!(
       target &&
@@ -369,6 +485,16 @@ module.exports = {
       ) &&
       target.store &&
       typeof target.store.getFreeCapacity === "function"
+    );
+  },
+
+  isReserveBankDeliveryTarget(target) {
+    return !!(
+      target &&
+      target.structureType === STRUCTURE_STORAGE &&
+      target.store &&
+      typeof target.store.getFreeCapacity === "function" &&
+      target.store.getFreeCapacity(RESOURCE_ENERGY) > 0
     );
   },
 

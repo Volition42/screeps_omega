@@ -396,13 +396,13 @@ module.exports = {
       return false;
     }
 
-    const pickup = Game.getObjectById(task.pickupId);
-    const delivery = Game.getObjectById(task.deliveryId);
-
-    if (!pickup || !delivery) {
-      opsLogisticsManager.releaseHaulerTask(creep, "missing_structure");
+    const validation = opsLogisticsManager.validateAssignedHaulerTask(creep);
+    if (!validation) {
       return false;
     }
+
+    const pickup = validation.pickup;
+    const delivery = validation.delivery;
 
     if (this.getStoredAmount(creep, resourceType) > 0) {
       const carriedAmount = this.getStoredAmount(creep, resourceType);

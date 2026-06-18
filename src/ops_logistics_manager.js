@@ -1173,6 +1173,70 @@ function isHaulerTaskValid(task, room) {
   return true;
 }
 
+function validateAssignedHaulerTask(creep) {
+  const task = creep && creep.memory ? creep.memory.opsLogisticsTask : null;
+  if (!task || !task.requestId || !task.resourceType || !task.amount) {
+    if (creep && creep.memory) delete creep.memory.opsLogisticsTask;
+    return null;
+  }
+
+  const root = getMemoryRoot();
+  const request = root[task.requestId];
+
+  if (!request || !expireAndNormalize(request)) {
+    releaseHaulerTask(creep, "request_not_open");
+    return null;
+  }
+
+  const room = getOwnedRoom(request.roomName);
+  if (!room || !creep.room || creep.room.name !== room.name) {
+    releaseHaulerTask(creep, "invalid_room");
+    return null;
+  }
+
+  const endpoints = refreshRequestEndpoints(request, room);
+  if (!endpoints) {
+    releaseHaulerTask(creep, "missing_endpoint");
+    return null;
+  }
+
+  task.pickupId = endpoints.source.id;
+  task.deliveryId = endpoints.target.id;
+
+  const deliveryFree = getFreeCapacity(endpoints.target, task.resourceType);
+  if (deliveryFree <= 0) {
+    request.status = "blocked";
+    request.reason = "target_full";
+    request.updatedAt = Game.time;
+    releaseHaulerTask(creep, "target_full");
+    return null;
+  }
+
+  const carriedAmount = getStoredAmount(creep, task.resourceType);
+  if (carriedAmount <= 0) {
+    if (getStoredAmount(endpoints.source, task.resourceType) <= 0) {
+      request.status = (request.remaining || 0) <= 0 ? "done" : "blocked";
+      request.reason = "source_empty";
+      request.updatedAt = Game.time;
+      releaseHaulerTask(creep, "source_empty");
+      return null;
+    }
+
+    if (creep.store.getFreeCapacity(task.resourceType) <= 0) {
+      releaseHaulerTask(creep, "creep_full");
+      return null;
+    }
+  }
+
+  refreshClaim(task, creep);
+  return {
+    task: task,
+    request: request,
+    pickup: endpoints.source,
+    delivery: endpoints.target,
+  };
+}
+
 function refreshClaim(task, creep) {
   if (!task || !task.requestId) return;
 
@@ -1421,6 +1485,7 @@ module.exports = {
     return HISTORY_LIMIT;
   },
   getHaulerTask: getHaulerTask,
+  validateAssignedHaulerTask: validateAssignedHaulerTask,
   completeHaulerTask: completeHaulerTask,
   releaseHaulerTask: releaseHaulerTask,
   balanceTerminal: balanceTerminal,

@@ -32,6 +32,14 @@ const INTERACT_MOVE_OPTIONS = {
   range: 1,
 };
 
+const NONCRITICAL_PRESSURE_WORK = {
+  rampartRepair: true,
+  wallRepair: true,
+  roadRepair: true,
+  build: true,
+  upgrade: true,
+};
+
 module.exports = {
   run(creep) {
     const state = this.getRuntimeState(creep.room);
@@ -110,12 +118,14 @@ module.exports = {
     }
 
     const workTarget = this.getWorkTarget(creep);
-    if (!workTarget) return;
+    if (!workTarget) {
+      if (reservePolicy.shouldBankStorageEnergy(creep.room, state)) {
+        this.runReserveHold(creep);
+      }
+      return;
+    }
 
-    if (
-      workTarget.kind === "upgrade" &&
-      reservePolicy.shouldBankStorageEnergy(creep.room, state)
-    ) {
+    if (this.shouldDeferWorkKind(creep.room, state, workTarget.kind)) {
       this.runReserveHold(creep);
       return;
     }
@@ -139,13 +149,17 @@ module.exports = {
     const targetId = creep.memory.workTargetId;
     const kind = creep.memory.workTargetKind;
     if (!targetId || !kind) return null;
+    const state = this.getRuntimeState(creep.room);
 
     const target =
       kind === "upgrade"
         ? creep.room.controller
         : Game.getObjectById(targetId);
 
-    if (!this.isValidWorkTarget(target, kind)) {
+    if (
+      !this.isValidWorkTarget(target, kind, creep.room, state) ||
+      this.shouldDeferWorkKind(creep.room, state, kind)
+    ) {
       delete creep.memory.workTargetId;
       delete creep.memory.workTargetKind;
       return null;
@@ -183,28 +197,31 @@ module.exports = {
 
     const lowRampart = this.findClosestTarget(creep, groups.lowRamparts);
 
-    if (lowRampart) {
+    if (!this.shouldDeferWorkKind(creep.room, null, "rampartRepair") && lowRampart) {
       return this.storeWorkTarget(creep, lowRampart, "rampartRepair");
     }
 
     const lowWall = this.findClosestTarget(creep, groups.lowWalls);
 
-    if (lowWall) {
+    if (!this.shouldDeferWorkKind(creep.room, null, "wallRepair") && lowWall) {
       return this.storeWorkTarget(creep, lowWall, "wallRepair");
     }
 
     const roadRepairTarget = this.findClosestTarget(creep, groups.roadRepairs);
 
-    if (roadRepairTarget) {
+    if (!this.shouldDeferWorkKind(creep.room, null, "roadRepair") && roadRepairTarget) {
       return this.storeWorkTarget(creep, roadRepairTarget, "roadRepair");
     }
 
     const site = this.findClosestTarget(creep, groups.sites);
-    if (site) {
+    if (!this.shouldDeferWorkKind(creep.room, null, "build") && site) {
       return this.storeWorkTarget(creep, site, "build");
     }
 
-    if (creep.room.controller) {
+    if (
+      !this.shouldDeferWorkKind(creep.room, null, "upgrade") &&
+      creep.room.controller
+    ) {
       return this.storeWorkTarget(creep, creep.room.controller, "upgrade");
     }
 
@@ -213,7 +230,20 @@ module.exports = {
 
   findClosestTarget(creep, targets) {
     if (!targets || targets.length === 0) return null;
-    return creep.pos.findClosestByPath(targets);
+
+    const sorted = targets.slice();
+    sorted.sort(function (a, b) {
+      const aRange = creep.pos.getRangeTo(a);
+      const bRange = creep.pos.getRangeTo(b);
+      if (aRange !== bRange) return aRange - bRange;
+
+      if (a.pos.y !== b.pos.y) return a.pos.y - b.pos.y;
+      if (a.pos.x !== b.pos.x) return a.pos.x - b.pos.x;
+
+      return String(a.id || "").localeCompare(String(b.id || ""));
+    });
+
+    return sorted[0];
   },
 
   storeWorkTarget(creep, target, kind) {
@@ -226,8 +256,17 @@ module.exports = {
     };
   },
 
-  isValidWorkTarget(target, kind) {
+  shouldDeferWorkKind(room, state, kind) {
+    if (!NONCRITICAL_PRESSURE_WORK[kind]) return false;
+    return reservePolicy.shouldBankStorageEnergy(
+      room,
+      state || this.getRuntimeState(room),
+    );
+  },
+
+  isValidWorkTarget(target, kind, room, state) {
     if (!target) return false;
+    if (room && this.shouldDeferWorkKind(room, state, kind)) return false;
 
     const defenseTargets =
       target.room && target.room.name

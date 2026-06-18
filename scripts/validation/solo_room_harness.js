@@ -1807,6 +1807,7 @@ const kernelMemory = require("kernel_memory");
 const roleWorker = require("role_worker");
 const roleJrWorker = require("role_jrworker");
 const roleUpgrader = require("role_upgrader");
+const roleRepair = require("role_repair");
 const roleClaimer = require("role_claimer");
 const rolePioneer = require("role_pioneer");
 const roleReserver = require("role_reserver");
@@ -3868,6 +3869,217 @@ function runTowerBankingThresholdScenario() {
   assert(
     delivery && delivery.id === tower.id,
     `expected tower below banking threshold to remain priority, got ${delivery ? delivery.id : "none"}`,
+  );
+}
+
+function runRoleTaskEconomyReconciliationScenario() {
+  let room = buildRoomScenario("VAL_ROLE_ECON_WORKER", {
+    tick: 583,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+  });
+  satisfyDevelopmentRequirements(room);
+  room.controller.ticksToDowngrade = 200000;
+  room.storage.store.energy = 0;
+  room.find(FIND_MY_STRUCTURES, {
+    filter(structure) {
+      return (
+        structure.structureType === STRUCTURE_SPAWN ||
+        structure.structureType === STRUCTURE_EXTENSION ||
+        structure.structureType === STRUCTURE_TOWER
+      );
+    },
+  }).forEach(function (structure) {
+    structure.store.energy =
+      structure.structureType === STRUCTURE_EXTENSION ? 50 :
+        structure.structureType === STRUCTURE_TOWER ? 1000 : 300;
+  });
+
+  const roadSitePos = pickOpenPositions(room, 1)[0];
+  assert(roadSitePos, "expected an open position for low-priority road site");
+  assert(
+    room.createConstructionSite(roadSitePos[0], roadSitePos[1], STRUCTURE_ROAD) === OK,
+    "expected low-priority road site to be created",
+  );
+  const roadSite = room.find(FIND_CONSTRUCTION_SITES)[0];
+  const worker = createCreep("economyWorker", "worker", room.storage.pos.x, room.storage.pos.y - 1, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: { working: true, workTargetId: roadSite.id },
+  });
+  let state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  assert(roleWorker.getCachedWorkTarget(worker) === null, "worker should reject cached low-priority construction under reserve pressure");
+  let requestCountBefore = opsLogisticsManager.listRequests().length;
+  let spawnEventsBefore = currentRuntime.spawnEvents.length;
+  currentRuntime.creepActions.length = 0;
+  roleWorker.run(worker, { thinkInterval: 1 });
+  assert(
+    !currentRuntime.creepActions.some(function (action) { return action.creep === worker.name && action.action === "build"; }),
+    "worker should not spend energy building low-priority road site under reserve pressure",
+  );
+  assert(
+    currentRuntime.creepActions.some(function (action) { return action.creep === worker.name && action.action === "transfer" && action.targetId === room.storage.id; }),
+    `worker should bank carried energy in storage under pressure, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+  assert(opsLogisticsManager.listRequests().length === requestCountBefore, "worker guard must not create logistics requests");
+  assert(currentRuntime.spawnEvents.length === spawnEventsBefore, "worker guard must not spawn creeps");
+
+  room = buildRoomScenario("VAL_ROLE_ECON_ORDER", {
+    tick: 584,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+  });
+  satisfyDevelopmentRequirements(room);
+  const orderWorker = createCreep("orderWorker", "worker", 20, 20, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: { working: true },
+  });
+  assert(room.createConstructionSite(19, 20, STRUCTURE_ROAD) === OK, "expected first deterministic road site");
+  assert(room.createConstructionSite(21, 20, STRUCTURE_ROAD) === OK, "expected second deterministic road site");
+  state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const orderedTarget = roleWorker.getConstructionTarget(orderWorker, state);
+  assert(
+    orderedTarget && orderedTarget.pos.x === 19 && orderedTarget.pos.y === 20,
+    `expected deterministic construction ordering to choose 19,20, got ${orderedTarget ? `${orderedTarget.pos.x},${orderedTarget.pos.y}` : "none"}`,
+  );
+
+  room = buildRoomScenario("VAL_ROLE_ECON_UPGRADER", {
+    tick: 585,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+  });
+  satisfyDevelopmentRequirements(room);
+  room.controller.ticksToDowngrade = 200000;
+  room.storage.store.energy = 0;
+  const upgrader = createCreep("economyUpgrader", "upgrader", room.storage.pos.x, room.storage.pos.y - 1, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: { upgrading: true },
+  });
+  state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  currentRuntime.creepActions.length = 0;
+  roleUpgrader.run(upgrader, { thinkInterval: 1 });
+  assert(
+    !currentRuntime.creepActions.some(function (action) { return action.creep === upgrader.name && action.action === "upgradeController"; }),
+    "upgrader should not spend energy upgrading while RCL8 reserve hold is active",
+  );
+  assert(
+    currentRuntime.creepActions.some(function (action) { return action.creep === upgrader.name && action.action === "transfer" && action.targetId === room.storage.id; }),
+    `upgrader should return carried energy to storage under reserve hold, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+
+  room = buildRoomScenario("VAL_ROLE_ECON_REPAIR", {
+    tick: 586,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+  });
+  satisfyDevelopmentRequirements(room);
+  room.controller.ticksToDowngrade = 200000;
+  room.storage.store.energy = 0;
+  const road = room.addStructure(
+    createStructure(STRUCTURE_ROAD, room.storage.pos.x + 1, room.storage.pos.y, {
+      roomName: room.name,
+      hits: 1,
+      hitsMax: 5000,
+    }),
+  );
+  const repairer = createCreep("economyRepair", "repair", room.storage.pos.x, room.storage.pos.y - 1, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: {
+      working: true,
+      workTargetId: road.id,
+      workTargetKind: "roadRepair",
+    },
+  });
+  state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  assert(roleRepair.getCachedWorkTarget(repairer) === null, "repairer should reject cached noncritical repair under reserve pressure");
+  currentRuntime.creepActions.length = 0;
+  roleRepair.run(repairer);
+  assert(
+    !currentRuntime.creepActions.some(function (action) { return action.creep === repairer.name && (action.action === "repair" || action.action === "build" || action.action === "upgradeController"); }),
+    `repairer should avoid noncritical energy spend under pressure, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+  assert(
+    currentRuntime.creepActions.some(function (action) { return action.creep === repairer.name && action.action === "transfer" && action.targetId === room.storage.id; }),
+    `repairer should bank carried energy in storage under pressure, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+
+  room = buildOpsLogisticsRoom("VAL_ROLE_ECON_HAULER_STALE", {
+    tick: 587,
+    storageStore: { energy: 1000 },
+    terminalStore: { energy: 1000 },
+  });
+  const hauler = createCreep("economyHauler", "hauler", room.storage.pos.x, room.storage.pos.y, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  const request = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 50, room.name, "storage", "terminal");
+  assert(request.ok, `expected ops logistics request, got ${request.message}`);
+  assert(opsLogisticsManager.getHaulerTask(room, hauler), "expected hauler to claim ops request before target became stale");
+  room.terminal.store.energy = 300000;
+  currentRuntime.creepActions.length = 0;
+  assert(roleHauler.runOpsLogisticsRequest(hauler, 1) === false, "stale full delivery target should abort assigned ops task");
+  assert(!hauler.memory.opsLogisticsTask, "stale ops logistics task should be cleared from hauler memory");
+  assert(request.request.status === "blocked", `stale full target should block request, got ${request.request.status}`);
+  assert(request.request.reason === "target_full", `stale full target should record target_full, got ${request.request.reason}`);
+  assert(
+    !currentRuntime.creepActions.some(function (action) { return action.creep === hauler.name && (action.action === "withdraw" || action.action === "transfer"); }),
+    `hauler should not withdraw or transfer for stale ops target, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+
+  room = buildOpsLogisticsRoom("VAL_ROLE_ECON_HAULER_EMPTY", {
+    tick: 588,
+    storageStore: { energy: 1000 },
+    terminalStore: { energy: 1000 },
+  });
+  const emptyHauler = createCreep("economyHaulerEmpty", "hauler", room.storage.pos.x, room.storage.pos.y, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+  const emptyRequest = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 50, room.name, "storage", "terminal");
+  assert(emptyRequest.ok, `expected empty-source ops logistics request, got ${emptyRequest.message}`);
+  assert(opsLogisticsManager.getHaulerTask(room, emptyHauler), "expected hauler to claim request before source emptied");
+  room.storage.store.energy = 0;
+  currentRuntime.creepActions.length = 0;
+  assert(roleHauler.runOpsLogisticsRequest(emptyHauler, 1) === false, "stale empty source should abort assigned ops task");
+  assert(!emptyHauler.memory.opsLogisticsTask, "empty-source ops task should be cleared from hauler memory");
+  assert(emptyRequest.request.status === "blocked", `empty source should block request, got ${emptyRequest.request.status}`);
+  assert(emptyRequest.request.reason === "source_empty", `empty source should record source_empty, got ${emptyRequest.request.reason}`);
+  assert(
+    !currentRuntime.creepActions.some(function (action) { return action.creep === emptyHauler.name && (action.action === "withdraw" || action.action === "transfer"); }),
+    `hauler should not withdraw or transfer from empty stale source, got ${JSON.stringify(currentRuntime.creepActions)}`,
   );
 }
 
@@ -14887,6 +15099,7 @@ function main() {
     ["worker_extension_fallback", runWorkerExtensionFallbackScenario],
     ["worker_extension_with_hauler", runWorkerExtensionFallbackWithHaulerScenario],
     ["tower_banking_threshold", runTowerBankingThresholdScenario],
+    ["role_task_economy_reconciliation", runRoleTaskEconomyReconciliationScenario],
     ["mineral_access_road", runMineralAccessRoadScenario],
     ["defense_border_support", runDefenseBorderSupportScenario],
     ["defense_west_gate_centering", runDefenseWestGateCenteringScenario],
