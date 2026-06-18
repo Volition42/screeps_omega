@@ -2,6 +2,12 @@
 
 Working overview and operator reference for the `src/` game code.
 
+## Operator Manuals
+
+- [Omega Operator Command Manual](docs/omega_operator_manual.md)
+- [Omega Operator Command Manual PDF](docs/omega_operator_manual.pdf)
+- [CPU live sampling guide](docs/cpu-live-sampling.md)
+
 ## What This Bot Does
 
 - Runs one manager loop per owned room.
