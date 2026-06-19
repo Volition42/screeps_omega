@@ -85,6 +85,9 @@ Execution levels used in this manual:
 - `ops.reserved([parentRoom])`
 - `ops.room([roomName], [section])`
 - `ops.rooms()`
+- `ops.scan(roomName, [section], [role])`
+- `ops.spawn(roomName, role, [size|options])`
+- `ops.spawn("power", name, [room|options])`
 - `ops.requests([roomName], ["blocked"|"all"|"history"])`
 - `ops.terminalStatus([roomName])`
 - `ops.tickRate([sampleTicks|status|cancel])`
@@ -171,6 +174,9 @@ Execution levels used in this manual:
 | `ops.cpuStatus(roomName)` | Alias for `ops.room(roomName, "cpu")`. | `roomName`: optional owned room. | `ops.cpuStatus("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1114`, `src/ops.js:2112` |
 | `ops.phase(roomName)` | Alias for the build section of `ops.room`. | `roomName`: optional owned room. | `ops.phase("W5N5")` | Room report object for build section. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1117`, `src/ops.js:2120` |
 | `ops.rooms()` | Show overview lines for all owned rooms. | None. | `ops.rooms()` | Room reports array. | Updates progress in generated reports. | Read Only | `src/ops.js:1009`, `src/ops.js:1509` |
+| `ops.scan(roomName, section, role)` | Read-only owned-room object discovery for spawns, Power Spawns, creeps, PowerCreeps, structures, sites, and resources. | `roomName`: owned room. `section`: optional `spawns`, `powerSpawns`, `creeps`, `powerCreeps`, `structures`, `sites`, or `resources`. `role`: optional creep role filter. | `ops.scan("W42N9", "spawns")` | Printable scan block. | Prints concise object summaries only. Does not mutate memory or call Screeps action APIs. | Read Only | `src/ops.js` |
+| `ops.spawn(roomName, role, sizeOrOptions)` | Manually spawn one normal creep after validating owned room, supported role, small/medium/large profile, selected owned spawn, idle spawn state, and body cost. | `roomName`: owned room. `role`: supported creep role. `sizeOrOptions`: optional size string or object with `size`, `spawn`, and `dryRun`. | `ops.spawn("W42N9", "worker", { size: "medium", spawn: "Spawn1" })` | Printable result line with Screeps result code. | Calls `spawn.spawnCreep` only after validation; `dryRun` is preview-only. Does not alter autonomous spawn policy. | Executes Immediately | `src/ops.js` |
+| `ops.spawn("power", name, roomOrOptions)` | Manually spawn one existing PowerCreep at an owned Power Spawn. | `name`: `Game.powerCreeps` name. `roomOrOptions`: optional room string or object with `room`, `powerSpawn`, and `dryRun`. | `ops.spawn("power", "Operator_GenOps", { room: "W42N9", powerSpawn: "id" })` | Printable result line with Screeps result code. | Calls `powerCreep.spawn(powerSpawn)` only after validation; never calls `enableRoom`, movement, or power-use APIs. | Executes Immediately | `src/ops.js` |
 | `ops.empire(section)` | Show empire summary and owned-room overview, or logistics pressure rollup. | `section`: optional; use `logistics` for the pressure rollup. | `ops.empire("logistics")` | Empire report object, or logistics section object with lines and rollup. | Updates progress/logistics history in generated reports. Logistics rollup does not create logistics requests or execute hauler, market, terminal, or spawn actions. | Read Only | `src/ops.js:1012`, `src/ops.js:1528` |
 | `ops.log(arg1, arg2)` | Show compact invasion history. | `arg1`: room name or limit. `arg2`: optional limit. | `ops.log("W43N6")` | Lines array. | Prints invasion log lines. | Read Only | `src/ops.js:1015`, `src/ops.js:1541` |
 | `ops.logClear(roomName)` | Clear invasion history for one room, or all rooms when omitted. | `roomName`: optional room or `all`. | `ops.logClear("W43N6")` | Clear result object. | Deletes invasion log entries. | Planning | `src/ops.js:1018`, `src/ops.js:1567` |

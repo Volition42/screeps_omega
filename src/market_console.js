@@ -80,6 +80,20 @@ function fmt(value) {
   return Math.round(value || 0).toLocaleString();
 }
 
+function formatHelpGroups(title, groups) {
+  const lines = [title, `[MARKET] Version ${VERSION}`];
+
+  for (let i = 0; i < groups.length; i++) {
+    lines.push("");
+    lines.push(`[MARKET] ${groups[i].title}`);
+    for (let j = 0; j < groups[i].commands.length; j++) {
+      lines.push(`  - ${groups[i].commands[j]}`);
+    }
+  }
+
+  return lines;
+}
+
 function getMemoryRoot() {
   if (!Memory.consoleTools) Memory.consoleTools = {};
   if (!Memory.consoleTools.market) Memory.consoleTools.market = {};
@@ -2133,93 +2147,118 @@ function bestOwnedRoomForBuy(amount, order) {
 }
 
 function help() {
-  return printBlock([
-    "[MARKET] Screeps Market Console Helper",
-    `[MARKET] Version: ${VERSION}`,
-    "",
-    "[MARKET] Memory/runtime:",
-    "  market.help()",
-    "  market.info()",
-    "  market.ping()",
-    "  market.install()",
-    "  market.restore()",
-    "  market.uninstall()",
-    "",
-    "[MARKET] Visibility:",
-    "  market.rooms()",
-    "  market.stock()",
-    "  market.stock(roomName)",
-    "  market.needs()",
-    "  market.surplus()",
-    "",
-    "[MARKET] Internal terminal logistics:",
-    "  market.stage(resource, amount, roomName)",
-    "  market.unstage(resource, amount, roomName)",
-    "  market.requests()",
-    "  market.requests(roomName)",
-    '  market.requests("all"|"history")',
-    '  market.requests(roomName, "all"|"history")',
-    "  market.cancel(requestId)",
-    "  market.send(resource, amount, fromRoom, toRoom)",
-    "",
-    "[MARKET] Market scanning:",
-    "  market.buyOptions()",
-    "  market.buyOptions(resource)",
-    "  market.sellOptions()",
-    "  market.sellOptions(resource)",
-    "",
-    "[MARKET] Market intelligence:",
-    "  market.readiness()",
-    "  market.readiness(roomName)",
-    "  market.readiness(resource)",
-    "  market.opportunities()",
-    "  market.opportunities(resource)",
-    "  market.recommendations()",
-    "",
-    "[MARKET] Dry-run planning:",
-    "  market.planSell(resource, amount, roomName)",
-    "  market.planBuy(resource, amount, roomName)",
-    "  market.plans()",
-    '  market.plans("all"|"history")',
-    "  market.plan(planId)",
-    "  market.planSummary()",
-    "  market.planReview(planId)",
-    "  market.planAudit()",
-    "  market.clearPlan(planId)",
-    '  market.clearPlan("all")',
-    "  market.deletePlan(planId) [deprecated: use market.clearPlan(planId)]",
-    "  market.removePlan(planId) [deprecated: use market.clearPlan(planId)]",
-    '  market.clearPlans() [deprecated: use market.clearPlan("all")]',
-    "",
-    "[MARKET] Execution design and safety:",
-    "  market.executionStatus()",
-    "  market.executionDryRun(planId)",
-    "  market.executionLimits()",
-    "  market.setExecutionLimit(name, value)",
-    "  market.clearExecutionLimit(name)",
-    "  market.limits()",
-    "  market.setLimit(name, value)",
-    "  market.clearLimit(name)",
-    "  market.executePlan(planId)",
-    "  market.execute(planId) [alias: market.executePlan(planId)]",
-    "  market.history()",
-    "  market.history(resource)",
-    "  market.history(roomName)",
-    '  market.history("all")',
-    "  market.historySummary()",
-    "  market.historyAudit()",
-    "  market.clearHistory(mode)",
-    "  market.setHistoryLimit(limit)",
-    "  market.historyLimit()",
-    "",
-    "[MARKET] Manual trading:",
-    "  market.buy(resource, amount, roomName)",
-    "  market.sell(resource, amount, roomName)",
-    "",
-    "[MARKET] Planning:",
-    "  market.planBuys()",
-    "  market.planSells()",
-  ]);
+  return printBlock(formatHelpGroups("[MARKET] Screeps Market Console Commands", [
+    {
+      title: "Runtime",
+      commands: [
+        "market.help()",
+        "market.info()",
+        "market.ping()",
+        "market.install()",
+        "market.restore()",
+        "market.uninstall()",
+      ],
+    },
+    {
+      title: "Visibility",
+      commands: [
+        "market.rooms()",
+        "market.stock()",
+        "market.stock(roomName)",
+        "market.needs()",
+        "market.surplus()",
+      ],
+    },
+    {
+      title: "Terminal Logistics",
+      commands: [
+        "market.stage(resource, amount, roomName)",
+        "market.unstage(resource, amount, roomName)",
+        "market.requests()",
+        "market.requests(roomName)",
+        'market.requests("all"|"history")',
+        'market.requests(roomName, "all"|"history")',
+        "market.cancel(requestId)",
+        "market.send(resource, amount, fromRoom, toRoom)",
+      ],
+    },
+    {
+      title: "Market Scans",
+      commands: [
+        "market.buyOptions()",
+        "market.buyOptions(resource)",
+        "market.sellOptions()",
+        "market.sellOptions(resource)",
+      ],
+    },
+    {
+      title: "Intelligence",
+      commands: [
+        "market.readiness()",
+        "market.readiness(roomName)",
+        "market.readiness(resource)",
+        "market.opportunities()",
+        "market.opportunities(resource)",
+        "market.recommendations()",
+      ],
+    },
+    {
+      title: "Dry-Run Plans",
+      commands: [
+        "market.planSell(resource, amount, roomName)",
+        "market.planBuy(resource, amount, roomName)",
+        "market.plans()",
+        'market.plans("all"|"history")',
+        "market.plan(planId)",
+        "market.planSummary()",
+        "market.planReview(planId)",
+        "market.planAudit()",
+        "market.clearPlan(planId)",
+        'market.clearPlan("all")',
+        "market.deletePlan(planId) [deprecated: use market.clearPlan(planId)]",
+        "market.removePlan(planId) [deprecated: use market.clearPlan(planId)]",
+        'market.clearPlans() [deprecated: use market.clearPlan("all")]',
+      ],
+    },
+    {
+      title: "Approval-Gated Execution",
+      commands: [
+        "market.executionStatus()",
+        "market.executionDryRun(planId)",
+        "market.executionLimits()",
+        "market.setExecutionLimit(name, value)",
+        "market.clearExecutionLimit(name)",
+        "market.limits()",
+        "market.setLimit(name, value)",
+        "market.clearLimit(name)",
+        "market.executePlan(planId)",
+        "market.execute(planId) [alias: market.executePlan(planId)]",
+        "market.history()",
+        "market.history(resource)",
+        "market.history(roomName)",
+        'market.history("all")',
+        "market.historySummary()",
+        "market.historyAudit()",
+        "market.clearHistory(mode)",
+        "market.setHistoryLimit(limit)",
+        "market.historyLimit()",
+      ],
+    },
+    {
+      title: "Manual Trading",
+      commands: [
+        "market.buy(resource, amount, roomName)",
+        "market.sell(resource, amount, roomName)",
+      ],
+    },
+    {
+      title: "Legacy Planning",
+      commands: [
+        "market.planBuys()",
+        "market.planSells()",
+      ],
+    },
+  ]));
 }
 
 function info() {

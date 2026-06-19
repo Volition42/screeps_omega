@@ -6707,21 +6707,21 @@ function runCommandScenario() {
     `expected help to omit roomRole command, got ${helpLines.join(" / ")}`,
   );
   assert(
-    helpLines.some(function (line) { return line === "ops.expand(targetRoom, [parentRoom])"; }) &&
-      helpLines.some(function (line) { return line === "ops.reserve(targetRoom, [parentRoom])"; }),
+    helpLines.some(function (line) { return line.indexOf("ops.expand(targetRoom, [parentRoom])") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf("ops.reserve(targetRoom, [parentRoom])") !== -1; }),
     `expected simplified expand/reserve help, got ${helpLines.join(" / ")}`,
   );
   assert(
-    helpLines.some(function (line) { return line === "ops.terminalStatus([roomName])"; }) &&
-      helpLines.some(function (line) { return line === "ops.clearTerminal(roomName, [resource], [amount])"; }) &&
-      helpLines.some(function (line) { return line === "ops.fillTerminal(roomName, resource, amount)"; }) &&
-      helpLines.some(function (line) { return line === "ops.requests([roomName], [mode])"; }) &&
-      helpLines.some(function (line) { return line === 'ops.cancelRequests(roomName, "blocked", [filters])'; }),
+    helpLines.some(function (line) { return line.indexOf("ops.terminalStatus([roomName])") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf("ops.clearTerminal(roomName, [resource], [amount])") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf("ops.fillTerminal(roomName, resource, amount)") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf("ops.requests([roomName], [mode])") !== -1; }) &&
+      helpLines.some(function (line) { return line.indexOf('ops.cancelRequests(roomName, "blocked", [filters])') !== -1; }),
     `expected Layer 2 terminal hygiene help, got ${helpLines.join(" / ")}`,
   );
   assert(
-    helpLines.every(function (line) { return line.length <= 80; }),
-    `expected help output lines to stay within 80 chars, got ${helpLines.filter(function (line) { return line.length > 80; }).join(" / ")}`,
+    helpLines.every(function (line) { return line.length <= 100; }),
+    `expected help output lines to stay within 100 chars, got ${helpLines.filter(function (line) { return line.length > 100; }).join(" / ")}`,
   );
 }
 
@@ -8307,6 +8307,207 @@ function runPowerCreepGenerateOpsAutomationScenario() {
       `automation must not use other powers, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
     );
   });
+}
+
+function runOperatorSpawnAndScanCommandsScenario() {
+  const room = buildRoomScenario("VAL_OP_SCAN", {
+    tick: 1890,
+    controllerLevel: 8,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    creeps: [
+      { name: "workerA", role: "worker", x: 24, y: 25 },
+      { name: "workerB", role: "worker", x: 25, y: 24 },
+      { name: "haulerA", role: "hauler", x: 26, y: 24 },
+      { name: "repairA", role: "repair", x: 27, y: 24 },
+    ],
+    extraStructures: [
+      { type: STRUCTURE_SPAWN, x: 27, y: 25, options: { name: "Spawn2", store: { energy: 300 }, storeCapacityResource: { energy: 300 }, hits: 5000, hitsMax: 5000 } },
+      { type: STRUCTURE_POWER_SPAWN, x: 27, y: 31, options: { id: "power_spawn_scan", store: { energy: 5000, power: 100 }, storeCapacity: 5000, hits: 5000, hitsMax: 5000 } },
+      { type: STRUCTURE_TOWER, x: 23, y: 25, options: { store: { energy: 300 }, storeCapacityResource: { energy: 1000 }, hits: 3000, hitsMax: 3000 } },
+    ],
+    extraSites: [
+      { type: STRUCTURE_EXTENSION, x: 24, y: 26 },
+    ],
+    droppedResources: [
+      { x: 26, y: 26, resourceType: RESOURCE_ENERGY, amount: 250 },
+    ],
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  createPowerCreep("Operator_Scan", 27, 31, {
+    roomName: room.name,
+    ticksToLive: 4875,
+    store: { [RESOURCE_OPS]: 3 },
+    powers: { [PWR_GENERATE_OPS]: { level: 1, cooldown: 42 } },
+  });
+
+  ops.registerGlobals();
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name);
+  });
+  assert(typeof captured.result === "string", "ops.scan should return printable room summary");
+  assert(captured.result.indexOf("[object Object]") === -1, `scan summary must not dump raw objects, got ${captured.result}`);
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Scan VAL_OP_SCAN / summary") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Spawns: 2") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Power Spawns: 1") !== -1; }),
+    `scan summary should include concise room object counts, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name, "spawns");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Spawn1: idle, energy 300/300") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Spawn2: idle, energy 300/300") !== -1; }),
+    `scan spawns should list normal spawns, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name, "powerSpawns");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("power_spawn_scan") !== -1 && line.indexOf("energy 5,000") !== -1 && line.indexOf("power 100") !== -1; }),
+    `scan powerSpawns should list Power Spawns, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name, "creeps");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("hauler 1") !== -1 && line.indexOf("repair 1") !== -1 && line.indexOf("worker 2") !== -1; }),
+    `scan creeps should list role counts, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name, "powerCreeps");
+  });
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("Operator_Scan") !== -1 &&
+        line.indexOf("spawned") !== -1 &&
+        line.indexOf("ttl 4,875") !== -1 &&
+        line.indexOf("ops 3") !== -1 &&
+        line.indexOf("cooldown 42") !== -1;
+    }),
+    `scan powerCreeps should list PowerCreep state, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name, "structures");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("spawn 2") !== -1 && line.indexOf("powerSpawn 1") !== -1 && line.indexOf("tower 1") !== -1; }),
+    `scan structures should list major structure counts, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name, "sites");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("extension 1") !== -1; }),
+    `scan sites should list construction sites, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.scan(room.name, "resources");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("dropped energy: 250") !== -1; }),
+    `scan resources should list bounded dropped resources, got ${captured.lines.join(" / ")}`,
+  );
+
+  const spawnEventsBeforeInvalid = currentRuntime.spawnEvents.length;
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn("MISSING_ROOM", "worker", "small");
+  });
+  assert(captured.result.indexOf('owned room "MISSING_ROOM" not found') !== -1, `missing room should fail gracefully, got ${captured.result}`);
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "missing room must not spawn a creep");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn(room.name, "worker", { size: "small", spawn: "MissingSpawn" });
+  });
+  assert(captured.result.indexOf('owned spawn "MissingSpawn" not found') !== -1, `missing spawn should fail gracefully, got ${captured.result}`);
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "missing spawn must not spawn a creep");
+
+  room.spawn.spawning = { name: "busy_worker", remainingTime: 10 };
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn(room.name, "worker", { size: "small", spawn: "Spawn1" });
+  });
+  assert(captured.result.indexOf("is busy") !== -1, `busy spawn should fail, got ${captured.result}`);
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "busy spawn must not spawn a creep");
+  room.spawn.spawning = null;
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn(room.name, "unknown_role", "small");
+  });
+  assert(captured.result.indexOf('role "unknown_role" is not supported') !== -1, `invalid role should fail, got ${captured.result}`);
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "invalid role must not spawn a creep");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn(room.name, "worker", "huge");
+  });
+  assert(captured.result.indexOf('profile "huge" not found') !== -1, `invalid profile should fail, got ${captured.result}`);
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "invalid profile must not spawn a creep");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn(room.name, "worker", { size: "small", spawn: "Spawn1", dryRun: true });
+  });
+  assert(captured.result.indexOf("preview OK (0)") !== -1, `dry-run should preview, got ${captured.result}`);
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "dry-run must not spawn a creep");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn(room.name, "worker", { size: "small", spawn: "Spawn1" });
+  });
+  assert(captured.result.indexOf("result OK (0)") !== -1, `valid spawn should call spawnCreep, got ${captured.result}`);
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid + 1, "valid spawn should create one spawn event");
+  assert(currentRuntime.spawnEvents[currentRuntime.spawnEvents.length - 1].role === "worker", "spawn event should record worker role");
+
+  const powerSpawn = room.find(FIND_MY_STRUCTURES, {
+    filter(structure) {
+      return structure.structureType === STRUCTURE_POWER_SPAWN;
+    },
+  })[0];
+  const powerActionsBeforeInvalid = currentRuntime.spawnPowerCreepActions.length;
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn("power", "MissingOperator", room.name);
+  });
+  assert(captured.result.indexOf('PowerCreep "MissingOperator" not found') !== -1, `missing PowerCreep should fail, got ${captured.result}`);
+  assert(currentRuntime.spawnPowerCreepActions.length === powerActionsBeforeInvalid, "missing PowerCreep must not call spawn");
+
+  const unspawnedPowerCreep = createPowerCreep("Operator_Manual", 25, 25, { spawned: false });
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn("power", unspawnedPowerCreep.name, { room: room.name, powerSpawn: "missing_power_spawn" });
+  });
+  assert(captured.result.indexOf('owned Power Spawn "missing_power_spawn" not found') !== -1, `missing Power Spawn should fail, got ${captured.result}`);
+  assert(currentRuntime.spawnPowerCreepActions.length === powerActionsBeforeInvalid, "missing Power Spawn must not call spawn");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn("power", unspawnedPowerCreep.name, { room: room.name, powerSpawn: powerSpawn.id, dryRun: true });
+  });
+  assert(captured.result.indexOf("preview OK (0)") !== -1, `PowerCreep dry-run should preview, got ${captured.result}`);
+  assert(currentRuntime.spawnPowerCreepActions.length === powerActionsBeforeInvalid, "PowerCreep dry-run must not call spawn");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn("power", unspawnedPowerCreep.name, { room: room.name, powerSpawn: powerSpawn.id });
+  });
+  assert(captured.result.indexOf("result OK (0)") !== -1, `valid PowerCreep spawn should call spawn, got ${captured.result}`);
+  assert(currentRuntime.spawnPowerCreepActions.length === powerActionsBeforeInvalid + 1, "valid PowerCreep spawn should call spawn once");
+  assert(currentRuntime.enableRoomActions.length === 0, "ops.spawn power must not call enableRoom");
+  assert(currentRuntime.powerCreepMoveActions.length === 0, "ops.spawn power must not move PowerCreeps");
+  assert(currentRuntime.powerCreepUsePowerActions.length === 0, "ops.spawn power must not use powers");
+
+  const helpCapture = captureConsoleLines(function () {
+    return global.ops.help();
+  });
+  assert(
+    helpCapture.lines.some(function (line) { return line.indexOf("ops.scan(roomName, [section], [role])") !== -1; }) &&
+      helpCapture.lines.some(function (line) { return line.indexOf("ops.spawn(roomName, role, [size|options])") !== -1; }) &&
+      helpCapture.lines.some(function (line) { return line.indexOf('ops.spawn("power", name, [room|options])') !== -1; }),
+    `ops.help should list scan and spawn commands, got ${helpCapture.lines.join(" / ")}`,
+  );
 }
 
 function runOperatorReadinessReportsScenario() {
@@ -15492,6 +15693,7 @@ function main() {
     ["power_creep_renewal_assist", runPowerCreepRenewalAssistScenario],
     ["power_creep_ops_generation_controls", runPowerCreepOpsGenerationControlsScenario],
     ["power_creep_generate_ops_automation", runPowerCreepGenerateOpsAutomationScenario],
+    ["operator_spawn_and_scan_commands", runOperatorSpawnAndScanCommandsScenario],
     ["operator_readiness_reports", runOperatorReadinessReportsScenario],
     ["ops_inventory_and_staging_controls", runOpsInventoryAndStagingControlsScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],

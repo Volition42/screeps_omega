@@ -9,6 +9,45 @@ const terminalBalanceManager = require("terminal_balance_manager");
 const transferManager = require("transfer_manager");
 const powerManager = require("power_manager");
 const pclManager = require("pcl_manager");
+const bodies = require("bodies");
+const spawnManager = require("spawn_manager");
+
+const MANUAL_SPAWN_ROLES = [
+  "jrworker",
+  "worker",
+  "miner",
+  "mineral_miner",
+  "hauler",
+  "remotehauler",
+  "upgrader",
+  "repair",
+  "claimer",
+  "reserver",
+  "pioneer",
+  "remoteworker",
+  "remoteminer",
+  "defender",
+  "dismantler",
+  "assault",
+  "combat_healer",
+  "controller_attacker",
+];
+
+const MANUAL_SPAWN_PROFILES = {
+  small: 300,
+  medium: 800,
+  large: null,
+};
+
+const SCAN_SECTIONS = [
+  "spawns",
+  "powerSpawns",
+  "creeps",
+  "powerCreeps",
+  "structures",
+  "sites",
+  "resources",
+];
 
 function getOwnedRooms() {
   return empireManager.collectOwnedRooms();
@@ -113,6 +152,17 @@ function buildToggleResult(label, enabled) {
 
 function fmt(value) {
   return Math.round(value || 0).toLocaleString();
+}
+
+function formatResultCode(result) {
+  if (result === OK) return "OK";
+  if (typeof ERR_BUSY !== "undefined" && result === ERR_BUSY) return "ERR_BUSY";
+  if (typeof ERR_NOT_FOUND !== "undefined" && result === ERR_NOT_FOUND) return "ERR_NOT_FOUND";
+  if (typeof ERR_NOT_ENOUGH_ENERGY !== "undefined" && result === ERR_NOT_ENOUGH_ENERGY) return "ERR_NOT_ENOUGH_ENERGY";
+  if (typeof ERR_INVALID_TARGET !== "undefined" && result === ERR_INVALID_TARGET) return "ERR_INVALID_TARGET";
+  if (typeof ERR_INVALID_ARGS !== "undefined" && result === ERR_INVALID_ARGS) return "ERR_INVALID_ARGS";
+  if (typeof ERR_NAME_EXISTS !== "undefined" && result === ERR_NAME_EXISTS) return "ERR_NAME_EXISTS";
+  return String(result);
 }
 
 function formatOverride(value) {
@@ -351,6 +401,206 @@ function getStoreResources(store) {
     .sort();
 }
 
+function getObjectId(target) {
+  return target && target.id ? target.id : "no-id";
+}
+
+function getShortId(target) {
+  const id = getObjectId(target);
+  return id.length > 8 ? id.slice(0, 8) + "..." : id;
+}
+
+function formatStorePair(target, resourceType) {
+  const used = getStoredAmount(target, resourceType);
+  const capacity =
+    target && target.store && typeof target.store.getCapacity === "function"
+      ? target.store.getCapacity(resourceType)
+      : target && target.store && typeof target.store.getUsedCapacity === "function" && typeof target.store.getFreeCapacity === "function"
+        ? target.store.getUsedCapacity(resourceType) + target.store.getFreeCapacity(resourceType)
+        : target && target.storeCapacityResource && typeof target.storeCapacityResource[resourceType] === "number"
+          ? target.storeCapacityResource[resourceType]
+          : null;
+  return fmt(used) + (typeof capacity === "number" ? "/" + fmt(capacity) : "");
+}
+
+function getRoomOwnedSpawns(room) {
+  if (!room || typeof room.find !== "function") return [];
+  return room.find(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return structure.structureType === STRUCTURE_SPAWN;
+    },
+  }).sort(function (a, b) {
+    return (a.name || a.id || "").localeCompare(b.name || b.id || "");
+  });
+}
+
+function getRoomPowerSpawns(room) {
+  if (!room || typeof room.find !== "function") return [];
+  return room.find(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return structure.structureType === STRUCTURE_POWER_SPAWN;
+    },
+  }).sort(function (a, b) {
+    return (a.id || "").localeCompare(b.id || "");
+  });
+}
+
+function getRoomCreeps(room, role) {
+  if (!room || typeof room.find !== "function") return [];
+  const normalizedRole = typeof role === "string" && role.trim() ? role.trim() : null;
+  return room.find(FIND_MY_CREEPS).filter(function (creep) {
+    return !normalizedRole || (creep.memory && creep.memory.role === normalizedRole);
+  }).sort(function (a, b) {
+    return (a.name || "").localeCompare(b.name || "");
+  });
+}
+
+function getPowerCreepRoomName(powerCreep) {
+  if (!powerCreep) return null;
+  if (powerCreep.room && powerCreep.room.name) return powerCreep.room.name;
+  if (powerCreep.pos && powerCreep.pos.roomName) return powerCreep.pos.roomName;
+  return null;
+}
+
+function getPowerCreepCooldown(powerCreep) {
+  if (!powerCreep || !powerCreep.powers) return 0;
+  let cooldown = 0;
+  for (const powerName in powerCreep.powers) {
+    if (!Object.prototype.hasOwnProperty.call(powerCreep.powers, powerName)) continue;
+    const info = powerCreep.powers[powerName];
+    if (info && typeof info.cooldown === "number") {
+      cooldown = Math.max(cooldown, info.cooldown);
+    }
+  }
+  return cooldown;
+}
+
+function getRoomPowerCreeps(roomName) {
+  const powerCreeps = Game.powerCreeps || {};
+  return Object.keys(powerCreeps)
+    .sort()
+    .map(function (name) {
+      return powerCreeps[name];
+    })
+    .filter(function (powerCreep) {
+      return !roomName || getPowerCreepRoomName(powerCreep) === roomName;
+    });
+}
+
+function countBy(items, getKey) {
+  const counts = {};
+  for (let i = 0; i < items.length; i++) {
+    const key = getKey(items[i]) || "unknown";
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function formatCounts(counts) {
+  const keys = Object.keys(counts).sort();
+  if (keys.length === 0) return "none";
+  return keys.map(function (key) {
+    return key + " " + counts[key];
+  }).join(", ");
+}
+
+function formatSpawnLine(spawn) {
+  const status = spawn.spawning
+    ? "busy " + (spawn.spawning.name || "unknown")
+    : "idle";
+  return (
+    `  ${spawn.name || getShortId(spawn)}: ${status}, ` +
+    `energy ${formatStorePair(spawn, RESOURCE_ENERGY)}`
+  );
+}
+
+function formatPowerSpawnLine(powerSpawn) {
+  return (
+    `  PowerSpawn ${getShortId(powerSpawn)}: id ${getObjectId(powerSpawn)}, ` +
+    `energy ${fmt(getStoredAmount(powerSpawn, RESOURCE_ENERGY))}, ` +
+    `power ${fmt(getStoredAmount(powerSpawn, RESOURCE_POWER))}`
+  );
+}
+
+function formatPowerCreepLine(powerCreep) {
+  const spawned = powerCreep && (powerCreep.ticksToLive || powerCreep.room || powerCreep.pos);
+  return (
+    `  ${powerCreep.name}: ${spawned ? "spawned" : "unspawned"}, ` +
+    `room ${getPowerCreepRoomName(powerCreep) || "none"}, ` +
+    `ttl ${typeof powerCreep.ticksToLive === "number" ? fmt(powerCreep.ticksToLive) : "--"}, ` +
+    `ops ${fmt(getStoredAmount(powerCreep, getOpsResourceType()))}, ` +
+    `cooldown ${fmt(getPowerCreepCooldown(powerCreep))}`
+  );
+}
+
+function getMajorStructureRows(room) {
+  const structures = room.find(FIND_STRUCTURES);
+  const majorTypes = {};
+  [
+    STRUCTURE_SPAWN,
+    STRUCTURE_EXTENSION,
+    STRUCTURE_TOWER,
+    STRUCTURE_STORAGE,
+    STRUCTURE_TERMINAL,
+    STRUCTURE_LINK,
+    STRUCTURE_LAB,
+    STRUCTURE_FACTORY,
+    STRUCTURE_OBSERVER,
+    STRUCTURE_POWER_SPAWN,
+    STRUCTURE_NUKER,
+  ].forEach(function (type) {
+    majorTypes[type] = true;
+  });
+  return structures.filter(function (structure) {
+    return majorTypes[structure.structureType];
+  });
+}
+
+function getRoomResources(room) {
+  const rows = [];
+  if (typeof FIND_DROPPED_RESOURCES !== "undefined") {
+    const dropped = room.find(FIND_DROPPED_RESOURCES).filter(function (resource) {
+      return (resource.amount || 0) > 0;
+    });
+    for (let i = 0; i < dropped.length; i++) {
+      rows.push({
+        type: "dropped",
+        resourceType: dropped[i].resourceType,
+        amount: dropped[i].amount || 0,
+        id: getObjectId(dropped[i]),
+      });
+    }
+  }
+  if (typeof FIND_TOMBSTONES !== "undefined") {
+    const tombstones = room.find(FIND_TOMBSTONES);
+    for (let j = 0; j < tombstones.length; j++) {
+      rows.push({
+        type: "tombstone",
+        resourceType: "stored",
+        amount: getStoreTotal(tombstones[j]),
+        id: getObjectId(tombstones[j]),
+      });
+    }
+  }
+  if (typeof FIND_RUINS !== "undefined") {
+    const ruins = room.find(FIND_RUINS);
+    for (let k = 0; k < ruins.length; k++) {
+      rows.push({
+        type: "ruin",
+        resourceType: "stored",
+        amount: getStoreTotal(ruins[k]),
+        id: getObjectId(ruins[k]),
+      });
+    }
+  }
+  return rows.filter(function (row) {
+    return row.amount > 0;
+  }).sort(function (a, b) {
+    if (b.amount !== a.amount) return b.amount - a.amount;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 function getTerminalResourceRows(terminal) {
   return getStoreResources(terminal.store)
     .map(function (resourceType) {
@@ -390,6 +640,196 @@ function buildTerminalStatus(room) {
     status: getTerminalCongestionStatus(free),
     resources: resources,
   };
+}
+
+function normalizeScanSection(section) {
+  if (typeof section === "undefined" || section === null || section === "") return "summary";
+  const normalized = String(section).trim().toLowerCase();
+  if (normalized === "powerspawns" || normalized === "power_spawns" || normalized === "power-spawns") {
+    return "powerSpawns";
+  }
+  if (normalized === "powercreeps" || normalized === "power_creeps" || normalized === "power-creeps") {
+    return "powerCreeps";
+  }
+  if (SCAN_SECTIONS.indexOf(normalized) !== -1) return normalized;
+  return null;
+}
+
+function buildScanLines(room, section, roleFilter) {
+  const normalized = normalizeScanSection(section);
+  if (!normalized) {
+    return ['[OPS] scan: section must be spawns, powerSpawns, creeps, powerCreeps, structures, sites, or resources.'];
+  }
+
+  const spawns = getRoomOwnedSpawns(room);
+  const powerSpawns = getRoomPowerSpawns(room);
+  const creeps = getRoomCreeps(room, roleFilter);
+  const powerCreeps = getRoomPowerCreeps(room.name);
+  const lines = [`[OPS] Scan ${room.name} / ${normalized}`];
+
+  if (normalized === "summary") {
+    lines.push(`  Spawns: ${spawns.length}`);
+    lines.push(`  Power Spawns: ${powerSpawns.length}`);
+    lines.push(`  Creeps: ${formatCounts(countBy(creeps, function (creep) { return creep.memory && creep.memory.role; }))}`);
+    lines.push(`  PowerCreeps: ${powerCreeps.length}`);
+    lines.push(`  Structures: ${getMajorStructureRows(room).length}`);
+    lines.push(`  Sites: ${room.find(FIND_CONSTRUCTION_SITES).length}`);
+    lines.push(`  Resources: ${getRoomResources(room).length}`);
+    return lines;
+  }
+
+  if (normalized === "spawns") {
+    if (spawns.length === 0) lines.push("  none");
+    for (let i = 0; i < spawns.length; i++) lines.push(formatSpawnLine(spawns[i]));
+    return lines;
+  }
+
+  if (normalized === "powerSpawns") {
+    if (powerSpawns.length === 0) lines.push("  none");
+    for (let j = 0; j < powerSpawns.length; j++) lines.push(formatPowerSpawnLine(powerSpawns[j]));
+    return lines;
+  }
+
+  if (normalized === "creeps") {
+    const counts = countBy(creeps, function (creep) {
+      return creep.memory && creep.memory.role;
+    });
+    lines.push(`  Role counts: ${formatCounts(counts)}`);
+    return lines;
+  }
+
+  if (normalized === "powerCreeps") {
+    if (powerCreeps.length === 0) lines.push("  none");
+    for (let k = 0; k < powerCreeps.length; k++) lines.push(formatPowerCreepLine(powerCreeps[k]));
+    return lines;
+  }
+
+  if (normalized === "structures") {
+    const counts = countBy(getMajorStructureRows(room), function (structure) {
+      return structure.structureType;
+    });
+    lines.push(`  Major structures: ${formatCounts(counts)}`);
+    return lines;
+  }
+
+  if (normalized === "sites") {
+    const counts = countBy(room.find(FIND_CONSTRUCTION_SITES), function (site) {
+      return site.structureType;
+    });
+    lines.push(`  Construction sites: ${formatCounts(counts)}`);
+    return lines;
+  }
+
+  const resources = getRoomResources(room);
+  if (resources.length === 0) {
+    lines.push("  none");
+    return lines;
+  }
+  for (let r = 0; r < Math.min(resources.length, 10); r++) {
+    lines.push(`  ${resources[r].type} ${resources[r].resourceType}: ${fmt(resources[r].amount)} id ${resources[r].id}`);
+  }
+  if (resources.length > 10) lines.push(`  ... +${resources.length - 10} more`);
+  return lines;
+}
+
+function parseSpawnOptions(sizeOrOptions) {
+  if (typeof sizeOrOptions === "undefined" || sizeOrOptions === null) {
+    return { size: "medium", spawn: null, dryRun: false };
+  }
+  if (typeof sizeOrOptions === "string") {
+    return { size: sizeOrOptions.trim(), spawn: null, dryRun: false };
+  }
+  if (typeof sizeOrOptions === "object" && !Array.isArray(sizeOrOptions)) {
+    return {
+      size: typeof sizeOrOptions.size === "string" ? sizeOrOptions.size.trim() : "medium",
+      spawn: sizeOrOptions.spawn || sizeOrOptions.spawnName || sizeOrOptions.spawnId || null,
+      dryRun: !!(sizeOrOptions.dryRun || sizeOrOptions.preview || sizeOrOptions.check),
+    };
+  }
+  return null;
+}
+
+function resolveManualSpawnEnergyLimit(room, size) {
+  const normalized = typeof size === "string" ? size.trim().toLowerCase() : "medium";
+  if (!Object.prototype.hasOwnProperty.call(MANUAL_SPAWN_PROFILES, normalized)) return null;
+  if (normalized === "large") return Math.max(300, room.energyCapacityAvailable || room.energyAvailable || 300);
+  return Math.min(
+    Math.max(300, room.energyCapacityAvailable || room.energyAvailable || 300),
+    MANUAL_SPAWN_PROFILES[normalized],
+  );
+}
+
+function resolveOwnedSpawn(room, spawnSelector) {
+  const spawns = getRoomOwnedSpawns(room);
+  if (!spawnSelector) return spawns.length > 0 ? spawns[0] : null;
+  const selector = String(spawnSelector);
+
+  for (let i = 0; i < spawns.length; i++) {
+    if (spawns[i].name === selector || spawns[i].id === selector) return spawns[i];
+  }
+  if (Game.spawns && Game.spawns[selector]) {
+    const spawn = Game.spawns[selector];
+    if (spawn.room && spawn.room.name === room.name && spawn.my !== false) return spawn;
+  }
+  const byId = Game.getObjectById ? Game.getObjectById(selector) : null;
+  if (
+    byId &&
+    byId.structureType === STRUCTURE_SPAWN &&
+    byId.room &&
+    byId.room.name === room.name &&
+    byId.my !== false
+  ) {
+    return byId;
+  }
+  return null;
+}
+
+function getManualBodyPlan(room, role, size, state) {
+  const energyLimit = resolveManualSpawnEnergyLimit(room, size);
+  if (energyLimit === null) return null;
+  return bodies.plan(role, room, { role: role, energyLimit: energyLimit }, state || null);
+}
+
+function buildManualSpawnResultLine(room, role, spawn, plan, result, dryRun) {
+  return (
+    `[OPS] spawn ${room.name}: ${dryRun ? "preview" : "result"} ${formatResultCode(result)} (${result}) | ` +
+    `spawn ${spawn.name || getShortId(spawn)} | role ${role} | profile ${plan.profile || "unknown"} | ` +
+    `cost ${fmt(plan.cost)} | parts ${plan.parts}`
+  );
+}
+
+function parsePowerSpawnOptions(roomOrOptions) {
+  if (typeof roomOrOptions === "string") {
+    return { room: roomOrOptions.trim(), powerSpawn: null, dryRun: false };
+  }
+  if (typeof roomOrOptions === "object" && roomOrOptions !== null && !Array.isArray(roomOrOptions)) {
+    return {
+      room: roomOrOptions.room || roomOrOptions.roomName || null,
+      powerSpawn: roomOrOptions.powerSpawn || roomOrOptions.powerSpawnId || null,
+      dryRun: !!(roomOrOptions.dryRun || roomOrOptions.preview || roomOrOptions.check),
+    };
+  }
+  return { room: null, powerSpawn: null, dryRun: false };
+}
+
+function resolvePowerSpawn(room, selector) {
+  const powerSpawns = getRoomPowerSpawns(room);
+  if (!selector) return powerSpawns.length > 0 ? powerSpawns[0] : null;
+  const normalized = String(selector);
+  for (let i = 0; i < powerSpawns.length; i++) {
+    if (powerSpawns[i].id === normalized || powerSpawns[i].name === normalized) return powerSpawns[i];
+  }
+  const byId = Game.getObjectById ? Game.getObjectById(normalized) : null;
+  if (
+    byId &&
+    byId.structureType === STRUCTURE_POWER_SPAWN &&
+    byId.room &&
+    byId.room.name === room.name &&
+    byId.my !== false
+  ) {
+    return byId;
+  }
+  return null;
 }
 
 function getPowerMemory(roomName) {
@@ -653,11 +1093,34 @@ function getConsoleCommandHelp() {
     },
     {
       command: "ops.rooms()",
+      group: "Reports",
       description: "Show overview lines for all owned rooms.",
       example: "ops.rooms()",
     },
     {
+      command: 'ops.scan(roomName, [section], [role])',
+      group: "Reports",
+      description:
+        "Read-only room/object discovery. Sections: spawns, powerSpawns, creeps, powerCreeps, structures, sites, resources.",
+      example: 'ops.scan("W42N9", "spawns")',
+    },
+    {
+      command: 'ops.spawn(roomName, role, [size|options])',
+      group: "Manual Actions",
+      description:
+        "Explicitly spawn one normal creep after validating owned room, role, profile, and idle spawn.",
+      example: 'ops.spawn("W42N9", "worker", { size: "medium", spawn: "Spawn1" })',
+    },
+    {
+      command: 'ops.spawn("power", name, [room|options])',
+      group: "Manual Actions",
+      description:
+        "Explicitly spawn one PowerCreep at an owned Power Spawn. Does not enable rooms, move, or use powers.",
+      example: 'ops.spawn("power", "Operator_GenOps", { room: "W42N9", powerSpawn: "id" })',
+    },
+    {
       command: 'ops.empire(["logistics"])',
+      group: "Reports",
       description: "Show empire summary, or logistics pressure rollup across owned rooms.",
       example: 'ops.empire("logistics")',
     },
@@ -906,16 +1369,24 @@ function wrapHelpLine(prefix, text, width) {
 }
 
 function formatHelpLines(rows) {
-  const lines = ["[OPS] Available console commands"];
+  const lines = ["[OPS] Omega Console Commands"];
+  let activeGroup = null;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    lines.push(row.command);
-    const descriptionLines = wrapHelpLine("  ", row.description, 80);
+    const group = row.group || "Operations";
+    if (group !== activeGroup) {
+      lines.push("");
+      lines.push(`[OPS] ${group}`);
+      activeGroup = group;
+    }
+
+    lines.push(`  - ${row.command}`);
+    const descriptionLines = wrapHelpLine("    ", row.description, 86);
     for (let j = 0; j < descriptionLines.length; j++) {
       lines.push(descriptionLines[j]);
     }
-    const exampleLines = wrapHelpLine("  ", row.example, 80);
+    const exampleLines = wrapHelpLine("    example: ", row.example, 86);
     for (let k = 0; k < exampleLines.length; k++) {
       lines.push(exampleLines[k]);
     }
@@ -1008,6 +1479,12 @@ module.exports = {
       },
       rooms: function () {
         return module.exports.rooms();
+      },
+      scan: function (roomName, section, role) {
+        return module.exports.scan(roomName, section, role);
+      },
+      spawn: function (roomNameOrPower, roleOrName, sizeOrOptions) {
+        return module.exports.spawn(roomNameOrPower, roleOrName, sizeOrOptions);
       },
       empire: function (section) {
         return module.exports.empire(section);
@@ -1130,6 +1607,137 @@ module.exports = {
 
     printBlock(lines);
     return rows;
+  },
+
+  scan(roomName, section, role) {
+    const room = getTargetRoomOrPrintError(roomName, "scan");
+    if (!room) return null;
+    opsState.setCurrentRoomName(room.name);
+
+    return printBlock(buildScanLines(room, section, role));
+  },
+
+  spawn(roomNameOrPower, roleOrName, sizeOrOptions) {
+    const normalizedFirst =
+      typeof roomNameOrPower === "string" ? roomNameOrPower.trim().toLowerCase() : roomNameOrPower;
+    if (normalizedFirst === "power") {
+      return this.spawnPowerCreep(roleOrName, sizeOrOptions);
+    }
+
+    return this.spawnCreep(roomNameOrPower, roleOrName, sizeOrOptions);
+  },
+
+  spawnCreep(roomName, role, sizeOrOptions) {
+    if (!roomName) {
+      return printLine('[OPS] spawn: room required. Use ops.spawn("ROOM", "role", "medium").');
+    }
+    if (!role) {
+      return printLine('[OPS] spawn: role required. Use ops.spawn("ROOM", "role", "medium").');
+    }
+
+    const room = Game.rooms && Game.rooms[roomName] ? Game.rooms[roomName] : null;
+    if (!room || !room.controller || !room.controller.my) {
+      return printLine(`[OPS] spawn: owned room "${roomName}" not found.`);
+    }
+
+    const normalizedRole = String(role).trim();
+    if (MANUAL_SPAWN_ROLES.indexOf(normalizedRole) === -1) {
+      return printLine(`[OPS] spawn ${room.name}: role "${normalizedRole}" is not supported.`);
+    }
+
+    const options = parseSpawnOptions(sizeOrOptions);
+    if (!options) {
+      return printLine('[OPS] spawn: options must be a size string or object.');
+    }
+
+    const normalizedSize = String(options.size || "medium").trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(MANUAL_SPAWN_PROFILES, normalizedSize)) {
+      return printLine(`[OPS] spawn ${room.name}: profile "${normalizedSize}" not found. Use small, medium, or large.`);
+    }
+
+    const spawn = resolveOwnedSpawn(room, options.spawn);
+    if (!spawn) {
+      const selector = options.spawn ? ` "${options.spawn}"` : "";
+      return printLine(`[OPS] spawn ${room.name}: owned spawn${selector} not found.`);
+    }
+    if (spawn.spawning) {
+      return printLine(`[OPS] spawn ${room.name}: spawn ${spawn.name || getShortId(spawn)} is busy.`);
+    }
+
+    const plan = getManualBodyPlan(room, normalizedRole, normalizedSize, null);
+    const validation = bodies.validateBody(plan && plan.body);
+    if (!validation.valid) {
+      return printLine(`[OPS] spawn ${room.name}: role "${normalizedRole}" profile "${normalizedSize}" invalid body ${validation.reason}.`);
+    }
+    if ((room.energyAvailable || 0) < plan.cost) {
+      return printLine(`[OPS] spawn ${room.name}: insufficient energy ${fmt(room.energyAvailable || 0)}/${fmt(plan.cost)} for ${normalizedRole} ${normalizedSize}.`);
+    }
+
+    if (options.dryRun) {
+      return printLine(buildManualSpawnResultLine(room, normalizedRole, spawn, plan, OK, true));
+    }
+
+    const name = spawnManager.getSpawnName(normalizedRole, spawn);
+    const result = spawn.spawnCreep(plan.body, name, {
+      memory: {
+        role: normalizedRole,
+        room: room.name,
+        homeRoom: room.name,
+        working: false,
+        delivering: false,
+        manualSpawn: true,
+        bodyProfile: plan.profile || null,
+        bodyCost: plan.cost || null,
+      },
+    });
+    return printLine(buildManualSpawnResultLine(room, normalizedRole, spawn, plan, result, false));
+  },
+
+  spawnPowerCreep(powerCreepName, roomOrOptions) {
+    if (!powerCreepName) {
+      return printLine('[OPS] spawn power: PowerCreep name required. Use ops.spawn("power", "NAME", "ROOM").');
+    }
+    const powerCreep = Game.powerCreeps && Game.powerCreeps[powerCreepName]
+      ? Game.powerCreeps[powerCreepName]
+      : null;
+    if (!powerCreep) {
+      return printLine(`[OPS] spawn power: PowerCreep "${powerCreepName}" not found.`);
+    }
+
+    const options = parsePowerSpawnOptions(roomOrOptions);
+    const targetRoomName = options.room || getPowerCreepRoomName(powerCreep);
+    if (!targetRoomName) {
+      return printLine(`[OPS] spawn power ${powerCreepName}: target room required.`);
+    }
+
+    const room = Game.rooms && Game.rooms[targetRoomName] ? Game.rooms[targetRoomName] : null;
+    if (!room || !room.controller || !room.controller.my) {
+      return printLine(`[OPS] spawn power ${powerCreepName}: owned room "${targetRoomName}" not found.`);
+    }
+
+    const powerSpawn = resolvePowerSpawn(room, options.powerSpawn);
+    if (!powerSpawn) {
+      const selector = options.powerSpawn ? ` "${options.powerSpawn}"` : "";
+      return printLine(`[OPS] spawn power ${powerCreepName}: owned Power Spawn${selector} not found in ${room.name}.`);
+    }
+
+    if (powerCreep.ticksToLive || powerCreep.room || powerCreep.pos) {
+      return printLine(`[OPS] spawn power ${powerCreepName}: PowerCreep is already spawned.`);
+    }
+
+    if (options.dryRun) {
+      return printLine(`[OPS] spawn power ${powerCreepName}: preview OK (0) | room ${room.name} | powerSpawn ${getShortId(powerSpawn)}`);
+    }
+
+    if (typeof powerCreep.spawn !== "function") {
+      return printLine(`[OPS] spawn power ${powerCreepName}: spawn method unavailable.`);
+    }
+
+    const result = powerCreep.spawn(powerSpawn);
+    return printLine(
+      `[OPS] spawn power ${powerCreepName}: result ${formatResultCode(result)} (${result}) | ` +
+        `room ${room.name} | powerSpawn ${getShortId(powerSpawn)}`,
+    );
   },
 
   hud(mode) {
