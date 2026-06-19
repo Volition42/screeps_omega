@@ -4083,6 +4083,165 @@ function runRoleTaskEconomyReconciliationScenario() {
   );
 }
 
+function runRoleIntentWasteDiagnosticsScenario() {
+  const room = buildOpsLogisticsRoom("VAL_ROLE_INTENT", {
+    tick: 589,
+    storageStore: { energy: 1000 },
+    terminalStore: { energy: 1000 },
+  });
+  room.storage.store.energy = 0;
+  room.controller.ticksToDowngrade = 200000;
+
+  assert(room.createConstructionSite(19, 20, STRUCTURE_ROAD) === OK, "expected deterministic role intent road site");
+  const site = room.find(FIND_CONSTRUCTION_SITES)[0];
+  const road = room.addStructure(
+    createStructure(STRUCTURE_ROAD, 20, 21, {
+      roomName: room.name,
+      hits: 1,
+      hitsMax: 5000,
+    }),
+  );
+
+  const workerA = createCreep("intentWorkerA", "worker", 20, 20, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: { working: true, workTargetId: site.id },
+  });
+  createCreep("intentWorkerB", "worker", 21, 20, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: { working: true, workTargetId: site.id },
+  });
+  createCreep("intentIdle", "worker", 22, 20, {
+    roomName: room.name,
+    store: {},
+    memory: { working: false },
+  });
+  const repairer = createCreep("intentRepair", "repair", 24, 27, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: {
+      working: true,
+      workTargetId: road.id,
+      workTargetKind: "roadRepair",
+    },
+  });
+  const upgrader = createCreep("intentUpgrader", "upgrader", 24, 26, {
+    roomName: room.name,
+    store: { energy: 50 },
+    memory: { upgrading: true },
+  });
+  const hauler = createCreep("intentHauler", "hauler", room.storage.pos.x, room.storage.pos.y, {
+    roomName: room.name,
+    store: {},
+    storeCapacity: 50,
+  });
+
+  let state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  assert(roleWorker.getCachedWorkTarget(workerA) === null, "worker cached target should defer under reserve pressure");
+  assert(roleRepair.getCachedWorkTarget(repairer) === null, "repair cached target should defer under reserve pressure");
+  roleUpgrader.run(upgrader, { thinkInterval: 1 });
+
+  room.storage.store.energy = 1000;
+  const request = opsLogisticsManager.createMoveRequest(RESOURCE_ENERGY, 50, room.name, "storage", "terminal");
+  assert(request.ok, `expected role intent ops logistics request, got ${request.message}`);
+  assert(opsLogisticsManager.getHaulerTask(room, hauler), "expected role intent hauler to claim ops request");
+  room.terminal.store.energy = 300000;
+  assert(roleHauler.runOpsLogisticsRequest(hauler, 1) === false, "role intent stale target should release ops task");
+
+  workerA.memory.working = true;
+  workerA.memory.workTargetId = site.id;
+  Game.creeps.intentWorkerB.memory.working = true;
+  Game.creeps.intentWorkerB.memory.workTargetId = site.id;
+  repairer.memory.working = true;
+  repairer.memory.workTargetId = road.id;
+  repairer.memory.workTargetKind = "roadRepair";
+  upgrader.memory.upgrading = true;
+
+  state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const requestCountBefore = opsLogisticsManager.listRequests(room.name).length;
+  const spawnEventsBefore = currentRuntime.spawnEvents.length;
+  ops.registerGlobals();
+  const captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "roles");
+  });
+
+  assert(
+    captured.lines.some(function (line) { return line === `[OPS][${room.name}][ROLES]`; }),
+    `expected roles section header, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("Creeps: 6") !== -1 &&
+        line.indexOf("Active: 4") !== -1 &&
+        line.indexOf("Idle: 2") !== -1;
+    }),
+    `expected active and idle creep counts, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("Energy Spend:") === 0 &&
+        line.indexOf("build: 2") !== -1 &&
+        line.indexOf("repair-noncritical: 1") !== -1 &&
+        line.indexOf("upgrade: 1") !== -1 &&
+        line.indexOf("idle: 2") !== -1;
+    }),
+    `expected energy-spend categories, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("Deferred:") === 0 &&
+        line.indexOf("construction-reserve-pressure: 1") !== -1 &&
+        line.indexOf("repair-reserve-pressure: 1") !== -1 &&
+        line.indexOf("upgrade-reserve-pressure: 1") !== -1;
+    }),
+    `expected deferred categories, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("Stale Releases:") === 0 &&
+        line.indexOf("ops-full-target: 1") !== -1 &&
+        line.indexOf("cached-invalid-target: 2") !== -1;
+    }),
+    `expected stale release categories, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("Contention:") === 0 &&
+        line.indexOf("construction-site " + site.id + ": 2 creeps") !== -1;
+    }),
+    `expected construction contention summary, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) { return line === "Largest Sink: build"; }),
+    `expected deterministic largest sink, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.every(function (line) { return line.indexOf("[object Object]") === -1; }),
+    `roles report should be printable, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    JSON.stringify(Memory.rooms[room.name].roleIntent).length < 500,
+    `role intent diagnostic memory should stay compact, got ${JSON.stringify(Memory.rooms[room.name].roleIntent)}`,
+  );
+  assert(
+    opsLogisticsManager.listRequests(room.name).length === requestCountBefore,
+    "role intent report must not create or delete logistics requests",
+  );
+  assert(
+    currentRuntime.spawnEvents.length === spawnEventsBefore,
+    "role intent report must not change spawn policy",
+  );
+  assert(
+    currentRuntime.terminalSends.length === 0 &&
+      currentRuntime.powerCreepUsePowerActions.length === 0 &&
+      currentRuntime.towerActions.length === 0,
+    "role intent report must not introduce market, terminal, power, or combat actions",
+  );
+}
+
 function runMineralMiningBlockedScenario() {
   const room = buildRoomScenario("VAL_MINERAL_BLOCKED", {
     tick: 575,
@@ -15100,6 +15259,7 @@ function main() {
     ["worker_extension_with_hauler", runWorkerExtensionFallbackWithHaulerScenario],
     ["tower_banking_threshold", runTowerBankingThresholdScenario],
     ["role_task_economy_reconciliation", runRoleTaskEconomyReconciliationScenario],
+    ["role_intent_waste_diagnostics", runRoleIntentWasteDiagnosticsScenario],
     ["mineral_access_road", runMineralAccessRoadScenario],
     ["defense_border_support", runDefenseBorderSupportScenario],
     ["defense_west_gate_centering", runDefenseWestGateCenteringScenario],

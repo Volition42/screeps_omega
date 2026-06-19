@@ -8,6 +8,7 @@ const statsManager = require("stats_manager");
 const observerManager = require("observer_manager");
 const opsLogisticsManager = require("ops_logistics_manager");
 const pclManager = require("pcl_manager");
+const roleIntentDiagnostics = require("role_intent_diagnostics");
 
 const SECTION_ORDER = [
   "overview",
@@ -15,6 +16,7 @@ const SECTION_ORDER = [
   "build",
   "defense",
   "creeps",
+  "roles",
   "sources",
   "resources",
   "logistics",
@@ -1482,6 +1484,7 @@ module.exports = {
     const alert = getAlertSummary(room, summaryState);
     const cpu = getCpuSummary(room);
     const advanced = getAdvancedSummary(room, summaryState);
+    const roleIntent = roleIntentDiagnostics.build(room, summaryState);
     const observer = getObserverSummary(room, summaryState);
     const power = getPowerSummary(room);
     const powerEnablement = pclManager.getRoomEnablementReadiness(room.name);
@@ -1499,6 +1502,12 @@ module.exports = {
       desiredHaulers: desiredTotalHaulers,
       advanced: advanced,
     });
+    const roleIntentLines = roleIntentDiagnostics.formatLines(roleIntent);
+    roleIntentLines.splice(
+      roleIntentLines.length - 1,
+      0,
+      `Request Alignment: ops open ${logistics.openRequests} | blocked ${logistics.blockedRequests} | advanced ${logistics.advancedBacklog.summary}`,
+    );
     const mineralMining = getMineralMiningSummary(room, summaryState);
     const mineralLine = formatMineralMiningLine(mineralMining);
     const mineralHudLine = formatMineralHudLine(mineralMining);
@@ -1595,6 +1604,7 @@ module.exports = {
         `Labor ${(roleCounts.worker || 0) + (roleCounts.jrworker || 0)} | Miners ${roleCounts.miner || 0}/${sources.length * config.CREEPS.minersPerSource} | Haulers ${roleCounts.hauler || 0}/${desiredTotalHaulers}`,
         `Advance ${mineralRoadPending ? MISSING_SUMMARY.mineralAccessRoad : advanceMissing.length > 0 ? summarizeMissing(advanceMissing) : "room steady"}`,
       ],
+      roles: roleIntentLines,
       sources: [
         `[OPS][${room.name}][SOURCES]`,
       ],
@@ -1722,6 +1732,7 @@ module.exports = {
       alert: alert,
       cpu: cpu,
       logistics: logistics,
+      roleIntent: roleIntent,
       nextPhase: nextPhase,
       statusLabel: statusLabel,
       nextTask: nextTask,

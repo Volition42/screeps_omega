@@ -21,6 +21,7 @@ Important Notes:
 
 const config = require("config");
 const reservePolicy = require("economy_reserve_policy");
+const roleIntentDiagnostics = require("role_intent_diagnostics");
 const utils = require("utils");
 
 const MOVE_OPTIONS = {
@@ -120,12 +121,17 @@ module.exports = {
     const workTarget = this.getWorkTarget(creep);
     if (!workTarget) {
       if (reservePolicy.shouldBankStorageEnergy(creep.room, state)) {
+        roleIntentDiagnostics.recordDeferred(creep.room, "no-safe-work");
         this.runReserveHold(creep);
       }
       return;
     }
 
     if (this.shouldDeferWorkKind(creep.room, state, workTarget.kind)) {
+      roleIntentDiagnostics.recordDeferred(
+        creep.room,
+        this.getDeferredLabelForWorkKind(workTarget.kind),
+      );
       this.runReserveHold(creep);
       return;
     }
@@ -160,6 +166,16 @@ module.exports = {
       !this.isValidWorkTarget(target, kind, creep.room, state) ||
       this.shouldDeferWorkKind(creep.room, state, kind)
     ) {
+      roleIntentDiagnostics.recordStaleRelease(
+        creep.room,
+        "cached-invalid-target",
+      );
+      if (this.shouldDeferWorkKind(creep.room, state, kind)) {
+        roleIntentDiagnostics.recordDeferred(
+          creep.room,
+          this.getDeferredLabelForWorkKind(kind),
+        );
+      }
       delete creep.memory.workTargetId;
       delete creep.memory.workTargetKind;
       return null;
@@ -262,6 +278,19 @@ module.exports = {
       room,
       state || this.getRuntimeState(room),
     );
+  },
+
+  getDeferredLabelForWorkKind(kind) {
+    if (kind === "build") return "construction-reserve-pressure";
+    if (kind === "upgrade") return "upgrade-reserve-pressure";
+    if (
+      kind === "rampartRepair" ||
+      kind === "wallRepair" ||
+      kind === "roadRepair"
+    ) {
+      return "repair-reserve-pressure";
+    }
+    return "no-safe-work";
   },
 
   isValidWorkTarget(target, kind, room, state) {

@@ -648,8 +648,8 @@ function getConsoleCommandHelp() {
     {
       command: "ops.room([roomName], [section])",
       description:
-        "Show one room report. Sections include logistics, power, observer, and resources status.",
-      example: 'ops.room("W5N5", "logistics")',
+        "Show one room report. Sections include roles, logistics, power, observer, and resources status.",
+      example: 'ops.room("W5N5", "roles")',
     },
     {
       command: "ops.rooms()",
@@ -1171,7 +1171,7 @@ module.exports = {
 
     if (!lines) {
       return printLine(
-        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, sources, resources, logistics, advanced, power, observer, cpu, or all.',
+        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, roles, sources, resources, logistics, advanced, power, observer, cpu, or all.',
       );
     }
 

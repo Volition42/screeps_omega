@@ -1,4 +1,5 @@
 const config = require("config");
+const roleIntentDiagnostics = require("role_intent_diagnostics");
 
 const VERSION = "2.1.0-ops-logistics";
 
@@ -1309,9 +1310,42 @@ function releaseHaulerTask(creep, reason) {
       request.updatedAt = Game.time;
       request.lastReleaseReason = reason || "released";
     }
+
+    const roomName =
+      request && request.roomName
+        ? request.roomName
+        : creep && creep.room
+          ? creep.room.name
+          : null;
+    const label = getStaleReleaseLabel(reason);
+    if (roomName && label) {
+      roleIntentDiagnostics.recordStaleRelease(roomName, label);
+    }
   }
 
   delete creep.memory.opsLogisticsTask;
+}
+
+function getStaleReleaseLabel(reason) {
+  switch (reason) {
+    case "target_full":
+      return "ops-full-target";
+    case "source_empty":
+      return "ops-empty-source";
+    case "missing_endpoint":
+      return "ops-missing-target";
+    case "request_not_open":
+    case "invalid_room":
+      return "ops-invalid-request";
+    default:
+      if (reason && reason.indexOf("withdraw_result_") === 0) {
+        return "ops-missing-source";
+      }
+      if (reason && reason.indexOf("transfer_result_") === 0) {
+        return "ops-missing-target";
+      }
+      return null;
+  }
 }
 
 function buildBalanceMove(resourceType, amount, roomName, from, to, results) {

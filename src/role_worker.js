@@ -21,6 +21,7 @@ Important Notes:
 
 const reservePolicy = require("economy_reserve_policy");
 const logisticsManager = require("logistics_manager");
+const roleIntentDiagnostics = require("role_intent_diagnostics");
 const utils = require("utils");
 
 const MOVE_OPTIONS = {
@@ -179,6 +180,13 @@ module.exports = {
     }
 
     if (!target) {
+      if (hasConstruction && reservePolicy.shouldBankStorageEnergy(creep.room, state)) {
+        roleIntentDiagnostics.recordDeferred(
+          creep.room,
+          "construction-reserve-pressure",
+        );
+      }
+
       const bankingReserve = reservePolicy.shouldBankStorageEnergy(creep.room, state);
       target = this.getClosestEnergyTarget(creep, state, bankingReserve) ||
         (bankingReserve
@@ -383,6 +391,22 @@ module.exports = {
           target,
         )
       ) {
+        roleIntentDiagnostics.recordStaleRelease(
+          creep.room,
+          "cached-invalid-target",
+        );
+        if (
+          target.progress < target.progressTotal &&
+          reservePolicy.shouldBankStorageEnergy(
+            creep.room,
+            this.getRuntimeState(creep.room),
+          )
+        ) {
+          roleIntentDiagnostics.recordDeferred(
+            creep.room,
+            "construction-reserve-pressure",
+          );
+        }
         delete creep.memory.workTargetId;
         return null;
       }

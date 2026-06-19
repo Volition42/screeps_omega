@@ -1,4 +1,5 @@
 const reservePolicy = require("economy_reserve_policy");
+const roleIntentDiagnostics = require("role_intent_diagnostics");
 const utils = require("utils");
 
 const MOVE_OPTIONS = {
@@ -29,6 +30,10 @@ module.exports = {
     delete creep.memory.overrideMove;
 
     if (reservePolicy.shouldHoldRcl8Upgrading(creep.room, state)) {
+      roleIntentDiagnostics.recordDeferred(
+        creep.room,
+        "upgrade-reserve-pressure",
+      );
       this.runReserveHold(creep);
       return;
     }
