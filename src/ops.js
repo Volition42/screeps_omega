@@ -732,18 +732,34 @@ function buildScanLines(room, section, roleFilter) {
   return lines;
 }
 
-function parseSpawnOptions(sizeOrOptions) {
+function parseSpawnOptions(sizeOrOptions, maybeOptions) {
+  const extra =
+    maybeOptions && typeof maybeOptions === "object" && !Array.isArray(maybeOptions)
+      ? maybeOptions
+      : {};
+
   if (typeof sizeOrOptions === "undefined" || sizeOrOptions === null) {
-    return { size: "medium", spawn: null, dryRun: false };
+    return {
+      size: typeof extra.size === "string" ? extra.size.trim() : "medium",
+      spawn: extra.spawn || extra.spawnName || extra.spawnId || null,
+      dryRun: !!(extra.dryRun || extra.preview || extra.check),
+      preview: !!(extra.preview || extra.dryRun || extra.check),
+    };
   }
   if (typeof sizeOrOptions === "string") {
-    return { size: sizeOrOptions.trim(), spawn: null, dryRun: false };
+    return {
+      size: sizeOrOptions.trim(),
+      spawn: extra.spawn || extra.spawnName || extra.spawnId || null,
+      dryRun: !!(extra.dryRun || extra.preview || extra.check),
+      preview: !!(extra.preview || extra.dryRun || extra.check),
+    };
   }
   if (typeof sizeOrOptions === "object" && !Array.isArray(sizeOrOptions)) {
     return {
       size: typeof sizeOrOptions.size === "string" ? sizeOrOptions.size.trim() : "medium",
       spawn: sizeOrOptions.spawn || sizeOrOptions.spawnName || sizeOrOptions.spawnId || null,
       dryRun: !!(sizeOrOptions.dryRun || sizeOrOptions.preview || sizeOrOptions.check),
+      preview: !!(sizeOrOptions.preview || sizeOrOptions.dryRun || sizeOrOptions.check),
     };
   }
   return null;
@@ -796,6 +812,47 @@ function buildManualSpawnResultLine(room, role, spawn, plan, result, dryRun) {
     `spawn ${spawn.name || getShortId(spawn)} | role ${role} | profile ${plan.profile || "unknown"} | ` +
     `cost ${fmt(plan.cost)} | parts ${plan.parts}`
   );
+}
+
+function countBodyParts(body) {
+  const counts = {};
+  const order = [];
+
+  for (let i = 0; i < (body || []).length; i++) {
+    const part = body[i];
+    if (!Object.prototype.hasOwnProperty.call(counts, part)) {
+      counts[part] = 0;
+      order.push(part);
+    }
+    counts[part]++;
+  }
+
+  return order.map(function (part) {
+    return part + " " + counts[part];
+  }).join(", ");
+}
+
+function buildManualSpawnPreviewLines(room, role, size, spawn, plan, validation, blockedReason) {
+  const spawnLabel = spawn ? spawn.name || getShortId(spawn) : "none";
+  const validNow = !blockedReason;
+  const body = plan && plan.body ? plan.body : [];
+  const cost = plan && typeof plan.cost === "number" ? plan.cost : 0;
+  const parts = plan && typeof plan.parts === "number" ? plan.parts : body.length;
+  const reason = blockedReason || "none";
+
+  return [
+    `[OPS] Spawn preview ${room.name}`,
+    `Room ${room.name} | Role ${role} | Size ${size} | Profile ${plan && plan.profile ? plan.profile : "unknown"}`,
+    `Selected spawn ${spawnLabel}`,
+    `Body ${body.join(", ") || "none"}`,
+    `Body counts ${countBodyParts(body) || "none"}`,
+    `Cost ${fmt(cost)} | Energy ${fmt(room.energyAvailable || 0)}/${fmt(room.energyCapacityAvailable || 0)}`,
+    `Spawn time ${fmt(parts * 3)} ticks | Parts ${parts}`,
+    `Valid now ${validNow ? "yes" : "no"} | Blocked ${reason}`,
+    validation && !validation.valid
+      ? `Validation ${validation.reason}`
+      : "Validation OK",
+  ];
 }
 
 function parsePowerSpawnOptions(roomOrOptions) {
@@ -1108,8 +1165,8 @@ function getConsoleCommandHelp() {
       command: 'ops.spawn(roomName, role, [size|options])',
       group: "Manual Actions",
       description:
-        "Explicitly spawn one normal creep after validating owned room, role, profile, and idle spawn.",
-      example: 'ops.spawn("W42N9", "worker", { size: "medium", spawn: "Spawn1" })',
+        "Preview or explicitly spawn one normal creep after validating owned room, role, profile, selected spawn, body, cost, and energy.",
+      example: 'ops.spawn("W42N9", "worker", "medium", { preview: true })',
     },
     {
       command: 'ops.spawn("power", name, [room|options])',
@@ -1197,7 +1254,7 @@ function getConsoleCommandHelp() {
     {
       command: 'ops.powerCreep(name, "generateOps", mode)',
       description:
-        "Check or explicitly confirm manual GENERATE_OPS use on a spawned Power Creep.",
+        "Check or explicitly confirm manual GENERATE_OPS use on a spawned Power Creep. Configured Operator_GenOps banking is reported through room power.",
       example: 'ops.powerCreep("OperatorOne", "generateOps", "check")',
     },
     {
@@ -1483,8 +1540,8 @@ module.exports = {
       scan: function (roomName, section, role) {
         return module.exports.scan(roomName, section, role);
       },
-      spawn: function (roomNameOrPower, roleOrName, sizeOrOptions) {
-        return module.exports.spawn(roomNameOrPower, roleOrName, sizeOrOptions);
+      spawn: function (roomNameOrPower, roleOrName, sizeOrOptions, maybeOptions) {
+        return module.exports.spawn(roomNameOrPower, roleOrName, sizeOrOptions, maybeOptions);
       },
       empire: function (section) {
         return module.exports.empire(section);
@@ -1617,17 +1674,17 @@ module.exports = {
     return printBlock(buildScanLines(room, section, role));
   },
 
-  spawn(roomNameOrPower, roleOrName, sizeOrOptions) {
+  spawn(roomNameOrPower, roleOrName, sizeOrOptions, maybeOptions) {
     const normalizedFirst =
       typeof roomNameOrPower === "string" ? roomNameOrPower.trim().toLowerCase() : roomNameOrPower;
     if (normalizedFirst === "power") {
       return this.spawnPowerCreep(roleOrName, sizeOrOptions);
     }
 
-    return this.spawnCreep(roomNameOrPower, roleOrName, sizeOrOptions);
+    return this.spawnCreep(roomNameOrPower, roleOrName, sizeOrOptions, maybeOptions);
   },
 
-  spawnCreep(roomName, role, sizeOrOptions) {
+  spawnCreep(roomName, role, sizeOrOptions, maybeOptions) {
     if (!roomName) {
       return printLine('[OPS] spawn: room required. Use ops.spawn("ROOM", "role", "medium").');
     }
@@ -1645,7 +1702,7 @@ module.exports = {
       return printLine(`[OPS] spawn ${room.name}: role "${normalizedRole}" is not supported.`);
     }
 
-    const options = parseSpawnOptions(sizeOrOptions);
+    const options = parseSpawnOptions(sizeOrOptions, maybeOptions);
     if (!options) {
       return printLine('[OPS] spawn: options must be a size string or object.');
     }
@@ -1655,7 +1712,34 @@ module.exports = {
       return printLine(`[OPS] spawn ${room.name}: profile "${normalizedSize}" not found. Use small, medium, or large.`);
     }
 
+    const plan = getManualBodyPlan(room, normalizedRole, normalizedSize, null);
+    const validation = bodies.validateBody(plan && plan.body);
     const spawn = resolveOwnedSpawn(room, options.spawn);
+    let blockedReason = null;
+
+    if (!spawn) {
+      blockedReason = options.spawn ? "selected_spawn_not_found" : "no_idle_spawn";
+    } else if (spawn.spawning) {
+      blockedReason = "spawn_busy";
+    } else if (!validation.valid) {
+      blockedReason = validation.reason;
+    } else if ((room.energyAvailable || 0) < plan.cost) {
+      blockedReason = "insufficient_energy";
+    }
+
+    if (options.preview || options.dryRun) {
+      const lines = buildManualSpawnPreviewLines(
+        room,
+        normalizedRole,
+        normalizedSize,
+        spawn,
+        plan,
+        validation,
+        blockedReason,
+      );
+      return printBlock(lines);
+    }
+
     if (!spawn) {
       const selector = options.spawn ? ` "${options.spawn}"` : "";
       return printLine(`[OPS] spawn ${room.name}: owned spawn${selector} not found.`);
@@ -1664,17 +1748,11 @@ module.exports = {
       return printLine(`[OPS] spawn ${room.name}: spawn ${spawn.name || getShortId(spawn)} is busy.`);
     }
 
-    const plan = getManualBodyPlan(room, normalizedRole, normalizedSize, null);
-    const validation = bodies.validateBody(plan && plan.body);
     if (!validation.valid) {
       return printLine(`[OPS] spawn ${room.name}: role "${normalizedRole}" profile "${normalizedSize}" invalid body ${validation.reason}.`);
     }
     if ((room.energyAvailable || 0) < plan.cost) {
       return printLine(`[OPS] spawn ${room.name}: insufficient energy ${fmt(room.energyAvailable || 0)}/${fmt(plan.cost)} for ${normalizedRole} ${normalizedSize}.`);
-    }
-
-    if (options.dryRun) {
-      return printLine(buildManualSpawnResultLine(room, normalizedRole, spawn, plan, OK, true));
     }
 
     const name = spawnManager.getSpawnName(normalizedRole, spawn);

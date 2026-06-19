@@ -1147,6 +1147,10 @@ function getPowerSummary(room) {
       lastAction: generateOps.lastAction || "none",
       lastResult: typeof generateOps.lastResult === "number" ? generateOps.lastResult : null,
       blockedReason: generateOps.blockedReason || "none",
+      bankingAction: generateOps.bankingAction || "idle",
+      bankingTarget: generateOps.bankingTarget || "none",
+      bankingResult: typeof generateOps.bankingResult === "number" ? generateOps.bankingResult : null,
+      bankingBlockedReason: generateOps.bankingBlockedReason || "none",
       status: generateOps.status || "UNKNOWN",
       lastTick: typeof generateOps.lastTick === "number" ? generateOps.lastTick : null,
     },
@@ -1643,6 +1647,7 @@ module.exports = {
         `PowerCreep ${power.generateOps.name} | State ${power.generateOps.spawned ? "spawned" : "unspawned"} | Room ${power.generateOps.currentRoom} | TTL ${power.generateOps.ticksToLive !== null ? power.generateOps.ticksToLive : "--"}`,
         `Generate Ops level ${power.generateOps.level} cooldown ${power.generateOps.cooldown} | Store ops ${fmtAmount(power.generateOps.ops)}${power.generateOps.opsCapacity !== null ? "/" + fmtAmount(power.generateOps.opsCapacity) : ""} | Home ${power.generateOps.homeRoom} | Power Enabled ${power.generateOps.powerEnabled ? "yes" : "no"}`,
         `Generate Ops last action ${power.generateOps.lastAction} | result ${power.generateOps.lastResult !== null ? power.generateOps.lastResult : "--"} | blocked ${power.generateOps.blockedReason || "none"}`,
+        `Ops banking action ${power.generateOps.bankingAction} | target ${power.generateOps.bankingTarget} | result ${power.generateOps.bankingResult !== null ? power.generateOps.bankingResult : "--"} | blocked ${power.generateOps.bankingBlockedReason || "none"}`,
         `Last processed ${power.lastProcessed !== null ? power.lastProcessed : "--"} | Total ${fmtAmount(power.totalProcessed)} | Last seen ${power.lastSeen !== null ? power.lastSeen : "--"}`,
       ],
       observer: [

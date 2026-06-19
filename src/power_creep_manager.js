@@ -30,6 +30,11 @@ const STATUS = {
   BLOCKED_COOLDOWN: "BLOCKED_COOLDOWN",
   BLOCKED_NO_USE_POWER: "BLOCKED_NO_USE_POWER",
   BLOCKED_NO_SPAWN_METHOD: "BLOCKED_NO_SPAWN_METHOD",
+  BLOCKED_BANK_NOT_HOME: "BLOCKED_BANK_NOT_HOME",
+  BLOCKED_BANK_NO_TARGET: "BLOCKED_BANK_NO_TARGET",
+  BLOCKED_BANK_NO_TRANSFER: "BLOCKED_BANK_NO_TRANSFER",
+  BANKING_MOVE: "BANKING_MOVE",
+  BANKED_OPS: "BANKED_OPS",
   API_ERROR: "API_ERROR",
 };
 
@@ -66,6 +71,19 @@ function getStoreCapacity(target, resourceType) {
     if (typeof used === "number" && typeof free === "number") return used + free;
   }
   return null;
+}
+
+function getStoreFreeCapacity(target, resourceType) {
+  if (!target || !target.store) return 0;
+  if (typeof target.store.getFreeCapacity === "function") {
+    const free = target.store.getFreeCapacity(resourceType);
+    if (typeof free === "number") return free;
+  }
+  const capacity = getStoreCapacity(target, resourceType);
+  if (typeof capacity === "number") {
+    return Math.max(0, capacity - getStoreAmount(target, resourceType));
+  }
+  return 0;
 }
 
 function getPowerInfo(powerCreep, powerConstant) {
@@ -118,7 +136,7 @@ module.exports = {
       return this.runSpawn(settings, room, powerCreep, mem);
     }
 
-    return this.runGenerate(settings, room, powerCreep, mem);
+    return this.runActive(settings, room, powerCreep, mem);
   },
 
   getSettings() {
@@ -213,6 +231,156 @@ module.exports = {
     return mem;
   },
 
+  runActive(settings, room, powerCreep, mem) {
+    const banked = this.runBankOps(settings, room, powerCreep, mem);
+    if (banked) return mem;
+
+    return this.runGenerate(settings, room, powerCreep, mem);
+  },
+
+  runBankOps(settings, room, powerCreep, mem) {
+    const resourceType = getOpsResourceType();
+    const carriedOps = getStoreAmount(powerCreep, resourceType);
+
+    if (carriedOps <= 0) {
+      mem.bankingAction = "idle";
+      mem.bankingResult = null;
+      mem.bankingBlockedReason = null;
+      mem.bankingTarget = null;
+      return false;
+    }
+
+    const currentRoomName = getCreepRoomName(powerCreep);
+    const homeRoomName = settings.HOME_ROOM;
+    const currentRoom =
+      currentRoomName && Game.rooms ? Game.rooms[currentRoomName] : null;
+
+    if (!currentRoom || currentRoomName !== homeRoomName || !isOwnedRoom(currentRoom)) {
+      this.writeStatus(
+        mem,
+        settings,
+        currentRoom || room,
+        powerCreep,
+        STATUS.BLOCKED_BANK_NOT_HOME,
+        "bank_ops",
+        null,
+        {
+          action: "bank_ops",
+          blockedReason: STATUS.BLOCKED_BANK_NOT_HOME,
+        },
+      );
+      return true;
+    }
+
+    const target = this.resolveOpsBankTarget(currentRoom, resourceType);
+    if (!target) {
+      this.writeStatus(
+        mem,
+        settings,
+        currentRoom,
+        powerCreep,
+        STATUS.BLOCKED_BANK_NO_TARGET,
+        "bank_ops",
+        null,
+        {
+          action: "bank_ops",
+          blockedReason: STATUS.BLOCKED_BANK_NO_TARGET,
+        },
+      );
+      return true;
+    }
+
+    if (powerCreep.pos && powerCreep.pos.getRangeTo(target) > 1) {
+      const result =
+        typeof powerCreep.moveTo === "function"
+          ? powerCreep.moveTo(target, { reusePath: 10, range: 1 })
+          : STATUS.BLOCKED_BANK_NO_TARGET;
+      this.writeStatus(
+        mem,
+        settings,
+        currentRoom,
+        powerCreep,
+        result === OK ? STATUS.BANKING_MOVE : STATUS.API_ERROR,
+        "bank_ops_move",
+        result,
+        {
+          action: "bank_ops_move",
+          target: this.getBankTargetLabel(target),
+          result: typeof result === "number" ? result : null,
+          blockedReason: result === OK ? null : STATUS.API_ERROR,
+        },
+      );
+      return true;
+    }
+
+    if (typeof powerCreep.transfer !== "function") {
+      this.writeStatus(
+        mem,
+        settings,
+        currentRoom,
+        powerCreep,
+        STATUS.BLOCKED_BANK_NO_TRANSFER,
+        "bank_ops",
+        null,
+        {
+          action: "bank_ops",
+          target: this.getBankTargetLabel(target),
+          blockedReason: STATUS.BLOCKED_BANK_NO_TRANSFER,
+        },
+      );
+      return true;
+    }
+
+    const result = powerCreep.transfer(target, resourceType, carriedOps);
+    this.writeStatus(
+      mem,
+      settings,
+      currentRoom,
+      powerCreep,
+      result === OK ? STATUS.BANKED_OPS : STATUS.API_ERROR,
+      "bank_ops_transfer",
+      result,
+      {
+        action: "bank_ops_transfer",
+        target: this.getBankTargetLabel(target),
+        result: result,
+        blockedReason: result === OK ? null : STATUS.API_ERROR,
+      },
+    );
+    return true;
+  },
+
+  resolveOpsBankTarget(room, resourceType) {
+    const terminal = room && room.terminal ? room.terminal : null;
+    if (
+      terminal &&
+      terminal.pos &&
+      terminal.pos.roomName === room.name &&
+      getStoreFreeCapacity(terminal, resourceType) > 0
+    ) {
+      return terminal;
+    }
+
+    const storage = room && room.storage ? room.storage : null;
+    if (
+      storage &&
+      storage.pos &&
+      storage.pos.roomName === room.name &&
+      getStoreFreeCapacity(storage, resourceType) > 0
+    ) {
+      return storage;
+    }
+
+    return null;
+  },
+
+  getBankTargetLabel(target) {
+    if (!target) return null;
+    if (target.structureType === STRUCTURE_TERMINAL) return "terminal";
+    if (target.structureType === STRUCTURE_STORAGE) return "storage";
+    return target.structureType || target.id || "unknown";
+  },
+
   runGenerate(settings, room, powerCreep, mem) {
     const roomName = getCreepRoomName(powerCreep);
     const currentRoom = roomName && Game.rooms ? Game.rooms[roomName] : null;
@@ -258,10 +426,15 @@ module.exports = {
     return mem;
   },
 
-  writeStatus(mem, settings, room, powerCreep, status, action, result) {
+  writeStatus(mem, settings, room, powerCreep, status, action, result, banking) {
     const powerConstant = getPowerConstant(settings);
     const powerInfo = getPowerInfo(powerCreep, powerConstant);
     const resourceType = getOpsResourceType();
+    const completedStatuses = {};
+    completedStatuses[STATUS.SPAWNED] = true;
+    completedStatuses[STATUS.GENERATED] = true;
+    completedStatuses[STATUS.BANKING_MOVE] = true;
+    completedStatuses[STATUS.BANKED_OPS] = true;
 
     mem.enabled = !!settings.ENABLED;
     mem.name = settings.NAME;
@@ -270,7 +443,7 @@ module.exports = {
     mem.lastTick = Game.time;
     mem.status = status;
     mem.blockedReason =
-      status === STATUS.SPAWNED || status === STATUS.GENERATED ? null : status;
+      completedStatuses[status] ? null : status;
     mem.spawned = !!(powerCreep && isSpawned(powerCreep));
     mem.currentRoom = getCreepRoomName(powerCreep);
     mem.ticksToLive =
@@ -286,5 +459,11 @@ module.exports = {
     mem.powerEnabled = isPowerEnabled(homeRoom || room);
     mem.lastAction = action || "idle";
     mem.lastResult = typeof result === "number" ? result : null;
+    mem.bankingAction = banking && banking.action ? banking.action : "idle";
+    mem.bankingTarget = banking && banking.target ? banking.target : null;
+    mem.bankingResult =
+      banking && typeof banking.result === "number" ? banking.result : null;
+    mem.bankingBlockedReason =
+      banking && banking.blockedReason ? banking.blockedReason : null;
   },
 };

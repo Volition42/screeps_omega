@@ -43,11 +43,12 @@ const ROOM_TRAVEL_OPTIONS = {
   range: 20,
 };
 
-const PRESSURE_CONSTRUCTION_PRIORITY = {
+const CRITICAL_CONSTRUCTION_PRIORITY = {
   spawn: 1,
   tower: 2,
-  storage: 3,
-  container: 4,
+  extension: 3,
+  storage: 4,
+  container: 5,
 };
 
 const CONSTRUCTION_PRIORITY = {
@@ -450,10 +451,7 @@ module.exports = {
       if (!site || site.progress >= site.progressTotal) continue;
       if (
         settings.pressureOnly &&
-        !Object.prototype.hasOwnProperty.call(
-          PRESSURE_CONSTRUCTION_PRIORITY,
-          site.structureType,
-        )
+        !this.isCriticalConstructionSite(site)
       ) {
         continue;
       }
@@ -462,7 +460,7 @@ module.exports = {
 
     return this.pickStableTarget(creep, candidates, function (site) {
       if (settings.pressureOnly) {
-        return PRESSURE_CONSTRUCTION_PRIORITY[site.structureType] || 100;
+        return CRITICAL_CONSTRUCTION_PRIORITY[site.structureType] || 100;
       }
       return CONSTRUCTION_PRIORITY[site.structureType] || 100;
     });
@@ -472,9 +470,16 @@ module.exports = {
     if (!site || site.progress >= site.progressTotal) return false;
     if (!reservePolicy.shouldBankStorageEnergy(room, state)) return true;
 
-    return Object.prototype.hasOwnProperty.call(
-      PRESSURE_CONSTRUCTION_PRIORITY,
-      site.structureType,
+    return this.isCriticalConstructionSite(site);
+  },
+
+  isCriticalConstructionSite(site) {
+    return !!(
+      site &&
+      Object.prototype.hasOwnProperty.call(
+        CRITICAL_CONSTRUCTION_PRIORITY,
+        site.structureType,
+      )
     );
   },
 

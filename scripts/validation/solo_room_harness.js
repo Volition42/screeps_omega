@@ -1316,6 +1316,28 @@ function createPowerCreep(name, x, y, options) {
       if (!this.pos) return ERR_INVALID_TARGET;
       return OK;
     },
+    transfer(target, resourceType, amount) {
+      currentRuntime.powerCreepTransferActions.push({
+        powerCreepName: this.name,
+        resourceType: resourceType,
+        amount: amount || null,
+        targetId: target ? target.id || null : null,
+        targetType: target ? target.structureType || null : null,
+        targetRoom: target && target.pos ? target.pos.roomName : null,
+        tick: Game.time,
+      });
+      if (!target || !target.store || !this.pos) return ERR_INVALID_TARGET;
+      if (this.pos.getRangeTo(target) > 1) return ERR_NOT_IN_RANGE;
+      const transferAmount = Math.min(
+        amount || this.store[resourceType] || 0,
+        this.store[resourceType] || 0,
+        target.store.getFreeCapacity(resourceType),
+      );
+      if (transferAmount <= 0) return ERR_NOT_ENOUGH_ENERGY;
+      this.store[resourceType] -= transferAmount;
+      target.store[resourceType] = (target.store[resourceType] || 0) + transferAmount;
+      return OK;
+    },
   };
 
   if (spawned) {
@@ -1343,6 +1365,7 @@ function resetRuntime(tick) {
     objectsById: {},
     enableRoomActions: [],
     powerCreepMoveActions: [],
+    powerCreepTransferActions: [],
     powerCreepUsePowerActions: [],
     spawnPowerCreepActions: [],
     renewPowerCreepActions: [],
@@ -3712,6 +3735,96 @@ function runWorkerSpawnSiteCacheScenario() {
   assert(
     liveTarget && liveTarget.id === spawnSite.id,
     `expected worker to keep the spawn construction site as work target, got ${liveTarget ? liveTarget.id : "none"}`,
+  );
+}
+
+function runWorkerConstructionPriorityConsolidationScenario() {
+  const room = buildRoomScenario("VAL_WORKER_CONSTRUCTION_PRIORITY", {
+    tick: 571,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    supportContainers: true,
+    creeps: [
+      {
+        name: "worker1",
+        role: "worker",
+        x: 25,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+    ],
+  });
+
+  room.addStructure(
+    createStructure(STRUCTURE_STORAGE, 24, 27, {
+      roomName: room.name,
+      store: { energy: 0 },
+      storeCapacity: 1000000,
+      hits: 10000,
+      hitsMax: 10000,
+    }),
+  );
+  room.storage.store.energy = 0;
+
+  let result = room.createConstructionSite(23, 25, STRUCTURE_ROAD);
+  assert(result === OK, `expected low-value road site, got ${result}`);
+  result = room.createConstructionSite(27, 25, STRUCTURE_TOWER);
+  assert(result === OK, `expected critical tower site, got ${result}`);
+
+  let state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+
+  const worker = Game.creeps.worker1;
+  let target = roleWorker.getConstructionTarget(worker, state, { pressureOnly: true });
+  assert(
+    target && target.structureType === STRUCTURE_TOWER,
+    `critical construction should win over noncritical construction under pressure, got ${target ? target.structureType : "none"}`,
+  );
+
+  const road = room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_ROAD;
+    },
+  })[0];
+  worker.memory.workTargetId = road.id;
+  const cached = roleWorker.getCachedWorkTarget(worker);
+  assert(cached === null, "cached low-value construction target should invalidate under reserve pressure");
+
+  room.find(FIND_CONSTRUCTION_SITES, {
+    filter(site) {
+      return site.structureType === STRUCTURE_TOWER;
+    },
+  }).forEach(function (site) {
+    site.remove();
+  });
+  state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  const storageTarget = roleWorker.getWorkTarget(worker, 1);
+  assert(
+    storageTarget && storageTarget.id === room.storage.id,
+    `low-value construction should defer to reserve banking under pressure, got ${storageTarget ? storageTarget.id : "none"}`,
+  );
+
+  room.find(FIND_CONSTRUCTION_SITES).forEach(function (site) {
+    site.remove();
+  });
+  room.storage.store.energy = 150000;
+  worker.memory.workTargetId = null;
+
+  result = room.createConstructionSite(23, 25, STRUCTURE_EXTENSION);
+  assert(result === OK, `expected left extension site, got ${result}`);
+  result = room.createConstructionSite(27, 25, STRUCTURE_EXTENSION);
+  assert(result === OK, `expected right extension site, got ${result}`);
+  state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  target = roleWorker.getConstructionTarget(worker, state);
+  assert(
+    target && target.pos.x === 23 && target.structureType === STRUCTURE_EXTENSION,
+    `construction ordering should be deterministic by priority, range, position, id; got ${target ? target.pos.x + "," + target.pos.y : "none"}`,
   );
 }
 
@@ -8242,7 +8355,7 @@ function runPowerCreepGenerateOpsAutomationScenario() {
 
     Game.time += 1;
     operator.powers[PWR_GENERATE_OPS].cooldown = 0;
-    operator.store[RESOURCE_OPS] = 1;
+    operator.store[RESOURCE_OPS] = 0;
     powerCreepManager.run([room]);
     assert(
       currentRuntime.powerCreepUsePowerActions.length === 1 &&
@@ -8289,7 +8402,7 @@ function runPowerCreepGenerateOpsAutomationScenario() {
         captured.lines.some(function (line) { return line.indexOf("Room W42N9") !== -1; }) &&
         captured.lines.some(function (line) { return line.indexOf("TTL 5000") !== -1; }) &&
         captured.lines.some(function (line) { return line.indexOf("Generate Ops level 1 cooldown 0") !== -1; }) &&
-        captured.lines.some(function (line) { return line.indexOf("Store ops 1/200") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("Store ops 0/200") !== -1; }) &&
         captured.lines.some(function (line) { return line.indexOf("last action generate_ops") !== -1; }) &&
         captured.lines.some(function (line) { return line.indexOf("blocked BLOCKED_ROOM_NOT_POWER_ENABLED") !== -1; }) &&
         captured.lines.join("\n").indexOf("[object Object]") === -1,
@@ -8305,6 +8418,134 @@ function runPowerCreepGenerateOpsAutomationScenario() {
         return action.power === PWR_GENERATE_OPS;
       }),
       `automation must not use other powers, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+    );
+  });
+}
+
+function runPowerCreepOpsBankingScenario() {
+  withPowerCreepSettings({
+    GENERATE_OPS: {
+      ENABLED: true,
+      NAME: "Operator_GenOps",
+      HOME_ROOM: "W42N9",
+      POWER: "PWR_GENERATE_OPS",
+    },
+  }, function () {
+    let room = buildPowerProcessingRoom("W42N9", {
+      tick: 910,
+      terminalStore: { energy: 10000 },
+      storageEnergy: 200000,
+    });
+    room.controller.isPowerEnabled = true;
+    const operator = createPowerCreep("Operator_GenOps", 25, 31, {
+      roomName: room.name,
+      ticksToLive: 1000,
+      powers: {
+        PWR_GENERATE_OPS: { level: 1, cooldown: 0 },
+      },
+      store: { ops: 50 },
+      storeCapacity: 200,
+    });
+
+    powerCreepManager.run([room]);
+
+    assert(
+      currentRuntime.powerCreepTransferActions.length === 1 &&
+        currentRuntime.powerCreepTransferActions[0].resourceType === RESOURCE_OPS &&
+        currentRuntime.powerCreepTransferActions[0].targetType === STRUCTURE_TERMINAL &&
+        currentRuntime.powerCreepTransferActions[0].targetRoom === room.name,
+      `ops banking should transfer only to same-room terminal, got ${JSON.stringify(currentRuntime.powerCreepTransferActions)}`,
+    );
+    assert(operator.store[RESOURCE_OPS] === 0, "ops banking should debit carried ops");
+    assert(room.terminal.store[RESOURCE_OPS] === 50, "ops banking should credit terminal ops");
+    assert(currentRuntime.powerCreepMoveActions.length === 0, "in-range banking should not move");
+    assert(currentRuntime.powerCreepUsePowerActions.length === 0, "banking should not use powers");
+    assert(currentRuntime.enableRoomActions.length === 0, "banking should not enable rooms");
+    assert(currentRuntime.terminalSends.length === 0, "banking should not send terminal resources");
+    assert(
+      Memory.rooms.W42N9.power.generateOps.status === "BANKED_OPS" &&
+        Memory.rooms.W42N9.power.generateOps.bankingAction === "bank_ops_transfer" &&
+        Memory.rooms.W42N9.power.generateOps.bankingTarget === "terminal" &&
+        Memory.rooms.W42N9.power.generateOps.bankingResult === OK &&
+        !Memory.rooms.W42N9.power.generateOps.bankingBlockedReason,
+      `banking should write compact transfer status, got ${JSON.stringify(Memory.rooms.W42N9.power.generateOps)}`,
+    );
+
+    ops.registerGlobals();
+    const captured = captureConsoleLines(function () {
+      return global.ops.room("W42N9", "power");
+    });
+    assert(
+      captured.lines.some(function (line) {
+        return line.indexOf("Ops banking action bank_ops_transfer") !== -1 &&
+          line.indexOf("target terminal") !== -1 &&
+          line.indexOf("result 0") !== -1 &&
+          line.indexOf("blocked none") !== -1;
+      }) &&
+        captured.lines.join("\n").indexOf("[object Object]") === -1,
+      `power report should show printable ops banking state, got ${captured.lines.join(" / ")}`,
+    );
+
+    room = buildPowerProcessingRoom("W42N9", {
+      tick: 911,
+      terminalStore: { energy: 10000 },
+      storageEnergy: 200000,
+    });
+    room.controller.isPowerEnabled = true;
+    createPowerCreep("Operator_GenOps", 20, 20, {
+      roomName: room.name,
+      ticksToLive: 1000,
+      powers: {
+        PWR_GENERATE_OPS: { level: 1, cooldown: 0 },
+      },
+      store: { ops: 25 },
+      storeCapacity: 200,
+    });
+
+    powerCreepManager.run([room]);
+    assert(
+      currentRuntime.powerCreepMoveActions.length === 1 &&
+        currentRuntime.powerCreepMoveActions[0].targetType === STRUCTURE_TERMINAL &&
+        currentRuntime.powerCreepMoveActions[0].targetRoom === room.name,
+      `out-of-range banking should move only toward same-room terminal, got ${JSON.stringify(currentRuntime.powerCreepMoveActions)}`,
+    );
+    assert(currentRuntime.powerCreepTransferActions.length === 0, "out-of-range banking should not transfer yet");
+    assert(currentRuntime.powerCreepUsePowerActions.length === 0, "out-of-range banking should not use powers");
+    assert(currentRuntime.enableRoomActions.length === 0, "out-of-range banking should not enable rooms");
+
+    room = buildPowerProcessingRoom("W42N9", {
+      tick: 912,
+      terminalStore: { energy: 10000 },
+      storageEnergy: 200000,
+    });
+    room.controller.isPowerEnabled = true;
+    const otherRoom = new FakeRoom("W43N9", new FakeTerrain());
+    otherRoom.setController(
+      createController(20, 20, {
+        roomName: otherRoom.name,
+        level: 8,
+        my: true,
+        owner: { username: "tester" },
+      }),
+    );
+    createPowerCreep("Operator_GenOps", 25, 25, {
+      roomName: otherRoom.name,
+      ticksToLive: 1000,
+      powers: {
+        PWR_GENERATE_OPS: { level: 1, cooldown: 0 },
+      },
+      store: { ops: 25 },
+      storeCapacity: 200,
+    });
+
+    powerCreepManager.run([room, otherRoom]);
+    assert(
+      currentRuntime.powerCreepMoveActions.length === 0 &&
+        currentRuntime.powerCreepTransferActions.length === 0 &&
+        currentRuntime.powerCreepUsePowerActions.length === 0 &&
+        currentRuntime.enableRoomActions.length === 0 &&
+        Memory.rooms.W42N9.power.generateOps.bankingBlockedReason === "BLOCKED_BANK_NOT_HOME",
+      `wrong-room banking should block without movement, transfer, powers, or enableRoom, got ${JSON.stringify(Memory.rooms.W42N9.power.generateOps)}`,
     );
   });
 }
@@ -8453,9 +8694,32 @@ function runOperatorSpawnAndScanCommandsScenario() {
   assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "invalid profile must not spawn a creep");
 
   captured = captureConsoleLines(function () {
-    return global.ops.spawn(room.name, "worker", { size: "small", spawn: "Spawn1", dryRun: true });
+    return global.ops.spawn(room.name, "worker", "small", { spawn: "Spawn1", preview: true });
   });
-  assert(captured.result.indexOf("preview OK (0)") !== -1, `dry-run should preview, got ${captured.result}`);
+  assert(
+    captured.result.indexOf("Spawn preview VAL_OP_SCAN") !== -1 &&
+      captured.result.indexOf("Room VAL_OP_SCAN | Role worker | Size small") !== -1 &&
+      captured.result.indexOf("Selected spawn Spawn1") !== -1 &&
+      captured.result.indexOf("Body work, work, carry, move") !== -1 &&
+      captured.result.indexOf("Body counts work 2, carry 1, move 1") !== -1 &&
+      captured.result.indexOf("Cost 300") !== -1 &&
+      captured.result.indexOf("Spawn time 12 ticks") !== -1 &&
+      captured.result.indexOf("Valid now yes | Blocked none") !== -1 &&
+      captured.result.indexOf("[object Object]") === -1,
+    `preview should print exact body, cost, selected spawn, and spawn time, got ${captured.result}`,
+  );
+  assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "preview must not spawn a creep");
+
+  captured = captureConsoleLines(function () {
+    return global.ops.spawn(room.name, "worker", { size: "medium", spawn: "Spawn1", dryRun: true });
+  });
+  assert(
+    captured.result.indexOf("Spawn preview VAL_OP_SCAN") !== -1 &&
+      captured.result.indexOf("Size medium") !== -1 &&
+      captured.result.indexOf("Cost") !== -1 &&
+      captured.result.indexOf("Spawn time") !== -1,
+    `dry-run should use full spawn preview, got ${captured.result}`,
+  );
   assert(currentRuntime.spawnEvents.length === spawnEventsBeforeInvalid, "dry-run must not spawn a creep");
 
   captured = captureConsoleLines(function () {
@@ -15631,6 +15895,7 @@ function main() {
     ["worker_construction_body", runWorkerConstructionBodyScenario],
     ["worker_construction_demand", runWorkerConstructionDemandScenario],
     ["worker_spawn_site_cache", runWorkerSpawnSiteCacheScenario],
+    ["worker_construction_priority_consolidation", runWorkerConstructionPriorityConsolidationScenario],
     ["worker_extension_fallback", runWorkerExtensionFallbackScenario],
     ["worker_extension_with_hauler", runWorkerExtensionFallbackWithHaulerScenario],
     ["tower_banking_threshold", runTowerBankingThresholdScenario],
@@ -15693,6 +15958,7 @@ function main() {
     ["power_creep_renewal_assist", runPowerCreepRenewalAssistScenario],
     ["power_creep_ops_generation_controls", runPowerCreepOpsGenerationControlsScenario],
     ["power_creep_generate_ops_automation", runPowerCreepGenerateOpsAutomationScenario],
+    ["power_creep_ops_banking", runPowerCreepOpsBankingScenario],
     ["operator_spawn_and_scan_commands", runOperatorSpawnAndScanCommandsScenario],
     ["operator_readiness_reports", runOperatorReadinessReportsScenario],
     ["ops_inventory_and_staging_controls", runOpsInventoryAndStagingControlsScenario],
