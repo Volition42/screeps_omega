@@ -174,7 +174,7 @@ module.exports = {
       {
         ENABLED: true,
         MIN_RCL: 8,
-        MIN_STORAGE_ENERGY: 50000,
+        MIN_STORAGE_ENERGY: 5000,
         MIN_TERMINAL_ENERGY: 0,
         PROCESS_UNDER_THREAT: false,
         PROCESS_UNDER_CRITICAL_CPU: false,

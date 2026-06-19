@@ -187,7 +187,7 @@ module.exports = {
     ENABLED: true,
     MIN_RCL: 8,
 
-    MIN_STORAGE_ENERGY: 50000,
+    MIN_STORAGE_ENERGY: 5000,
     MIN_TERMINAL_ENERGY: 0,
     PROCESS_UNDER_THREAT: false,
     PROCESS_UNDER_CRITICAL_CPU: false,
@@ -208,6 +208,12 @@ module.exports = {
     RENEW_TTL_THRESHOLD: 1000,
     RENEW_TARGET_TTL: 4500,
     MOVE_REUSE_PATH: 10,
+    GENERATE_OPS: {
+      ENABLED: true,
+      NAME: "Operator_GenOps",
+      HOME_ROOM: "W42N9",
+      POWER: "PWR_GENERATE_OPS",
+    },
   },
 
   /*
@@ -358,7 +364,7 @@ module.exports = {
     MINERAL_TARGET: 5000,
     POWER_TARGET: 500,
     GHODIUM_TARGET: 5000,
-    MIN_STORAGE_ENERGY: 50000,
+    MIN_STORAGE_ENERGY: 5000,
     MOVE_BATCH: 10000,
     PRIORITY: 62,
   },
@@ -435,19 +441,19 @@ module.exports = {
     FACTORY: {
       ENABLED: true,
       PRODUCT_PRIORITY: ["battery"],
-      MIN_STORAGE_ENERGY: 50000,
+      MIN_STORAGE_ENERGY: 5000,
       FACTORY_ENERGY_TARGET: 1200,
       EXPORT_BATCH: 100,
     },
     POWER_SPAWN: {
       ENABLED: true,
-      MIN_STORAGE_ENERGY: 100000,
+      MIN_STORAGE_ENERGY: 5000,
       ENERGY_TARGET: 3000,
       POWER_TARGET: 50,
     },
     NUKER: {
       ENABLED: true,
-      MIN_STORAGE_ENERGY: 150000,
+      MIN_STORAGE_ENERGY: 5000,
       ENERGY_TARGET: 50000,
       GHODIUM_TARGET: 1000,
     },

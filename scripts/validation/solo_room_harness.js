@@ -1008,6 +1008,7 @@ function createController(x, y, options) {
     my: !!spec.my,
     owner: spec.owner || null,
     reservation: spec.reservation || null,
+    isPowerEnabled: !!spec.isPowerEnabled,
     enableRoom() {
       currentRuntime.enableRoomActions.push({
         roomName: this.room ? this.room.name : this.pos.roomName,
@@ -1265,6 +1266,31 @@ function createPowerCreep(name, x, y, options) {
         tick: Game.time,
       });
       if (!target || !target.pos || !this.pos) return ERR_INVALID_TARGET;
+      return OK;
+    },
+    spawn(powerSpawn) {
+      currentRuntime.spawnPowerCreepActions.push({
+        powerSpawnId: powerSpawn ? powerSpawn.id : null,
+        roomName: powerSpawn && powerSpawn.room
+          ? powerSpawn.room.name
+          : powerSpawn && powerSpawn.pos
+            ? powerSpawn.pos.roomName
+            : null,
+        powerCreepName: this.name,
+        tick: Game.time,
+      });
+      if (!powerSpawn || powerSpawn.structureType !== STRUCTURE_POWER_SPAWN) return ERR_INVALID_TARGET;
+      if (this.ticksToLive || this.room || this.pos) return ERR_BUSY;
+
+      this.ticksToLive = 5000;
+      this.pos = new RoomPosition(powerSpawn.pos.x, powerSpawn.pos.y, powerSpawn.pos.roomName);
+      Object.defineProperty(this, "room", {
+        enumerable: false,
+        configurable: true,
+        get() {
+          return currentRuntime.rooms[this.pos.roomName] || null;
+        },
+      });
       return OK;
     },
     enableRoom(controller) {
@@ -1790,6 +1816,7 @@ const attackManager = require("attack_manager");
 const ops = require("ops");
 const powerManager = require("power_manager");
 const pclManager = require("pcl_manager");
+const powerCreepManager = require("power_creep_manager");
 const invasionLog = require("invasion_log");
 const creepManager = require("creep_manager");
 const hud = require("hud");
@@ -8142,6 +8169,146 @@ function runPowerCreepOpsGenerationControlsScenario() {
   });
 }
 
+function runPowerCreepGenerateOpsAutomationScenario() {
+  withPowerCreepSettings({
+    GENERATE_OPS: {
+      ENABLED: true,
+      NAME: "Operator_GenOps",
+      HOME_ROOM: "W42N9",
+      POWER: "PWR_GENERATE_OPS",
+    },
+  }, function () {
+    resetRuntime(900);
+    powerCreepManager.run([]);
+    assert(
+      Memory.rooms.W42N9.power.generateOps.blockedReason === "BLOCKED_MISSING_POWER_CREEP",
+      `missing Power Creep should block safely, got ${JSON.stringify(Memory.rooms.W42N9.power.generateOps)}`,
+    );
+
+    const noSpawnRoom = buildPowerProcessingRoom("W42N9", {
+      tick: 901,
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 10,
+      storageEnergy: 200000,
+    });
+    noSpawnRoom.controller.isPowerEnabled = true;
+    const powerSpawn = noSpawnRoom.find(FIND_MY_STRUCTURES, {
+      filter(structure) {
+        return structure.structureType === STRUCTURE_POWER_SPAWN;
+      },
+    })[0];
+    noSpawnRoom._structures = noSpawnRoom._structures.filter(function (structure) {
+      return structure.id !== powerSpawn.id;
+    });
+    delete currentRuntime.objectsById[powerSpawn.id];
+    createPowerCreep("Operator_GenOps", 1, 1, {
+      spawned: false,
+      powers: {
+        PWR_GENERATE_OPS: { level: 1, cooldown: 0 },
+      },
+      store: { ops: 0 },
+      storeCapacity: 200,
+    });
+    powerCreepManager.run([noSpawnRoom]);
+    assert(
+      currentRuntime.spawnPowerCreepActions.length === 0 &&
+        Memory.rooms.W42N9.power.generateOps.blockedReason === "BLOCKED_MISSING_POWER_SPAWN",
+      `missing Power Spawn should not spawn, got ${JSON.stringify(Memory.rooms.W42N9.power.generateOps)}`,
+    );
+
+    const room = buildPowerProcessingRoom("W42N9", {
+      tick: 902,
+      powerSpawnEnergy: 500,
+      powerSpawnPower: 10,
+      storageEnergy: 200000,
+    });
+    room.controller.isPowerEnabled = true;
+    const operator = createPowerCreep("Operator_GenOps", 1, 1, {
+      spawned: false,
+      powers: {
+        PWR_GENERATE_OPS: { level: 1, cooldown: 0 },
+      },
+      store: { ops: 0 },
+      storeCapacity: 200,
+    });
+    powerCreepManager.run([room]);
+    assert(
+      currentRuntime.spawnPowerCreepActions.length === 1 &&
+        currentRuntime.spawnPowerCreepActions[0].powerCreepName === "Operator_GenOps" &&
+        Memory.rooms.W42N9.power.generateOps.status === "SPAWNED",
+      `unspawned configured Power Creep should spawn once, got ${JSON.stringify(currentRuntime.spawnPowerCreepActions)}`,
+    );
+    assert(operator.ticksToLive === 5000, "spawn should update fake Power Creep TTL");
+
+    Game.time += 1;
+    operator.powers[PWR_GENERATE_OPS].cooldown = 0;
+    operator.store[RESOURCE_OPS] = 1;
+    powerCreepManager.run([room]);
+    assert(
+      currentRuntime.powerCreepUsePowerActions.length === 1 &&
+        currentRuntime.powerCreepUsePowerActions[0].powerCreepName === "Operator_GenOps" &&
+        currentRuntime.powerCreepUsePowerActions[0].power === PWR_GENERATE_OPS,
+      `cooldown clear should use only PWR_GENERATE_OPS once, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+    );
+    assert(
+      Memory.rooms.W42N9.power.generateOps.status === "GENERATED" &&
+        Memory.rooms.W42N9.power.generateOps.lastAction === "generate_ops" &&
+        Memory.rooms.W42N9.power.generateOps.lastResult === OK,
+      `successful generate should write compact status, got ${JSON.stringify(Memory.rooms.W42N9.power.generateOps)}`,
+    );
+
+    Game.time += 1;
+    operator.powers[PWR_GENERATE_OPS].cooldown = 12;
+    powerCreepManager.run([room]);
+    assert(
+      currentRuntime.powerCreepUsePowerActions.length === 1 &&
+        Memory.rooms.W42N9.power.generateOps.blockedReason === "BLOCKED_COOLDOWN" &&
+        Memory.rooms.W42N9.power.generateOps.lastAction === "idle",
+      `cooldown should not call usePower, got ${JSON.stringify(Memory.rooms.W42N9.power.generateOps)}`,
+    );
+
+    Game.time += 1;
+    operator.powers[PWR_GENERATE_OPS].cooldown = 0;
+    room.controller.isPowerEnabled = false;
+    powerCreepManager.run([room]);
+    assert(
+      currentRuntime.powerCreepUsePowerActions.length === 1 &&
+        currentRuntime.enableRoomActions.length === 0 &&
+        Memory.rooms.W42N9.power.generateOps.blockedReason === "BLOCKED_ROOM_NOT_POWER_ENABLED",
+      `power disabled room should block without enableRoom, got ${JSON.stringify(Memory.rooms.W42N9.power.generateOps)}`,
+    );
+    room.controller.isPowerEnabled = true;
+
+    ops.registerGlobals();
+    const captured = captureConsoleLines(function () {
+      return global.ops.room("W42N9", "power");
+    });
+    assert(typeof captured.result === "object", "ops.room power keeps existing structured return");
+    assert(
+      captured.lines.some(function (line) { return line.indexOf("PowerCreep Operator_GenOps") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("Room W42N9") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("TTL 5000") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("Generate Ops level 1 cooldown 0") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("Store ops 1/200") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("last action generate_ops") !== -1; }) &&
+        captured.lines.some(function (line) { return line.indexOf("blocked BLOCKED_ROOM_NOT_POWER_ENABLED") !== -1; }) &&
+        captured.lines.join("\n").indexOf("[object Object]") === -1,
+      `power report should include printable generate ops diagnostics, got ${captured.lines.join(" / ")}`,
+    );
+
+    assert(currentRuntime.enableRoomActions.length === 0, "automation must not enable rooms");
+    assert(currentRuntime.powerCreepMoveActions.length === 0, "automation must not move Power Creeps");
+    assert(currentRuntime.terminalSends.length === 0, "automation must not send terminal resources");
+    assert(currentRuntime.spawnEvents.length === 0, "automation must not spawn normal creeps");
+    assert(
+      currentRuntime.powerCreepUsePowerActions.every(function (action) {
+        return action.power === PWR_GENERATE_OPS;
+      }),
+      `automation must not use other powers, got ${JSON.stringify(currentRuntime.powerCreepUsePowerActions)}`,
+    );
+  });
+}
+
 function runOperatorReadinessReportsScenario() {
   const room = buildPowerProcessingRoom("VAL_OPERATOR_READY", {
     tick: 888,
@@ -11549,16 +11716,24 @@ function runTerminalBalanceManagerScenario() {
     `resources report should expose balance state, got ${resourceLines.join(" / ")}`,
   );
 
-  room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE_STORAGE_RESERVE", {
-    tick: 1321,
-    storageStore: { energy: 50000 },
-    terminalStore: { energy: 10000 },
+  const previousTerminalBalance = Object.assign({}, config.TERMINAL_BALANCE || {});
+  config.TERMINAL_BALANCE = Object.assign({}, config.TERMINAL_BALANCE || {}, {
+    MIN_STORAGE_ENERGY: 50000,
   });
-  const reserveResult = terminalBalanceManager.evaluate(room);
-  assert(
-    reserveResult.requests.length === 0,
-    "terminal balance should not drain storage below reserve for energy staging",
-  );
+  try {
+    room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE_STORAGE_RESERVE", {
+      tick: 1321,
+      storageStore: { energy: 50000 },
+      terminalStore: { energy: 10000 },
+    });
+    const reserveResult = terminalBalanceManager.evaluate(room);
+    assert(
+      reserveResult.requests.length === 0,
+      "terminal balance should not drain storage below reserve for energy staging",
+    );
+  } finally {
+    config.TERMINAL_BALANCE = previousTerminalBalance;
+  }
 
   room = buildOpsLogisticsRoom("VAL_TERMINAL_BALANCE_NO_DEMAND", {
     tick: 1322,
@@ -15316,6 +15491,7 @@ function main() {
     ["power_creep_positioning_support", runPowerCreepPositioningSupportScenario],
     ["power_creep_renewal_assist", runPowerCreepRenewalAssistScenario],
     ["power_creep_ops_generation_controls", runPowerCreepOpsGenerationControlsScenario],
+    ["power_creep_generate_ops_automation", runPowerCreepGenerateOpsAutomationScenario],
     ["operator_readiness_reports", runOperatorReadinessReportsScenario],
     ["ops_inventory_and_staging_controls", runOpsInventoryAndStagingControlsScenario],
     ["power_spawn_refill_visibility", runPowerSpawnRefillVisibilityScenario],

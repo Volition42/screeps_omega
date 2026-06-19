@@ -1060,6 +1060,7 @@ function getPowerSummary(room) {
       : typeof power.minStorageEnergyOverride === "number"
         ? power.minStorageEnergyOverride
         : null;
+  const generateOps = power.generateOps || {};
 
   return {
     globalEnabled: globalEnabled,
@@ -1132,6 +1133,23 @@ function getPowerSummary(room) {
       ? power.refillLastRequestTick
       : null,
     refillLastCreated: !!power.refillLastCreated,
+    generateOps: {
+      name: generateOps.name || "Operator_GenOps",
+      spawned: !!generateOps.spawned,
+      currentRoom: generateOps.currentRoom || "unknown",
+      ticksToLive: typeof generateOps.ticksToLive === "number" ? generateOps.ticksToLive : null,
+      level: generateOps.level || 0,
+      cooldown: generateOps.cooldown || 0,
+      ops: generateOps.ops || 0,
+      opsCapacity: typeof generateOps.opsCapacity === "number" ? generateOps.opsCapacity : null,
+      homeRoom: generateOps.homeRoom || room.name,
+      powerEnabled: !!generateOps.powerEnabled,
+      lastAction: generateOps.lastAction || "none",
+      lastResult: typeof generateOps.lastResult === "number" ? generateOps.lastResult : null,
+      blockedReason: generateOps.blockedReason || "none",
+      status: generateOps.status || "UNKNOWN",
+      lastTick: typeof generateOps.lastTick === "number" ? generateOps.lastTick : null,
+    },
   };
 }
 
@@ -1622,6 +1640,9 @@ module.exports = {
         `Refill sources energy storage ${fmtAmount(power.refillEnergyStorageAvailable)} terminal ${fmtAmount(power.refillEnergyTerminalAvailable)} | power storage ${fmtAmount(power.refillPowerStorageAvailable)} terminal ${fmtAmount(power.refillPowerTerminalAvailable)} | selected ${power.refillLastResource} from ${power.refillLastSource}`,
         `Refill pending ${powerRefillPending.count} | ${powerRefillPending.summary} | blocked ${power.refillBlockedReason || "none"}`,
         `Refill recent ${power.refillLastCreated ? "created" : "idle"} | tick ${power.refillLastRequestTick !== null ? power.refillLastRequestTick : "--"}`,
+        `PowerCreep ${power.generateOps.name} | State ${power.generateOps.spawned ? "spawned" : "unspawned"} | Room ${power.generateOps.currentRoom} | TTL ${power.generateOps.ticksToLive !== null ? power.generateOps.ticksToLive : "--"}`,
+        `Generate Ops level ${power.generateOps.level} cooldown ${power.generateOps.cooldown} | Store ops ${fmtAmount(power.generateOps.ops)}${power.generateOps.opsCapacity !== null ? "/" + fmtAmount(power.generateOps.opsCapacity) : ""} | Home ${power.generateOps.homeRoom} | Power Enabled ${power.generateOps.powerEnabled ? "yes" : "no"}`,
+        `Generate Ops last action ${power.generateOps.lastAction} | result ${power.generateOps.lastResult !== null ? power.generateOps.lastResult : "--"} | blocked ${power.generateOps.blockedReason || "none"}`,
         `Last processed ${power.lastProcessed !== null ? power.lastProcessed : "--"} | Total ${fmtAmount(power.totalProcessed)} | Last seen ${power.lastSeen !== null ? power.lastSeen : "--"}`,
       ],
       observer: [
