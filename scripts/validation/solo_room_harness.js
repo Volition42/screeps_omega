@@ -15636,6 +15636,214 @@ function runHudConfigControlsScenario() {
   }
 }
 
+function runHudCpuPressureSkipScenario() {
+  const originalHud = Object.assign({}, config.HUD);
+  const originalGetUsed = Game.cpu.getUsed;
+  const room = buildRoomScenario("VAL_HUD_CPU_SKIP", {
+    tick: 1025,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 800,
+    creeps: [
+      { name: "hudCpuWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  const state = roomState.collect(room);
+
+  try {
+    config.HUD.ROOM_SUMMARY = true;
+    config.HUD.CREEP_LABELS = true;
+    config.HUD.CPU_SKIP_BUFFER = 2;
+    Game.cpu.limit = 20;
+    Game.cpu.getUsed = function () { return 19; };
+
+    hud.run(room, state);
+    assert(
+      currentRuntime.visuals.length === 0,
+      `expected non-alert HUD to skip near soft CPU limit, got ${JSON.stringify(currentRuntime.visuals)}`,
+    );
+    assert(
+      Memory.stats.hud &&
+        Memory.stats.hud[room.name] &&
+        Memory.stats.hud[room.name].status === "skipped" &&
+        Memory.stats.hud[room.name].reason === "soft_cpu",
+      `expected HUD skip status in Memory.stats, got ${JSON.stringify(Memory.stats.hud)}`,
+    );
+
+    currentRuntime.visuals = [];
+    state.defense = Object.assign({}, state.defense || {}, { hasThreats: true });
+    hud.run(room, state);
+    assert(
+      currentRuntime.visuals.length > 0,
+      "expected alert HUD to draw even near soft CPU limit",
+    );
+    assert(
+      Memory.stats.hud[room.name].status === "draw" &&
+        Memory.stats.hud[room.name].reason === "alert",
+      `expected alert HUD draw status, got ${JSON.stringify(Memory.stats.hud[room.name])}`,
+    );
+  } finally {
+    config.HUD = originalHud;
+    Game.cpu.getUsed = originalGetUsed;
+  }
+}
+
+function runRoomStateTickLocalCacheScenario() {
+  const room = buildRoomScenario("VAL_ROOM_STATE_CACHE", {
+    tick: 1040,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 800,
+    sourceContainers: true,
+    creeps: [
+      { name: "cacheWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  Memory.runtime.roomStateCacheEnabled = true;
+  const originalFind = room.find.bind(room);
+  const findCounts = {};
+  room.find = function (findType, options) {
+    findCounts[findType] = (findCounts[findType] || 0) + 1;
+    return originalFind(findType, options);
+  };
+
+  const first = roomState.collect(room);
+  const afterFirst = Object.assign({}, findCounts);
+  const second = roomState.collect(room);
+
+  assert(first === second, "expected room_state.collect to reuse same tick-local state object");
+  assert(
+    JSON.stringify(afterFirst) === JSON.stringify(findCounts),
+    `expected second same-tick collect to avoid room.find calls, before ${JSON.stringify(afterFirst)} after ${JSON.stringify(findCounts)}`,
+  );
+  assert(
+    Memory.stats.roomState &&
+      Memory.stats.roomState.hits === 1 &&
+      Memory.stats.roomState.misses === 1,
+    `expected room-state cache hit/miss stats, got ${JSON.stringify(Memory.stats.roomState)}`,
+  );
+
+  Game.time += 1;
+  roomState.collect(room);
+  assert(
+    Memory.stats.roomState &&
+      Memory.stats.roomState.hits === 0 &&
+      Memory.stats.roomState.misses === 1,
+    `expected room-state cache to reset on a new tick, got ${JSON.stringify(Memory.stats.roomState)}`,
+  );
+}
+
+function runWorkerStateSpawnTargetScenario() {
+  const room = buildRoomScenario("VAL_WORKER_STATE_TARGET", {
+    tick: 1050,
+    controllerLevel: 3,
+    spawnEnergy: 100,
+    energyAvailable: 100,
+    energyCapacityAvailable: 800,
+    creeps: [
+      {
+        name: "stateWorker",
+        role: "worker",
+        x: 24,
+        y: 25,
+        store: { energy: 50 },
+        memory: { working: true },
+      },
+    ],
+  });
+  const state = roomState.collect(room);
+  const worker = Game.creeps.stateWorker;
+  const originalFind = room.find.bind(room);
+  const findCounts = {};
+  room.find = function (findType, options) {
+    findCounts[findType] = (findCounts[findType] || 0) + 1;
+    return originalFind(findType, options);
+  };
+
+  roleWorker.run(worker, { thinkInterval: 1, state: state });
+  assert(
+    !findCounts[FIND_MY_STRUCTURES],
+    `expected worker spawn delivery target to reuse state structures, got find counts ${JSON.stringify(findCounts)}`,
+  );
+  assert(
+    currentRuntime.creepActions.some(function (action) {
+      return action.creep === "stateWorker" && action.action === "transfer";
+    }),
+    `expected worker to keep delivering energy, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+}
+
+function runPowerCreepCachedPowerSpawnScenario() {
+  const originalGenerateOps = Object.assign({}, config.POWER_CREEPS.GENERATE_OPS);
+  const room = buildRoomScenario("VAL_POWER_CACHED_SPAWN", {
+    tick: 1060,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 1300,
+    extraStructures: [
+      {
+        type: STRUCTURE_POWER_SPAWN,
+        x: 27,
+        y: 25,
+        options: {
+          store: { energy: 5000, power: 100 },
+          storeCapacityResource: { energy: 5000, power: 100 },
+        },
+      },
+    ],
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  const powerSpawn = room.find(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return structure.structureType === STRUCTURE_POWER_SPAWN;
+    },
+  })[0];
+  const powerCreep = createPowerCreep("CachedOperator", 25, 25, {
+    spawned: false,
+    powers: {
+      [PWR_GENERATE_OPS]: { level: 1, cooldown: 0 },
+    },
+  });
+  Game.powerCreeps[powerCreep.name] = powerCreep;
+  Memory.rooms[room.name] = {
+    power: {
+      powerSpawnId: powerSpawn.id,
+      generateOps: {},
+    },
+  };
+  const originalFind = room.find.bind(room);
+  const findCounts = {};
+  room.find = function (findType, options) {
+    findCounts[findType] = (findCounts[findType] || 0) + 1;
+    return originalFind(findType, options);
+  };
+
+  try {
+    config.POWER_CREEPS.GENERATE_OPS = {
+      ENABLED: true,
+      NAME: powerCreep.name,
+      HOME_ROOM: room.name,
+      POWER: PWR_GENERATE_OPS,
+    };
+
+    powerCreepManager.run([room]);
+    assert(
+      !findCounts[FIND_MY_STRUCTURES],
+      `expected cached power spawn id to avoid FIND_MY_STRUCTURES scan, got ${JSON.stringify(findCounts)}`,
+    );
+    assert(
+      currentRuntime.spawnPowerCreepActions.length === 1,
+      `expected power creep spawn automation to remain functional, got ${JSON.stringify(currentRuntime.spawnPowerCreepActions)}`,
+    );
+  } finally {
+    config.POWER_CREEPS.GENERATE_OPS = originalGenerateOps;
+  }
+}
+
 function runCpuRoomScaleScenario() {
   const policy = config.STATS.RUNTIME_POLICY;
   const twoRooms = statsManager.getRoomScale(policy, 2);
@@ -15754,6 +15962,16 @@ function runOpsCpuReportShapeScenario() {
         { label: "creep_manager", average: 1.8 },
         { label: "spawn_manager", average: 1.1 },
       ],
+      hud: {
+        tick: Game.time,
+        status: "skipped",
+        reason: "soft_cpu",
+      },
+      roomStateCache: {
+        tick: Game.time,
+        hits: 2,
+        misses: 1,
+      },
       scheduler: {
         skippedThisTick: 1,
         tasks: [
@@ -15802,6 +16020,18 @@ function runOpsCpuReportShapeScenario() {
     captured.lines.some(function (line) { return line === "Hotspots by avg"; }) &&
       captured.lines.some(function (line) { return line.indexOf("creep_manager") !== -1 && line.indexOf("1.800") !== -1; }),
     `CPU report should include hotspot section lines, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("HUD skipped") !== -1 && line.indexOf("soft_cpu") !== -1;
+    }),
+    `CPU report should include HUD skip state, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    captured.lines.some(function (line) {
+      return line.indexOf("RoomState cache hit 2") !== -1 && line.indexOf("miss 1") !== -1;
+    }),
+    `CPU report should include room-state cache stats, got ${captured.lines.join(" / ")}`,
   );
 
   captured = captureConsoleLines(function () {
@@ -16921,6 +17151,10 @@ function main() {
     ["expansion_stale_threat_defense", runExpansionStaleThreatDefenseScenario],
     ["expansion_threat_retreat", runExpansionThreatRetreatScenario],
     ["hud_config_controls", runHudConfigControlsScenario],
+    ["hud_cpu_pressure_skip", runHudCpuPressureSkipScenario],
+    ["room_state_tick_local_cache", runRoomStateTickLocalCacheScenario],
+    ["worker_state_spawn_target", runWorkerStateSpawnTargetScenario],
+    ["power_creep_cached_power_spawn", runPowerCreepCachedPowerSpawnScenario],
     ["cpu_soft_limit", runCpuSoftLimitScenario],
     ["ops_cpu_report_shape", runOpsCpuReportShapeScenario],
     ["production_factory_visibility", runProductionFactoryVisibilityScenario],

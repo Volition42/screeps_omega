@@ -320,6 +320,7 @@ Defense:
 CPU:
 
 - `ops.cpu([roomName])` and `ops.cpuStatus([roomName])`: room CPU report.
+- CPU reports include section hotspots, scheduler skips, HUD draw/skip state, and room-state cache hit/miss counters.
 - `ops.tickRate([sampleTicks|status|cancel])` and `ops.tickSpeed(...)`: wall-clock tick-speed probe.
 
 Reporting:
@@ -440,7 +441,7 @@ Remote reservation lost:
 Room CPU high:
 
 - Run `ops.cpu("ROOM")`.
-- Review pressure, trend, scheduler skips, and top section cost lines.
+- Review pressure, trend, scheduler skips, HUD skip state, room-state cache counters, and top section cost lines.
 - Run `ops.tickRate("status")` if a wall-clock probe is already active, or `ops.tickRate(5)` to sample.
 
 Terminal clogged or market blocked:

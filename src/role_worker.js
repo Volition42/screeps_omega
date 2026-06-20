@@ -68,6 +68,7 @@ module.exports = {
   run(creep, options) {
     var thinkInterval =
       options && options.thinkInterval ? options.thinkInterval : 1;
+    var state = options && options.state ? options.state : this.getRuntimeState(creep.room);
 
     if (this.travelToSupportTarget(creep)) {
       return;
@@ -87,7 +88,7 @@ module.exports = {
     }
 
     if (!creep.memory.working) {
-      let target = this.getWithdrawalTarget(creep, thinkInterval);
+      let target = this.getWithdrawalTarget(creep, thinkInterval, state);
 
       if (!target) return;
 
@@ -124,7 +125,7 @@ module.exports = {
       return;
     }
 
-    const workTarget = this.getWorkTarget(creep, thinkInterval);
+    const workTarget = this.getWorkTarget(creep, thinkInterval, state);
 
     if (this.isRoomEnergyDeliveryTarget(workTarget)) {
       if (creep.transfer(workTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -148,7 +149,7 @@ module.exports = {
     }
 
     if (creep.room.controller) {
-      if (!this.shouldAllowControllerFallback(creep.room, this.getRuntimeState(creep.room))) {
+      if (!this.shouldAllowControllerFallback(creep.room, state)) {
         roleIntentDiagnostics.recordDeferred(
           creep.room,
           "upgrade-gcl-push-blocked",
@@ -183,8 +184,8 @@ module.exports = {
     return true;
   },
 
-  getWithdrawalTarget(creep, thinkInterval) {
-    const state = this.getRuntimeState(creep.room);
+  getWithdrawalTarget(creep, thinkInterval, runtimeState) {
+    const state = runtimeState || this.getRuntimeState(creep.room);
     let target = this.getCachedWithdrawalTarget(creep);
     const hasConstruction = !!(state && state.sites && state.sites.length > 0);
 
@@ -281,8 +282,8 @@ module.exports = {
       creep.pos.findClosestByRange(candidates);
   },
 
-  getWorkTarget(creep, thinkInterval) {
-    const state = this.getRuntimeState(creep.room);
+  getWorkTarget(creep, thinkInterval, runtimeState) {
+    const state = runtimeState || this.getRuntimeState(creep.room);
     const cached = this.getCachedWorkTarget(creep);
 
     if (cached && !this.shouldThink(creep, thinkInterval, "workerWork")) {
@@ -291,14 +292,7 @@ module.exports = {
 
     const bankingReserve = reservePolicy.shouldBankStorageEnergy(creep.room, state);
 
-    let target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-      filter: function (s) {
-        return (
-          s.structureType === STRUCTURE_SPAWN &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-        );
-      },
-    });
+    let target = this.getSpawnEnergyTarget(creep, state);
 
     if (!target && !this.hasRoomHauler(creep.room, state)) {
       target = logisticsManager.getExtensionDeliveryTarget(creep.room, creep);
@@ -324,6 +318,33 @@ module.exports = {
 
     this.storeWorkTarget(creep, target);
     return target;
+  },
+
+  getSpawnEnergyTarget(creep, state) {
+    const spawns =
+      state && state.structuresByType && state.structuresByType[STRUCTURE_SPAWN]
+        ? state.structuresByType[STRUCTURE_SPAWN]
+        : null;
+    const candidates = [];
+
+    if (spawns) {
+      for (let i = 0; i < spawns.length; i++) {
+        const spawn = spawns[i];
+        if (spawn.store && spawn.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+          candidates.push(spawn);
+        }
+      }
+      return candidates.length > 0 ? creep.pos.findClosestByPath(candidates) : null;
+    }
+
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+      filter: function (s) {
+        return (
+          s.structureType === STRUCTURE_SPAWN &&
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+      },
+    });
   },
 
   getRuntimeState(room) {

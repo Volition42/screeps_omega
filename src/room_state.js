@@ -35,8 +35,52 @@ const defenseManager = require("defense_manager");
 const logisticsManager = require("logistics_manager");
 const terminalBalanceManager = require("terminal_balance_manager");
 
+var collectCacheTick = null;
+var collectCacheByRoom = {};
+var collectCacheStats = {
+  tick: null,
+  hits: 0,
+  misses: 0,
+};
+
+function resetCollectCacheIfNeeded() {
+  const memoryStatsPresent = !!(
+    Memory.stats &&
+    Memory.stats.roomState &&
+    Memory.stats.roomState.tick === Game.time
+  );
+  if (collectCacheTick === Game.time && memoryStatsPresent) return;
+
+  collectCacheTick = Game.time;
+  collectCacheByRoom = {};
+  collectCacheStats = {
+    tick: Game.time,
+    hits: 0,
+    misses: 0,
+  };
+}
+
+function recordCollectCacheStats() {
+  if (!Memory.stats) Memory.stats = {};
+  Memory.stats.roomState = {
+    tick: collectCacheStats.tick,
+    hits: collectCacheStats.hits,
+    misses: collectCacheStats.misses,
+  };
+}
+
 module.exports = {
   collect(room, profiler, roomLabelPrefix) {
+    resetCollectCacheIfNeeded();
+
+    const cacheEnabled = this.isCollectCacheEnabled();
+    if (cacheEnabled && collectCacheByRoom[room.name]) {
+      collectCacheStats.hits += 1;
+      recordCollectCacheStats();
+      return collectCacheByRoom[room.name];
+    }
+
+    collectCacheStats.misses += 1;
     var creeps = room.find(FIND_MY_CREEPS);
     var homeCreeps = this.getHomeCreeps(room.name);
     var spawns = room.find(FIND_MY_SPAWNS);
@@ -139,7 +183,27 @@ module.exports = {
     finalState.logistics = logisticsManager.getRoomPlan(room, finalState);
     finalState.terminalBalance = terminalBalanceManager.getStatus(room);
 
+    if (cacheEnabled) {
+      collectCacheByRoom[room.name] = finalState;
+    }
+    recordCollectCacheStats();
     return finalState;
+  },
+
+  isCollectCacheEnabled() {
+    return !!(
+      Memory.runtime &&
+      Memory.runtime.roomStateCacheEnabled === true
+    );
+  },
+
+  getCollectCacheStats() {
+    resetCollectCacheIfNeeded();
+    return {
+      tick: collectCacheStats.tick,
+      hits: collectCacheStats.hits,
+      misses: collectCacheStats.misses,
+    };
   },
 
   createState(sharedState, phase) {

@@ -42,7 +42,9 @@ const RETREAT_MOVE_OPTIONS = {
 
 module.exports = {
   run(room, state, profiler, roomLabelPrefix, runtimeMode) {
-    const creeps = state && state.homeCreeps ? state.homeCreeps.slice() : [];
+    const creeps = this.getOrderedCreeps(
+      state && state.homeCreeps ? state.homeCreeps : [],
+    );
     const roleLabelPrefix =
       profiler && roomLabelPrefix ? `${roomLabelPrefix}.creeps.role.` : null;
     const thinkMultiplier =
@@ -96,6 +98,7 @@ module.exports = {
       );
       const roleOptions = {
         thinkInterval: thinkInterval,
+        state: state,
       };
 
       switch (creep.memory.role) {
@@ -208,6 +211,36 @@ module.exports = {
           break;
       }
     }
+  },
+
+  getOrderedCreeps(creeps) {
+    if (!creeps || creeps.length <= 1) return creeps || [];
+
+    const buckets = [];
+    const ordered = [];
+    for (let i = 0; i <= 10; i++) {
+      buckets[i] = [];
+    }
+
+    for (let i = 0; i < creeps.length; i++) {
+      const creep = creeps[i];
+      const priority = Math.max(
+        0,
+        Math.min(
+          10,
+          this.getRoleCpuPriority(creep.memory ? creep.memory.role : null),
+        ),
+      );
+      buckets[priority].push(creep);
+    }
+
+    for (let priority = 0; priority < buckets.length; priority++) {
+      for (let i = 0; i < buckets[priority].length; i++) {
+        ordered.push(buckets[priority][i]);
+      }
+    }
+
+    return ordered;
   },
 
   getRoleThinkInterval(role, multiplier) {

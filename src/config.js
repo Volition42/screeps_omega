@@ -28,7 +28,8 @@ module.exports = {
   HUD: {
     ENABLED: true,
     ROOM_SUMMARY: true,
-    ROOM_SUMMARY_INTERVAL: 1,
+    ROOM_SUMMARY_INTERVAL: 5,
+    CPU_SKIP_BUFFER: 2,
     CREEP_LABELS: true,
     LABEL_INTERVAL: 1,
   },

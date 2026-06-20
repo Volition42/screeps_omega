@@ -187,14 +187,45 @@ module.exports = {
     return Game.powerCreeps && Game.powerCreeps[name] ? Game.powerCreeps[name] : null;
   },
 
-  getOwnedPowerSpawn(room) {
+  getOwnedPowerSpawn(room, mem) {
     if (!room || typeof room.find !== "function") return null;
+    if (mem && mem.powerSpawnId) {
+      const cached = Game.getObjectById(mem.powerSpawnId);
+      if (
+        cached &&
+        cached.structureType === STRUCTURE_POWER_SPAWN &&
+        cached.pos &&
+        cached.pos.roomName === room.name
+      ) {
+        return cached;
+      }
+    }
+
+    const roomPowerMemory =
+      Memory.rooms && Memory.rooms[room.name] && Memory.rooms[room.name].power
+        ? Memory.rooms[room.name].power
+        : null;
+    if (roomPowerMemory && roomPowerMemory.powerSpawnId) {
+      const known = Game.getObjectById(roomPowerMemory.powerSpawnId);
+      if (
+        known &&
+        known.structureType === STRUCTURE_POWER_SPAWN &&
+        known.pos &&
+        known.pos.roomName === room.name
+      ) {
+        if (mem) mem.powerSpawnId = known.id;
+        return known;
+      }
+    }
+
     const structures = room.find(FIND_MY_STRUCTURES, {
       filter(structure) {
         return structure.structureType === STRUCTURE_POWER_SPAWN;
       },
     });
-    return structures && structures.length > 0 ? structures[0] : null;
+    const powerSpawn = structures && structures.length > 0 ? structures[0] : null;
+    if (powerSpawn && mem) mem.powerSpawnId = powerSpawn.id;
+    return powerSpawn;
   },
 
   runSpawn(settings, room, powerCreep, mem) {
@@ -203,7 +234,7 @@ module.exports = {
       return mem;
     }
 
-    const powerSpawn = this.getOwnedPowerSpawn(room);
+    const powerSpawn = this.getOwnedPowerSpawn(room, mem);
     if (!powerSpawn) {
       this.writeStatus(mem, settings, room, powerCreep, STATUS.BLOCKED_MISSING_POWER_SPAWN, "spawn", null);
       return mem;

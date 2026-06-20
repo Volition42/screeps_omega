@@ -16,9 +16,13 @@ const statsManager = require("stats_manager");
 const attackManager = require("attack_manager");
 const invasionLog = require("invasion_log");
 const scheduler = require("scheduler");
+const config = require("config");
 
 module.exports = {
   run(room, profiler) {
+    if (!Memory.runtime) Memory.runtime = {};
+    Memory.runtime.roomStateCacheEnabled = true;
+
     const roomLabel = `room.${room.name}`;
     const detailCpu =
       profiler &&
@@ -168,11 +172,13 @@ module.exports = {
       );
     }
     const hudKey = `room.${room.name}.hud`;
+    const alertActive = hud.hasAlert(state);
     const hudDecision =
-      !runtimeMode.skipHud && !statsManager.isPastSoftCpuLimit(1)
+      (alertActive || !runtimeMode.skipHud) &&
+      (alertActive || !statsManager.isPastSoftCpuLimit(1))
         ? this.getOptionalDecision(
             hudKey,
-            this.getHudInterval(runtimeMode),
+            alertActive ? 1 : this.getHudInterval(runtimeMode),
             runtimeMode,
           )
         : { ok: false, reason: runtimeMode.skipHud ? "pressure" : "soft_cpu" };
@@ -227,9 +233,14 @@ module.exports = {
   },
 
   getHudInterval(runtimeMode) {
-    if (!runtimeMode || runtimeMode.pressure === "normal") return 1;
-    if (runtimeMode.pressure === "tight") return 10;
-    return 25;
+    const base =
+      config.HUD && config.HUD.ROOM_SUMMARY_INTERVAL
+        ? Math.max(1, config.HUD.ROOM_SUMMARY_INTERVAL)
+        : 5;
+
+    if (!runtimeMode || runtimeMode.pressure === "normal") return base;
+    if (runtimeMode.pressure === "tight") return Math.max(base, 10);
+    return Math.max(base, 25);
   },
 
   captureLiveSnapshot(room, state, runtimeMode) {

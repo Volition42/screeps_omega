@@ -2104,6 +2104,9 @@ function getCpuSummary(room) {
         ? roomCpu.pressureCounts
         : null,
     scheduler: roomCpu && roomCpu.scheduler ? roomCpu.scheduler : null,
+    hud: roomCpu && roomCpu.hud ? roomCpu.hud : null,
+    roomStateCache:
+      roomCpu && roomCpu.roomStateCache ? roomCpu.roomStateCache : null,
     tick: roomCpu ? roomCpu.tick : last.tick,
     creepCount:
       roomCpu && typeof roomCpu.creepCount === "number"
@@ -2266,6 +2269,22 @@ function formatSchedulerSkipLine(cpu) {
   if (parts.length === 0) return "Scheduler skips none";
 
   return `Scheduler skips ${scheduler.skippedThisTick || 0} now | ${parts.join(" | ")}`;
+}
+
+function formatHudCpuLine(cpu) {
+  const hud = cpu.hud;
+  if (!hud) {
+    return `HUD skip ${cpu.skipHud ? "pressure" : "no"} | state unknown`;
+  }
+
+  return `HUD ${hud.status || "unknown"} | reason ${hud.reason || "none"} | tick ${hud.tick || "--"}`;
+}
+
+function formatRoomStateCacheLine(cpu) {
+  const cache = cpu.roomStateCache;
+  if (!cache) return "RoomState cache unknown";
+
+  return `RoomState cache hit ${cache.hits || 0} | miss ${cache.misses || 0} | tick ${cache.tick || "--"}`;
 }
 
 function getAdvancedSummary(room, state) {
@@ -2977,6 +2996,8 @@ module.exports = {
           ? `Skip directives ${cpu.skipDirectives ? "yes" : "no"} | skip HUD ${cpu.skipHud ? "yes" : "no"}`
           : "Skip directives no | skip HUD no",
         cpu.available ? formatSchedulerSkipLine(cpu) : "Scheduler skips unknown",
+        cpu.available ? formatHudCpuLine(cpu) : "HUD state unknown",
+        cpu.available ? formatRoomStateCacheLine(cpu) : "RoomState cache unknown",
       ],
       resources: [
         `[OPS][${room.name}][RESOURCES]`,

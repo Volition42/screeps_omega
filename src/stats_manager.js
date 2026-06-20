@@ -145,6 +145,14 @@ module.exports = {
         Memory.stats && Memory.stats.scheduler
           ? Memory.stats.scheduler
           : null,
+      hud:
+        Memory.stats && Memory.stats.hud
+          ? Memory.stats.hud
+          : null,
+      roomState:
+        Memory.stats && Memory.stats.roomState
+          ? Memory.stats.roomState
+          : null,
     };
   },
 
@@ -213,6 +221,8 @@ module.exports = {
         ? Memory.runtime.rooms[roomName] || null
         : null;
     const scheduler = this.buildRoomSchedulerCpuSummary(roomName);
+    const hud = this.buildRoomHudCpuSummary(roomName);
+    const roomStateCache = this.buildRoomStateCacheSummary();
 
     if (!Memory.stats.rooms[roomName]) Memory.stats.rooms[roomName] = {};
     Memory.stats.rooms[roomName].cpu = {
@@ -233,7 +243,37 @@ module.exports = {
       sections: sectionRows,
       hotspots: this.buildRoomHotspots(sectionRows, settings),
       scheduler: scheduler,
+      hud: hud,
+      roomStateCache: roomStateCache,
     };
+  },
+
+  buildRoomHudCpuSummary(roomName) {
+    const hudStats =
+      Memory.stats && Memory.stats.hud && Memory.stats.hud[roomName]
+        ? Memory.stats.hud[roomName]
+        : null;
+
+    return hudStats
+      ? {
+          tick: hudStats.tick || null,
+          status: hudStats.status || "unknown",
+          reason: hudStats.reason || null,
+        }
+      : null;
+  },
+
+  buildRoomStateCacheSummary() {
+    const stats =
+      Memory.stats && Memory.stats.roomState ? Memory.stats.roomState : null;
+
+    return stats
+      ? {
+          tick: stats.tick || null,
+          hits: stats.hits || 0,
+          misses: stats.misses || 0,
+        }
+      : null;
   },
 
   buildRoomSectionCpuRows(roomName, sections, previous, alpha) {

@@ -13,10 +13,12 @@ const opsState = require("ops_state");
 const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const roomReporting = require("room_reporting");
+const statsManager = require("stats_manager");
 
 module.exports = {
   run(room, state) {
     if (!opsState.getHudEnabled()) return;
+    if (this.shouldSkipForCpu(room, state)) return;
 
     if (this.isRoomSummaryEnabled()) {
       this.drawSummary(room, state);
@@ -97,7 +99,7 @@ module.exports = {
       cache.alertActive;
 
     if (needsRefresh) {
-      const report = roomReporting.build(room, state, { updateProgress: true });
+      const report = roomReporting.build(room, state, { updateProgress: false });
       cache.tick = Game.time;
       cache.hudLines = report.hudLines;
       cache.phase = report.state && report.state.phase ? report.state.phase : phase;
@@ -140,6 +142,41 @@ module.exports = {
     return config.HUD && config.HUD.ROOM_SUMMARY_INTERVAL
       ? Math.max(1, config.HUD.ROOM_SUMMARY_INTERVAL)
       : 1;
+  },
+
+  shouldSkipForCpu(room, state) {
+    if (this.hasAlert(state)) {
+      this.writeHudStatus(room, "draw", "alert");
+      return false;
+    }
+
+    if (!Game.cpu || typeof Game.cpu.getUsed !== "function") {
+      this.writeHudStatus(room, "draw", "no_cpu");
+      return false;
+    }
+
+    const buffer =
+      config.HUD && typeof config.HUD.CPU_SKIP_BUFFER === "number"
+        ? Math.max(0, config.HUD.CPU_SKIP_BUFFER)
+        : 2;
+
+    if (statsManager.isPastSoftCpuLimit(buffer)) {
+      this.writeHudStatus(room, "skipped", "soft_cpu");
+      return true;
+    }
+
+    this.writeHudStatus(room, "draw", "ok");
+    return false;
+  },
+
+  writeHudStatus(room, status, reason) {
+    if (!Memory.stats) Memory.stats = {};
+    if (!Memory.stats.hud) Memory.stats.hud = {};
+    Memory.stats.hud[room.name] = {
+      tick: Game.time,
+      status: status,
+      reason: reason,
+    };
   },
 
   hasAlert(state) {
