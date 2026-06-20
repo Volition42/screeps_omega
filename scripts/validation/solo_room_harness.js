@@ -15441,6 +15441,318 @@ function runOpsCpuReportShapeScenario() {
   );
 }
 
+function runProductionFactoryVisibilityScenario() {
+  const room = buildRoomScenario("VAL_FACTORY_VIS", {
+    tick: 1085,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 3000,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  const storage = room.addStructure(createStructure(STRUCTURE_STORAGE, 24, 24, {
+    roomName: room.name,
+    store: { energy: 100000, battery: 500 },
+    storeCapacity: 1000000,
+  }));
+  room.addStructure(createStructure(STRUCTURE_TERMINAL, 25, 24, {
+    roomName: room.name,
+    store: { energy: 5000, battery: 100 },
+    storeCapacity: 300000,
+  }));
+  const factory = room.addStructure(createStructure(STRUCTURE_FACTORY, 26, 24, {
+    roomName: room.name,
+    store: { energy: 600, battery: 250 },
+    storeCapacity: 50000,
+    cooldown: 0,
+  }));
+  Memory.rooms[room.name] = {
+    advancedOps: {
+      summary: {
+        factoryStatus: "ready",
+        factoryProduct: "battery",
+        labStatus: "inactive",
+        powerSpawnStatus: "inactive",
+        nukerStatus: "inactive",
+        taskLabel: "factory_output",
+        taskBacklog: [
+          { label: "factory_output", resourceType: "battery", amount: 250 },
+        ],
+      },
+    },
+  };
+  ops.registerGlobals();
+  const terminalSendsBefore = currentRuntime.terminalSends.length;
+  const spawnEventsBefore = currentRuntime.spawnEvents.length;
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "factory");
+  });
+  assert(captured.result === `[OPS][${room.name}][FACTORY] report generated`, `factory report should return printable status, got ${captured.result}`);
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("[FACTORY]") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Factory exists") !== -1 && line.indexOf("State accumulating") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Recipe battery") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Battery 850") !== -1 && line.indexOf("Energy 600") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Output accumulation battery 250>=100") !== -1; }) &&
+      captured.lines.join("\n").indexOf("[object Object]") === -1,
+    `factory report should include printable battery/energy/state/output details, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.factory(room.name, "battery");
+  });
+  assert(
+    captured.result === `[OPS][${room.name}][FACTORY] report generated` &&
+      captured.lines.some(function (line) { return line.indexOf("preview battery | No production executed") !== -1; }),
+    `ops.factory battery should be report-only preview, got ${captured.lines.join(" / ")}`,
+  );
+  assert(currentRuntime.terminalSends.length === terminalSendsBefore, "factory reports must not send terminal resources");
+  assert(currentRuntime.spawnEvents.length === spawnEventsBefore, "factory reports must not spawn creeps");
+  assert(storage.store.energy === 100000 && factory.store.energy === 600, "factory reports must not move resources");
+
+  const missingRoom = buildRoomScenario("VAL_FACTORY_MISSING", {
+    tick: 1086,
+    controllerLevel: 8,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+  missingRoom.controller.my = true;
+  missingRoom.controller.owner = { username: "tester" };
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.room(missingRoom.name, "factory");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Factory missing") !== -1; }) &&
+      captured.lines.join("\n").indexOf("[object Object]") === -1,
+    `missing factory report should be printable, got ${captured.lines.join(" / ")}`,
+  );
+}
+
+function runProductionLabVisibilityScenario() {
+  const room = buildRoomScenario("VAL_LABS_VIS", {
+    tick: 1090,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 3000,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  room.addStructure(createStructure(STRUCTURE_STORAGE, 24, 24, {
+    roomName: room.name,
+    store: { energy: 100000, H: 1000, O: 1000 },
+    storeCapacity: 1000000,
+  }));
+  room.addStructure(createStructure(STRUCTURE_TERMINAL, 25, 24, {
+    roomName: room.name,
+    store: { energy: 5000 },
+    storeCapacity: 300000,
+  }));
+  const inputA = room.addStructure(createStructure(STRUCTURE_LAB, 26, 24, {
+    roomName: room.name,
+    store: { energy: 500, H: 100 },
+    storeCapacity: 3000,
+    cooldown: 0,
+  }));
+  inputA.mineralType = "H";
+  const inputB = room.addStructure(createStructure(STRUCTURE_LAB, 27, 24, {
+    roomName: room.name,
+    store: { energy: 500, O: 100 },
+    storeCapacity: 3000,
+    cooldown: 0,
+  }));
+  inputB.mineralType = "O";
+  const reactor = room.addStructure(createStructure(STRUCTURE_LAB, 26, 25, {
+    roomName: room.name,
+    store: { energy: 250, OH: 300 },
+    storeCapacity: 3000,
+    cooldown: 2,
+  }));
+  reactor.mineralType = "OH";
+  Memory.rooms[room.name] = {
+    advancedOps: {
+      labLayout: {
+        signature: [inputA.id, inputB.id, reactor.id].sort().join(":"),
+        inputIds: [inputA.id, inputB.id],
+        reactorIds: [reactor.id],
+      },
+      summary: {
+        labStatus: "making_boost",
+        labProduct: "OH",
+        labGoal: "OH",
+        labNeed: 700,
+        labReason: "priority_fallback",
+        factoryStatus: "inactive",
+        powerSpawnStatus: "inactive",
+        nukerStatus: "inactive",
+        taskLabel: "lab_output",
+        taskBacklog: [
+          { label: "lab_output", resourceType: "OH", amount: 300 },
+        ],
+      },
+    },
+  };
+  ops.registerGlobals();
+  const terminalSendsBefore = currentRuntime.terminalSends.length;
+  const spawnEventsBefore = currentRuntime.spawnEvents.length;
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "labs");
+  });
+  assert(captured.result === `[OPS][${room.name}][LABS] report generated`, `labs report should return printable status, got ${captured.result}`);
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Labs 3") !== -1 && line.indexOf("State accumulating") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Reaction OH") !== -1 && line.indexOf("Reagents H + O") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Energy 1,250") !== -1 && line.indexOf("Cooldowns 1") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Missing reagents none") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Output accumulation") !== -1 && line.indexOf("OH 300") !== -1; }) &&
+      captured.lines.join("\n").indexOf("[object Object]") === -1,
+    `labs report should include printable reaction/reagent/output details, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.labs(room.name, "preview");
+  });
+  assert(
+    captured.result === `[OPS][${room.name}][LABS] report generated` &&
+      captured.lines.some(function (line) { return line.indexOf("preview | No reaction executed") !== -1; }),
+    `ops.labs preview should be report-only, got ${captured.lines.join(" / ")}`,
+  );
+  assert(currentRuntime.terminalSends.length === terminalSendsBefore, "lab reports must not send terminal resources");
+  assert(currentRuntime.spawnEvents.length === spawnEventsBefore, "lab reports must not spawn creeps");
+
+  const missingRoom = buildRoomScenario("VAL_LABS_MISSING", {
+    tick: 1091,
+    controllerLevel: 6,
+    sourceContainers: true,
+    supportContainers: true,
+  });
+  missingRoom.controller.my = true;
+  missingRoom.controller.owner = { username: "tester" };
+  ops.registerGlobals();
+  captured = captureConsoleLines(function () {
+    return global.ops.room(missingRoom.name, "labs");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Labs missing") !== -1; }) &&
+      captured.lines.join("\n").indexOf("[object Object]") === -1,
+    `missing labs report should be printable, got ${captured.lines.join(" / ")}`,
+  );
+}
+
+function addMinimalOwnedRoom(name, options) {
+  const settings = options || {};
+  const room = new FakeRoom(name, new FakeTerrain());
+  room.setController(createController(20, 20, {
+    roomName: name,
+    level: settings.controllerLevel || 3,
+  }));
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  room.addStructure(createStructure(STRUCTURE_SPAWN, 25, 25, {
+    roomName: name,
+    name: settings.spawnName || "Spawn1",
+    store: { energy: settings.spawnEnergy || 300 },
+    storeCapacityResource: { energy: 300 },
+    spawning: settings.spawning || null,
+  }));
+  room.addSource(createSource(15, 25, { roomName: name }));
+  room.addSource(createSource(35, 25, { roomName: name }));
+  room.addMineral(createMineral(40, 10, { roomName: name }));
+  room.energyAvailable = settings.energyAvailable !== undefined ? settings.energyAvailable : 300;
+  room.energyCapacityAvailable = settings.energyCapacityAvailable || 300;
+  if (settings.sourceContainers) {
+    addContainersForSources(room, room.find(FIND_SOURCES));
+  }
+  return room;
+}
+
+function runLaborDiagnosticsVisibilityScenario() {
+  const room = buildRoomScenario("VAL_LABOR_BUSY", {
+    tick: 1095,
+    controllerLevel: 3,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 550,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    creeps: [],
+  });
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  room.spawn.spawning = { name: "miner_1095", remainingTime: 10 };
+  Memory.rooms[room.name] = {
+    spawnQueue: [
+      {
+        role: "worker",
+        priority: 90,
+        bodyCost: 300,
+        energyAvailable: 300,
+        energyCapacity: 550,
+      },
+    ],
+  };
+  const lowEnergyRoom = addMinimalOwnedRoom("VAL_LABOR_ENERGY", {
+    controllerLevel: 3,
+    energyAvailable: 100,
+    energyCapacityAvailable: 300,
+    sourceContainers: true,
+  });
+  Memory.rooms[lowEnergyRoom.name] = {
+    spawnQueue: [
+      {
+        role: "worker",
+        priority: 90,
+        bodyCost: 300,
+        energyAvailable: 100,
+        energyCapacity: 300,
+      },
+    ],
+  };
+  ops.registerGlobals();
+  const spawnEventsBefore = currentRuntime.spawnEvents.length;
+
+  let captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "labor");
+  });
+  assert(captured.result === `[OPS][${room.name}][LABOR] report generated`, `labor report should return printable status, got ${captured.result}`);
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Labor 0/2") !== -1 && line.indexOf("Deficit 2") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Next stabilize the early economy backbone") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Pending worker") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Blocked reason busy spawn") !== -1; }) &&
+      captured.lines.join("\n").indexOf("[object Object]") === -1,
+    `labor report should explain worker deficit and blocker, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.empire("labor");
+  });
+  assert(
+    captured.result &&
+      captured.result.section === "labor" &&
+      captured.lines.some(function (line) { return line.indexOf("Rooms evaluated 2") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Labor deficit rooms 2") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Spawn busy 1") !== -1 && line.indexOf("Energy insufficient 1") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Repeated restore-next 0") !== -1; }) &&
+      captured.lines.join("\n").indexOf("[object Object]") === -1,
+    `empire labor rollup should count deficits and blockers, got ${captured.lines.join(" / ")}`,
+  );
+  assert(currentRuntime.spawnEvents.length === spawnEventsBefore, "labor diagnostics must not spawn creeps");
+}
+
 function runObserverSchedulerScenario() {
   const room = buildRoomScenario("W5N5", {
     tick: 1000,
@@ -16035,6 +16347,9 @@ function main() {
     ["hud_config_controls", runHudConfigControlsScenario],
     ["cpu_soft_limit", runCpuSoftLimitScenario],
     ["ops_cpu_report_shape", runOpsCpuReportShapeScenario],
+    ["production_factory_visibility", runProductionFactoryVisibilityScenario],
+    ["production_lab_visibility", runProductionLabVisibilityScenario],
+    ["labor_diagnostics_visibility", runLaborDiagnosticsVisibilityScenario],
     ["observer_scheduler", runObserverSchedulerScenario],
     ["cpu_room_scale", runCpuRoomScaleScenario],
     ["scheduler_stagger", runSchedulerStaggerScenario],

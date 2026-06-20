@@ -19,6 +19,9 @@ const SECTION_ORDER = [
   "roles",
   "sources",
   "resources",
+  "factory",
+  "labs",
+  "labor",
   "logistics",
   "advanced",
   "power",
@@ -624,6 +627,628 @@ function formatAdvancedBacklogLine(logistics) {
     : null;
 
   return "Advanced Backlog " + (backlog ? backlog.summary : "none");
+}
+
+function getStoredAmount(target, resourceType) {
+  if (!target || !target.store) return 0;
+  if (typeof target.store.getUsedCapacity === "function") {
+    const used = target.store.getUsedCapacity(resourceType);
+    if (typeof used === "number" && used > 0) return used;
+  }
+
+  return target.store[resourceType] || 0;
+}
+
+function getStoreResourceTypes(target) {
+  const resources = [];
+  if (!target || !target.store) return resources;
+
+  for (const resourceType in target.store) {
+    if (!Object.prototype.hasOwnProperty.call(target.store, resourceType)) continue;
+    if (getStoredAmount(target, resourceType) <= 0) continue;
+    resources.push(resourceType);
+  }
+
+  return resources.sort();
+}
+
+function formatStoreSummary(target, limit) {
+  const resources = getStoreResourceTypes(target);
+  if (resources.length === 0) return "empty";
+
+  const visibleLimit = typeof limit === "number" ? limit : 5;
+  const parts = resources.slice(0, visibleLimit).map(function (resourceType) {
+    return `${resourceType} ${fmtAmount(getStoredAmount(target, resourceType))}`;
+  });
+  if (resources.length > visibleLimit) {
+    parts.push(`+${resources.length - visibleLimit} more`);
+  }
+
+  return parts.join(", ");
+}
+
+function findFirstStructure(state, structureType) {
+  const structures =
+    state && state.structuresByType && state.structuresByType[structureType]
+      ? state.structuresByType[structureType]
+      : [];
+  return structures.length > 0 ? structures[0] : null;
+}
+
+function getFactorySettings() {
+  return config.ADVANCED && config.ADVANCED.FACTORY
+    ? config.ADVANCED.FACTORY
+    : {};
+}
+
+function getFactoryRecipe(product) {
+  return typeof COMMODITIES !== "undefined" && product
+    ? COMMODITIES[product] || null
+    : null;
+}
+
+function getFactoryProduct(advanced, room) {
+  const settings = getFactorySettings();
+  if (advanced && advanced.factoryProduct) return advanced.factoryProduct;
+
+  const products = settings.PRODUCT_PRIORITY || [];
+  const storageEnergy = getStorageEnergy(room);
+  for (let i = 0; i < products.length; i++) {
+    if (
+      products[i] === "battery" &&
+      storageEnergy >= (settings.MIN_STORAGE_ENERGY || 50000) &&
+      getFactoryRecipe(products[i])
+    ) {
+      return products[i];
+    }
+  }
+
+  return products.length > 0 ? products[0] : null;
+}
+
+function getHubAmount(room, resourceType) {
+  return getStoredAmount(room.storage, resourceType) +
+    getStoredAmount(room.terminal, resourceType);
+}
+
+function getFactoryInputBottlenecks(room, factory, recipe) {
+  const bottlenecks = [];
+  if (!recipe || !recipe.components) return bottlenecks;
+
+  for (const resourceType in recipe.components) {
+    if (!Object.prototype.hasOwnProperty.call(recipe.components, resourceType)) continue;
+    const need = recipe.components[resourceType] || 0;
+    const inFactory = getStoredAmount(factory, resourceType);
+    if (inFactory >= need) continue;
+    const hub = getHubAmount(room, resourceType);
+    bottlenecks.push({
+      resourceType: resourceType,
+      need: need,
+      factory: inFactory,
+      hub: hub,
+      fillable: hub > 0,
+    });
+  }
+
+  return bottlenecks;
+}
+
+function formatFactoryBottlenecks(bottlenecks) {
+  if (!bottlenecks || bottlenecks.length === 0) return "none";
+
+  return bottlenecks
+    .slice(0, 4)
+    .map(function (row) {
+      return `${row.resourceType} ${fmtAmount(row.factory)}/${fmtAmount(row.need)} hub ${fmtAmount(row.hub)}`;
+    })
+    .join(", ");
+}
+
+function getFactoryOutputAccumulation(factory, product, recipe) {
+  const settings = getFactorySettings();
+  const exportBatch = settings.EXPORT_BATCH || 100;
+  const resources = getStoreResourceTypes(factory);
+  const rows = [];
+
+  for (let i = 0; i < resources.length; i++) {
+    const resourceType = resources[i];
+    if (resourceType === RESOURCE_ENERGY) continue;
+    const amount = getStoredAmount(factory, resourceType);
+    const expectedInput = recipe && recipe.components && recipe.components[resourceType];
+    if (resourceType === product && amount >= exportBatch) {
+      rows.push(`${resourceType} ${fmtAmount(amount)}>=${fmtAmount(exportBatch)}`);
+    } else if (resourceType !== product && !expectedInput) {
+      rows.push(`${resourceType} ${fmtAmount(amount)} unexpected`);
+    }
+  }
+
+  return rows;
+}
+
+function getBatteryUsefulness(room, factory) {
+  const settings = getFactorySettings();
+  const products = settings.PRODUCT_PRIORITY || [];
+  const battery = "battery";
+  const configured = products.indexOf(battery) !== -1;
+  const stock =
+    getStoredAmount(factory, battery) +
+    getStoredAmount(room.storage, battery) +
+    getStoredAmount(room.terminal, battery);
+
+  if (!configured) {
+    return {
+      status: "not-configured",
+      stock: stock,
+      reason: "battery is not in factory product priority",
+    };
+  }
+
+  if (stock >= 10000) {
+    return {
+      status: "excessive",
+      stock: stock,
+      reason: "local battery stock is high and no local consumer is known",
+    };
+  }
+
+  return {
+    status: "unclear",
+    stock: stock,
+    reason: "configured factory fallback; no local battery consumer is known",
+  };
+}
+
+function getFactoryDiagnostics(room, state, advanced) {
+  const factory = findFirstStructure(state, STRUCTURE_FACTORY);
+  const settings = getFactorySettings();
+  const enabled = settings.ENABLED !== false;
+  const product = enabled ? getFactoryProduct(advanced, room) : null;
+  const recipe = getFactoryRecipe(product);
+  const bottlenecks = getFactoryInputBottlenecks(room, factory, recipe);
+  const output = getFactoryOutputAccumulation(factory, product, recipe);
+  const battery = getBatteryUsefulness(room, factory);
+  let classification = "missing";
+  let blockedReason = "factory missing";
+
+  if (factory && !enabled) {
+    classification = "idle";
+    blockedReason = "factory config disabled";
+  } else if (factory && output.length > 0) {
+    classification = "accumulating";
+    blockedReason = "output accumulation";
+  } else if (factory && product && factory.cooldown > 0) {
+    classification = "active";
+    blockedReason = `cooldown ${factory.cooldown}`;
+  } else if (factory && product && bottlenecks.some(function (row) { return !row.fillable; })) {
+    classification = "blocked";
+    blockedReason = "missing inputs";
+  } else if (factory && product && bottlenecks.length > 0) {
+    classification = "blocked";
+    blockedReason = "awaiting input haul";
+  } else if (factory && product) {
+    classification = "active";
+    blockedReason = "ready";
+  } else if (factory) {
+    classification = "idle";
+    blockedReason = "no selected product";
+  }
+
+  return {
+    exists: !!factory,
+    factory: factory,
+    cooldown: factory && typeof factory.cooldown === "number" ? factory.cooldown : 0,
+    configuredProduct: product,
+    recipe: recipe,
+    battery: battery,
+    energy: getStoredAmount(factory, RESOURCE_ENERGY),
+    bottlenecks: bottlenecks,
+    output: output,
+    classification: classification,
+    blockedReason: blockedReason,
+    advancedStatus: advanced && advanced.factoryStatus ? advanced.factoryStatus : "inactive",
+    taskBacklog: advanced && advanced.taskBacklog ? advanced.taskBacklog : [],
+  };
+}
+
+function formatFactoryLines(room, diagnostics) {
+  const lines = [`[OPS][${room.name}][FACTORY]`];
+  if (!diagnostics.exists) {
+    lines.push("Factory missing");
+    lines.push("State missing | Blocked factory missing");
+    lines.push("Battery 0 | Energy 0 | Usefulness not-configured");
+    lines.push("No market, terminal balancing, or production action performed.");
+    return lines;
+  }
+
+  const recipeLabel = diagnostics.configuredProduct || "none";
+  const outputLabel = diagnostics.output.length > 0 ? diagnostics.output.join(", ") : "none";
+  const backlog = diagnostics.taskBacklog
+    .filter(function (row) { return row.label && row.label.indexOf("factory_") === 0; })
+    .map(function (row) { return `${row.label} ${row.resourceType} ${fmtAmount(row.amount)}`; });
+
+  lines.push(
+    `Factory exists | State ${diagnostics.classification} | Status ${diagnostics.advancedStatus} | Cooldown ${diagnostics.cooldown}`,
+  );
+  lines.push(`Recipe ${recipeLabel} | Last action not tracked`);
+  lines.push(`Store ${formatStoreSummary(diagnostics.factory, 6)}`);
+  lines.push(
+    `Battery ${fmtAmount(diagnostics.battery.stock)} | Energy ${fmtAmount(diagnostics.energy)} | Usefulness ${diagnostics.battery.status}`,
+  );
+  lines.push(`Battery note ${diagnostics.battery.reason}`);
+  lines.push(`Input bottlenecks ${formatFactoryBottlenecks(diagnostics.bottlenecks)}`);
+  lines.push(`Output accumulation ${outputLabel}`);
+  lines.push(`Blocked ${diagnostics.blockedReason}`);
+  lines.push(`Logistics alignment ${backlog.length > 0 ? backlog.join(", ") : "no factory advanced backlog"}`);
+  lines.push("No market, terminal balancing, or production action performed.");
+  return lines;
+}
+
+function getLabSettings() {
+  return config.ADVANCED && config.ADVANCED.LABS
+    ? config.ADVANCED.LABS
+    : {};
+}
+
+function getPrimaryMineral(target) {
+  if (!target || !target.store) return null;
+  if (target.mineralType && getStoredAmount(target, target.mineralType) > 0) {
+    return target.mineralType;
+  }
+
+  const resources = getStoreResourceTypes(target);
+  for (let i = 0; i < resources.length; i++) {
+    if (resources[i] !== RESOURCE_ENERGY) return resources[i];
+  }
+
+  return null;
+}
+
+function getReactionProduct(reagentA, reagentB) {
+  if (!reagentA || !reagentB || typeof REACTIONS === "undefined") return null;
+  if (REACTIONS[reagentA] && REACTIONS[reagentA][reagentB]) return REACTIONS[reagentA][reagentB];
+  if (REACTIONS[reagentB] && REACTIONS[reagentB][reagentA]) return REACTIONS[reagentB][reagentA];
+  return null;
+}
+
+function getReactionInputs(product) {
+  if (!product || typeof REACTIONS === "undefined") return null;
+
+  for (const reagentA in REACTIONS) {
+    if (!Object.prototype.hasOwnProperty.call(REACTIONS, reagentA)) continue;
+    for (const reagentB in REACTIONS[reagentA]) {
+      if (!Object.prototype.hasOwnProperty.call(REACTIONS[reagentA], reagentB)) continue;
+      if (REACTIONS[reagentA][reagentB] === product) {
+        return {
+          reagentA: reagentA,
+          reagentB: reagentB,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function getLabLayoutMemory(room) {
+  return Memory.rooms &&
+    Memory.rooms[room.name] &&
+    Memory.rooms[room.name].advancedOps &&
+    Memory.rooms[room.name].advancedOps.labLayout
+    ? Memory.rooms[room.name].advancedOps.labLayout
+    : null;
+}
+
+function getObjectByIdSafe(id) {
+  return id && Game.getObjectById ? Game.getObjectById(id) : null;
+}
+
+function getLabDiagnostics(room, state, advanced) {
+  const labs =
+    state && state.structuresByType && state.structuresByType[STRUCTURE_LAB]
+      ? state.structuresByType[STRUCTURE_LAB]
+      : [];
+  const settings = getLabSettings();
+  const enabled = settings.ENABLED !== false;
+  const layout = getLabLayoutMemory(room);
+  const inputIds = layout && layout.inputIds ? layout.inputIds.slice(0, 2) : [];
+  const reactorIds = layout && layout.reactorIds ? layout.reactorIds.slice() : [];
+  const inputA = getObjectByIdSafe(inputIds[0]);
+  const inputB = getObjectByIdSafe(inputIds[1]);
+  const reagentA = getPrimaryMineral(inputA);
+  const reagentB = getPrimaryMineral(inputB);
+  const detectedProduct = getReactionProduct(reagentA, reagentB);
+  const product = detectedProduct || (advanced && advanced.labProduct ? advanced.labProduct : null);
+  const desiredInputs = product ? getReactionInputs(product) : null;
+  const reactionAmount = settings.REACTION_AMOUNT || 5;
+  const missing = [];
+  const outputRows = [];
+  const cooldowns = labs.filter(function (lab) { return lab.cooldown > 0; }).length;
+  const backlog = advanced && advanced.taskBacklog ? advanced.taskBacklog : [];
+
+  if (desiredInputs) {
+    const desiredA = desiredInputs.reagentA;
+    const desiredB = desiredInputs.reagentB;
+    const inputAAmount = getStoredAmount(inputA, desiredA);
+    const inputBAmount = getStoredAmount(inputB, desiredB);
+    if (inputAAmount < reactionAmount) {
+      missing.push(`${desiredA} lab ${fmtAmount(inputAAmount)} hub ${fmtAmount(getHubAmount(room, desiredA))}`);
+    }
+    if (inputBAmount < reactionAmount) {
+      missing.push(`${desiredB} lab ${fmtAmount(inputBAmount)} hub ${fmtAmount(getHubAmount(room, desiredB))}`);
+    }
+  }
+
+  const outputUnloadAt = settings.OUTPUT_UNLOAD_AT || 250;
+  for (let i = 0; i < reactorIds.length; i++) {
+    const lab = getObjectByIdSafe(reactorIds[i]);
+    if (!lab || !product) continue;
+    const amount = getStoredAmount(lab, product);
+    if (amount >= outputUnloadAt) {
+      outputRows.push(`${lab.id.slice(-4)} ${product} ${fmtAmount(amount)}`);
+    }
+  }
+
+  let classification = "missing";
+  let blockedReason = "labs missing";
+  if (labs.length > 0 && !enabled) {
+    classification = "idle";
+    blockedReason = "lab config disabled";
+  } else if (labs.length > 0 && labs.length < 3) {
+    classification = "blocked";
+    blockedReason = "need at least 3 labs";
+  } else if (labs.length > 0 && (!layout || inputIds.length < 2 || reactorIds.length <= 0)) {
+    classification = "blocked";
+    blockedReason = "input/output layout unavailable";
+  } else if (labs.length > 0 && outputRows.length > 0) {
+    classification = "accumulating";
+    blockedReason = "output accumulation";
+  } else if (labs.length > 0 && missing.length > 0) {
+    classification = "blocked";
+    blockedReason = "missing reagents";
+  } else if (labs.length > 0 && product && cooldowns > 0) {
+    classification = "active";
+    blockedReason = `cooldowns ${cooldowns}`;
+  } else if (labs.length > 0 && product) {
+    classification = "active";
+    blockedReason = "ready";
+  } else if (labs.length > 0) {
+    classification = "idle";
+    blockedReason = advanced && advanced.labReason ? advanced.labReason : "no current reaction";
+  }
+
+  return {
+    labs: labs,
+    layout: layout,
+    inputIds: inputIds,
+    reactorIds: reactorIds,
+    product: product,
+    reagentA: reagentA || (desiredInputs ? desiredInputs.reagentA : null),
+    reagentB: reagentB || (desiredInputs ? desiredInputs.reagentB : null),
+    missing: missing,
+    outputRows: outputRows,
+    cooldowns: cooldowns,
+    classification: classification,
+    blockedReason: blockedReason,
+    advancedStatus: advanced && advanced.labStatus ? advanced.labStatus : "inactive",
+    advancedReason: advanced && advanced.labReason ? advanced.labReason : null,
+    taskBacklog: backlog,
+  };
+}
+
+function formatLabStores(labs) {
+  if (!labs || labs.length === 0) return "none";
+
+  return labs
+    .slice(0, 6)
+    .map(function (lab) {
+      return `${lab.id.slice(-4)} ${formatStoreSummary(lab, 3)}`;
+    })
+    .join(" | ");
+}
+
+function formatLabLines(room, diagnostics) {
+  const lines = [`[OPS][${room.name}][LABS]`];
+  if (diagnostics.labs.length === 0) {
+    lines.push("Labs missing | Count 0");
+    lines.push("State missing | Blocked labs missing");
+    lines.push("No boost, combat, market, terminal, or reaction action performed.");
+    return lines;
+  }
+
+  const backlog = diagnostics.taskBacklog
+    .filter(function (row) { return row.label && row.label.indexOf("lab_") === 0; })
+    .map(function (row) { return `${row.label} ${row.resourceType} ${fmtAmount(row.amount)}`; });
+  const inputLabel = diagnostics.inputIds.length > 0 ? diagnostics.inputIds.join(", ") : "unknown";
+  const reactorLabel = diagnostics.reactorIds.length > 0 ? diagnostics.reactorIds.join(", ") : "unknown";
+
+  lines.push(
+    `Labs ${diagnostics.labs.length} | State ${diagnostics.classification} | Status ${diagnostics.advancedStatus}`,
+  );
+  lines.push(`Inputs ${inputLabel} | Outputs ${reactorLabel}`);
+  lines.push(`Reaction ${diagnostics.product || "none"} | Reagents ${diagnostics.reagentA || "?"} + ${diagnostics.reagentB || "?"}`);
+  lines.push(`Stores ${formatLabStores(diagnostics.labs)}`);
+  lines.push(`Energy ${fmtAmount(diagnostics.labs.reduce(function (sum, lab) { return sum + getStoredAmount(lab, RESOURCE_ENERGY); }, 0))} | Cooldowns ${diagnostics.cooldowns}`);
+  lines.push(`Missing reagents ${diagnostics.missing.length > 0 ? diagnostics.missing.join(", ") : "none"}`);
+  lines.push(`Output accumulation ${diagnostics.outputRows.length > 0 ? diagnostics.outputRows.join(", ") : "none"}`);
+  lines.push(`Blocked ${diagnostics.blockedReason}${diagnostics.advancedReason ? " | reason " + diagnostics.advancedReason : ""}`);
+  lines.push(`Logistics alignment ${backlog.length > 0 ? backlog.join(", ") : "no lab advanced backlog"}`);
+  lines.push("No boost, combat, market, terminal, or reaction action performed.");
+  return lines;
+}
+
+function getWorkerBodyCost(room, state) {
+  const queue = getQueue(room);
+  for (let i = 0; i < queue.length; i++) {
+    if (
+      (queue[i].role === "worker" || queue[i].role === "jrworker") &&
+      typeof queue[i].bodyCost === "number"
+    ) {
+      return queue[i].bodyCost;
+    }
+  }
+
+  return room.energyCapacityAvailable >= 300 ? 300 : room.energyCapacityAvailable || 0;
+}
+
+function getLaborDesired(room, state, advanceMissing) {
+  const spawnManager = require("spawn_manager");
+  const phase = state.phase || "bootstrap";
+  let desired = phase === "bootstrap"
+    ? spawnManager.getDesiredBootstrapJrWorkers(room, state)
+    : spawnManager.getDesiredWorkers(room, state);
+
+  if (
+    advanceMissing &&
+    (advanceMissing.indexOf("labor") !== -1 || advanceMissing.indexOf("buildLabor") !== -1)
+  ) {
+    desired = Math.max(desired, 1);
+  }
+
+  return desired;
+}
+
+function classifyLaborBlocker(room, state, desired, current, queued, spawn) {
+  if (desired <= current) return "covered";
+  if (!state || !state.roleCounts) return "missing memory/state";
+
+  const bodyCost = getWorkerBodyCost(room, state);
+  const spawns = state.spawns || [];
+  const busy = spawns.filter(function (item) { return !!item.spawning; }).length;
+  const queue = getQueue(room);
+  const laborQueued = queued > 0;
+  const first = queue.length > 0 ? queue[0] : null;
+
+  if (room.energyCapacityAvailable < bodyCost) return "body profile too expensive";
+  if (room.energyAvailable < Math.min(bodyCost, room.energyCapacityAvailable || bodyCost)) {
+    return "low energy";
+  }
+  if (spawns.length > 0 && busy >= spawns.length) return "busy spawn";
+  if (
+    laborQueued &&
+    first &&
+    first.role !== "worker" &&
+    first.role !== "jrworker"
+  ) {
+    return "spawn priority";
+  }
+  if (!laborQueued && desired > current) return "role target mismatch";
+  if (!spawn || spawns.length === 0) return "missing memory/state";
+
+  return "unknown";
+}
+
+function getLaborDiagnostics(room, state, advanceMissing, nextTask) {
+  const roleCounts = state.roleCounts || {};
+  const current = (roleCounts.worker || 0) + (roleCounts.jrworker || 0);
+  const desired = getLaborDesired(room, state, advanceMissing);
+  const queue = getQueue(room);
+  const queued = queue.filter(function (row) {
+    return row.role === "worker" || row.role === "jrworker";
+  }).length;
+  const spawns = state.spawns || [];
+  const busy = spawns.filter(function (spawn) { return !!spawn.spawning; }).length;
+  const pending = queue.find(function (row) {
+    return row.role === "worker" || row.role === "jrworker";
+  }) || null;
+  const reservePressure = reservePolicy.shouldBankStorageEnergy(room, state);
+  const spawn = getSpawnSummary(room, state);
+  const deficit = Math.max(0, desired - current);
+  const pipelineDeficit = Math.max(0, desired - current - queued);
+
+  return {
+    current: current,
+    desired: desired,
+    deficit: deficit,
+    queued: queued,
+    pipelineDeficit: pipelineDeficit,
+    roleCounts: roleCounts,
+    phase: state.phase || "unknown",
+    nextTask: nextTask || "unknown",
+    spawns: spawns.length,
+    busySpawns: busy,
+    idleSpawns: Math.max(0, spawns.length - busy),
+    pending: pending,
+    energyAvailable: room.energyAvailable || 0,
+    energyCapacity: room.energyCapacityAvailable || 0,
+    reservePressure: reservePressure,
+    blockedReason: classifyLaborBlocker(room, state, desired, current, queued, spawn),
+    spawn: spawn,
+  };
+}
+
+function formatLaborLines(room, labor) {
+  return [
+    `[OPS][${room.name}][LABOR]`,
+    `Labor ${labor.current}/${labor.desired} | Deficit ${labor.deficit} | Queued ${labor.queued} | Pipeline deficit ${labor.pipelineDeficit}`,
+    `Roles worker ${labor.roleCounts.worker || 0} | jrworker ${labor.roleCounts.jrworker || 0} | miner ${labor.roleCounts.miner || 0} | hauler ${labor.roleCounts.hauler || 0} | upgrader ${labor.roleCounts.upgrader || 0} | repair ${labor.roleCounts.repair || 0}`,
+    `Phase ${labor.phase} | Next ${labor.nextTask}`,
+    `Spawn idle ${labor.idleSpawns}/${labor.spawns} | Busy ${labor.busySpawns} | Queue ${labor.spawn.queueSize} | Pending ${labor.pending ? formatQueuedSpawn(labor.pending) : "none"}`,
+    `Energy ${fmtAmount(labor.energyAvailable)}/${fmtAmount(labor.energyCapacity)} | Reserve pressure ${labor.reservePressure ? "yes" : "no"}`,
+    `Blocked reason ${labor.blockedReason}`,
+    "No spawn policy change or spawn action performed.",
+  ];
+}
+
+function buildEmpireLaborRollup(reports) {
+  const rooms = reports.map(function (report) {
+    return report.labor;
+  }).filter(function (row) {
+    return !!row;
+  });
+  const deficitRooms = rooms.filter(function (row) { return row.deficit > 0; });
+  const blockedBusy = rooms.filter(function (row) { return row.blockedReason === "busy spawn"; });
+  const blockedEnergy = rooms.filter(function (row) { return row.blockedReason === "low energy"; });
+  const repeatedNext = rooms.filter(function (row) {
+    return row.nextTask === NEXT_TASK_LABEL.labor;
+  });
+  const largest = deficitRooms.slice().sort(function (a, b) {
+    if (b.deficit !== a.deficit) return b.deficit - a.deficit;
+    return a.room.localeCompare(b.room);
+  });
+
+  return {
+    rooms: rooms,
+    roomsEvaluated: rooms.length,
+    deficitRooms: deficitRooms.length,
+    blockedBusy: blockedBusy,
+    blockedEnergy: blockedEnergy,
+    repeatedNext: repeatedNext,
+    largest: largest.slice(0, 5),
+    topAttention: largest.slice(0, 5),
+  };
+}
+
+function formatEmpireLaborRollup(rollup) {
+  const lines = [
+    "[OPS][EMPIRE][LABOR]",
+    `Rooms evaluated ${rollup.roomsEvaluated} | Labor deficit rooms ${rollup.deficitRooms}`,
+    `Spawn busy ${rollup.blockedBusy.length} | Energy insufficient ${rollup.blockedEnergy.length} | Repeated restore-next ${rollup.repeatedNext.length}`,
+  ];
+
+  if (rollup.largest.length === 0) {
+    lines.push("Largest deficits none");
+  } else {
+    lines.push(
+      "Largest deficits " +
+        rollup.largest.map(function (row) {
+          return `${row.room} ${row.deficit}`;
+        }).join(", "),
+    );
+  }
+
+  if (rollup.topAttention.length === 0) {
+    lines.push("Top attention none");
+  } else {
+    for (let i = 0; i < rollup.topAttention.length; i++) {
+      const row = rollup.topAttention[i];
+      lines.push(
+        `${i + 1}. ${row.room} | labor ${row.current}/${row.desired} | deficit ${row.deficit} | blocked ${row.blockedReason} | spawn idle ${row.idleSpawns}/${row.spawns} | energy ${fmtAmount(row.energyAvailable)}/${fmtAmount(row.energyCapacity)} | next ${row.nextTask}`,
+      );
+    }
+  }
+
+  lines.push("No spawn policy change or spawn action performed.");
+  return lines;
 }
 
 function getExpansionPlanForRoom(roomName) {
@@ -1524,6 +2149,15 @@ module.exports = {
       desiredHaulers: desiredTotalHaulers,
       advanced: advanced,
     });
+    const factoryDiagnostics = getFactoryDiagnostics(room, summaryState, advanced);
+    const labDiagnostics = getLabDiagnostics(room, summaryState, advanced);
+    const laborDiagnostics = getLaborDiagnostics(
+      room,
+      summaryState,
+      advanceMissing,
+      nextTask,
+    );
+    laborDiagnostics.room = room.name;
     const roleIntentLines = roleIntentDiagnostics.formatLines(roleIntent);
     roleIntentLines.splice(
       roleIntentLines.length - 1,
@@ -1630,6 +2264,9 @@ module.exports = {
       sources: [
         `[OPS][${room.name}][SOURCES]`,
       ],
+      factory: formatFactoryLines(room, factoryDiagnostics),
+      labs: formatLabLines(room, labDiagnostics),
+      labor: formatLaborLines(room, laborDiagnostics),
       advanced: advancedLines,
       power: [
         `[OPS][${room.name}][POWER]`,
@@ -1758,6 +2395,9 @@ module.exports = {
       alert: alert,
       cpu: cpu,
       logistics: logistics,
+      factory: factoryDiagnostics,
+      labs: labDiagnostics,
+      labor: laborDiagnostics,
       roleIntent: roleIntent,
       nextPhase: nextPhase,
       statusLabel: statusLabel,
@@ -1805,5 +2445,13 @@ module.exports = {
     }
 
     return lines;
+  },
+
+  buildEmpireLaborRollup(reports) {
+    return buildEmpireLaborRollup(reports);
+  },
+
+  formatEmpireLaborRollup(rollup) {
+    return formatEmpireLaborRollup(rollup);
   },
 };

@@ -169,7 +169,7 @@ Execution levels used in this manual:
 | `ops.help()` | Print the ops help surface. | None. | `ops.help()` | Help row array. | Prints help. | Read Only | `src/ops.js:1000`, `src/ops.js:1127` |
 | `ops.hud(mode)` | Toggle the room HUD overlay. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.hud(on)` | Toggle result object. | Updates HUD flag in ops state. | Planning | `src/ops.js:994`, `src/ops.js:1135` |
 | `ops.reports(mode)` | Toggle critical room reports. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.reports(off)` | Toggle result object. | Updates reports flag in ops state. | Planning | `src/ops.js:997`, `src/ops.js:1149` |
-| `ops.room(arg1, arg2)` | Show one room report. If one argument is a section, uses the current/default room. | `arg1`: room name or section. `arg2`: section. Sections: `overview`, `economy`, `build`, `defense`, `creeps`, `sources`, `resources`, `logistics`, `advanced`, `power`, `observer`, `cpu`, `all`. | `ops.room("W5N5", "logistics")` | Report object, except CPU and logistics sections return printable status strings. | Sets current room and may update room progress/logistics history. Does not create logistics requests or execute hauler, market, terminal, or spawn actions. | Read Only | `src/ops.js:1003`, `src/ops.js:1163`, `src/room_reporting.js:1396` |
+| `ops.room(arg1, arg2)` | Show one room report. If one argument is a section, uses the current/default room. | `arg1`: room name or section. `arg2`: section. Sections: `overview`, `economy`, `build`, `defense`, `creeps`, `sources`, `resources`, `factory`, `labs`, `labor`, `logistics`, `advanced`, `power`, `observer`, `cpu`, `all`. | `ops.room("W5N5", "labor")` | Report object, except CPU, factory, labs, labor, and logistics sections return printable status strings. | Sets current room and may update room progress/logistics history. Does not create logistics requests or execute hauler, market, terminal, spawn, factory, lab, or boost actions. | Read Only | `src/ops.js`, `src/room_reporting.js` |
 | `ops.cpu(roomName)` | Show measured room CPU, top section costs, pressure, and scheduler skips. | `roomName`: optional owned room. | `ops.cpu("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1006`, `src/ops.js:2116` |
 | `ops.cpuStatus(roomName)` | Alias for `ops.room(roomName, "cpu")`. | `roomName`: optional owned room. | `ops.cpuStatus("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1114`, `src/ops.js:2112` |
 | `ops.phase(roomName)` | Alias for the build section of `ops.room`. | `roomName`: optional owned room. | `ops.phase("W5N5")` | Room report object for build section. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1117`, `src/ops.js:2120` |
@@ -177,7 +177,9 @@ Execution levels used in this manual:
 | `ops.scan(roomName, section, role)` | Read-only owned-room object discovery for spawns, Power Spawns, creeps, PowerCreeps, structures, sites, and resources. | `roomName`: owned room. `section`: optional `spawns`, `powerSpawns`, `creeps`, `powerCreeps`, `structures`, `sites`, or `resources`. `role`: optional creep role filter. | `ops.scan("W42N9", "spawns")` | Printable scan block. | Prints concise object summaries only. Does not mutate memory or call Screeps action APIs. | Read Only | `src/ops.js` |
 | `ops.spawn(roomName, role, sizeOrOptions)` | Preview or manually spawn one normal creep after validating owned room, supported role, small/medium/large profile, selected owned spawn, idle spawn state, body, cost, spawn time, and room energy. | `roomName`: owned room. `role`: supported creep role. `sizeOrOptions`: optional size string or object with `size`, `spawn`, `preview`, and `dryRun`. A fourth options object may be used with a size string. | `ops.spawn("W42N9", "worker", "medium", { preview: true })` | Preview block or printable result line with Screeps result code. | Calls `spawn.spawnCreep` only after validation and only outside `preview`/`dryRun`. Does not alter autonomous spawn policy. | Executes Immediately | `src/ops.js` |
 | `ops.spawn("power", name, roomOrOptions)` | Manually spawn one existing PowerCreep at an owned Power Spawn. | `name`: `Game.powerCreeps` name. `roomOrOptions`: optional room string or object with `room`, `powerSpawn`, and `dryRun`. | `ops.spawn("power", "Operator_GenOps", { room: "W42N9", powerSpawn: "id" })` | Printable result line with Screeps result code. | Calls `powerCreep.spawn(powerSpawn)` only after validation; never calls `enableRoom`, movement, or power-use APIs. | Executes Immediately | `src/ops.js` |
-| `ops.empire(section)` | Show empire summary and owned-room overview, or logistics pressure rollup. | `section`: optional; use `logistics` for the pressure rollup. | `ops.empire("logistics")` | Empire report object, or logistics section object with lines and rollup. | Updates progress/logistics history in generated reports. Logistics rollup does not create logistics requests or execute hauler, market, terminal, or spawn actions. | Read Only | `src/ops.js:1012`, `src/ops.js:1528` |
+| `ops.empire(section)` | Show empire summary and owned-room overview, logistics pressure rollup, or labor coverage rollup. | `section`: optional; use `logistics` for pressure or `labor` for labor deficits. | `ops.empire("labor")` | Empire report object, or section object with lines and rollup. | Updates progress/logistics history in generated reports. Logistics and labor rollups do not create logistics requests or execute hauler, market, terminal, spawn, factory, lab, or boost actions. | Read Only | `src/ops.js`, `src/room_reporting.js` |
+| `ops.factory(roomName, mode, product)` | Show read-only factory status and battery/preflight detail. | `roomName`: owned room. `mode`: optional `status`, `preview`, `battery`, `pause`, or `stop`. `product`: optional preview product. | `ops.factory("W5N5", "battery")` | Printable factory report status string. | Prints report only. `pause`/`stop` return a blocker because no safe factory pause control exists yet. Does not call `produce`, market, terminal, or logistics actions. | Read Only | `src/ops.js`, `src/room_reporting.js` |
+| `ops.labs(roomName, mode)` | Show read-only lab reaction, reagent, output, cooldown, and logistics alignment status. | `roomName`: owned room. `mode`: optional `status`, `preview`, `pause`, or `stop`. | `ops.labs("W5N5", "status")` | Printable lab report status string. | Prints report only. `pause`/`stop` return a blocker because no safe lab pause control exists yet. Does not call `runReaction`, boost, market, terminal, or logistics actions. | Read Only | `src/ops.js`, `src/room_reporting.js` |
 | `ops.log(arg1, arg2)` | Show compact invasion history. | `arg1`: room name or limit. `arg2`: optional limit. | `ops.log("W43N6")` | Lines array. | Prints invasion log lines. | Read Only | `src/ops.js:1015`, `src/ops.js:1541` |
 | `ops.logClear(roomName)` | Clear invasion history for one room, or all rooms when omitted. | `roomName`: optional room or `all`. | `ops.logClear("W43N6")` | Clear result object. | Deletes invasion log entries. | Planning | `src/ops.js:1018`, `src/ops.js:1567` |
 | `ops.tickRate(sampleTicks)` | Sample wall-clock milliseconds per tick over a short window; supports status and cancel. | `sampleTicks`: positive integer, `status`, or `cancel`. | `ops.tickRate(5)` | Printable status line. | Stores or clears probe state under runtime ops console memory. | Planning | `src/ops.js:1021`, `src/ops.js:1579` |
@@ -274,6 +276,8 @@ Economy:
 
 - `ops.room([roomName], "economy")`: room energy, storage, hub/controller container, upgrade rate, spawn queue, and hauler mode.
 - `ops.room([roomName], "resources")`: storage energy, terminal energy, terminal power, ghodium, minerals, and terminal balance state.
+- `ops.room("ROOM", "factory")` and `ops.factory("ROOM", "status")`: read-only factory status, battery/energy counts, recipe, bottlenecks, output accumulation, and battery usefulness notes.
+- `ops.room("ROOM", "labs")` and `ops.labs("ROOM", "status")`: read-only lab count, input/output layout when known, reaction, stores, reagent/output blockers, cooldowns, and logistics alignment.
 - `ops.terminalStatus([roomName])`: terminal stock and congestion status.
 - `market.stock([roomName])`, `market.needs()`, and `market.surplus()`: economy visibility from the market helper.
 
@@ -282,6 +286,7 @@ Logistics:
 - `ops.move(resource, amount, roomName, from, to)`: create storage/terminal movement requests.
 - `ops.room("ROOM", "logistics")`: read-only room logistics diagnostics for open/blocked requests, unclaimed work, hauler pressure, advanced backlog labels, recent history, and starvation trend.
 - `ops.empire("logistics")`: read-only empire logistics pressure rollup across owned rooms, with top rooms and suggested room-level inspection commands.
+- `ops.room("ROOM", "labor")` and `ops.empire("labor")`: read-only worker labor coverage diagnostics for current/desired labor, deficits, spawn state, pending worker intents, low-energy/busy-spawn/priority blockers, and repeated `restore worker labor coverage` rooms.
 - `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "check")`: preview an explicit staged cross-room transfer without creating a plan.
 - `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "confirm")`: approve what should move; Omega advances the plan each tick through source staging, terminal send, destination staging, completion, block, or cancellation states.
 - `ops.transfers()`, `ops.transferStatus(id)`, and `ops.cancelTransfer(id)`: list, inspect, and cancel staged transfers. The command is `ops.cancelTransfer(id)`; `ops.transferCancel(id)` is not implemented.
@@ -290,7 +295,7 @@ Logistics:
 
 Diagnostics boundary:
 
-- `ops.room("ROOM", "logistics")` and `ops.empire("logistics")` are reporting-only diagnostics. They may read current logistics requests and update bounded logistics history snapshots used by reports, but they must not create or cancel requests, assign hauler tasks, change priorities, spawn creeps, send terminal resources, or execute market deals.
+- `ops.room("ROOM", "logistics")`, `ops.empire("logistics")`, `ops.room("ROOM", "factory")`, `ops.room("ROOM", "labs")`, `ops.room("ROOM", "labor")`, and `ops.empire("labor")` are reporting-only diagnostics. They may read current room state and update bounded report history already owned by existing diagnostics, but they must not create or cancel requests, assign hauler tasks, change priorities, spawn creeps, run factory/lab actions, send terminal resources, use boosts, or execute market deals.
 
 Construction:
 
@@ -484,10 +489,10 @@ Counts by category:
 
 - Global callable aliases: 1 (`view`).
 - Global convenience constants: 2 (`on`, `off`).
-- `ops.*` callable functions: 42.
+- `ops.*` callable functions: 44.
 - `market.*` callable functions: 51.
-- Total callable operator commands documented: 94.
-- Ops help signature rows: 46.
+- Total callable operator commands documented: 96.
+- Ops help signature rows: 48.
 - Market help signature rows: 65.
 
 Missing documentation:

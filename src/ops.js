@@ -1145,8 +1145,8 @@ function getConsoleCommandHelp() {
     {
       command: "ops.room([roomName], [section])",
       description:
-        "Show one room report. Sections include roles, logistics, power, observer, and resources status.",
-      example: 'ops.room("W5N5", "roles")',
+        "Show one room report. Sections include roles, factory, labs, labor, logistics, power, observer, and resources status.",
+      example: 'ops.room("W5N5", "labor")',
     },
     {
       command: "ops.rooms()",
@@ -1176,10 +1176,24 @@ function getConsoleCommandHelp() {
       example: 'ops.spawn("power", "Operator_GenOps", { room: "W42N9", powerSpawn: "id" })',
     },
     {
-      command: 'ops.empire(["logistics"])',
+      command: 'ops.empire(["logistics"|"labor"])',
       group: "Reports",
-      description: "Show empire summary, or logistics pressure rollup across owned rooms.",
-      example: 'ops.empire("logistics")',
+      description: "Show empire summary, logistics pressure, or labor coverage rollup across owned rooms.",
+      example: 'ops.empire("labor")',
+    },
+    {
+      command: 'ops.factory(roomName, ["status"|"preview"|"battery"])',
+      group: "Reports",
+      description:
+        "Show read-only factory status and battery-production preflight. pause/stop report unsupported control.",
+      example: 'ops.factory("W5N5", "battery")',
+    },
+    {
+      command: 'ops.labs(roomName, ["status"|"preview"])',
+      group: "Reports",
+      description:
+        "Show read-only lab reaction, reagent, output, cooldown, and logistics alignment status.",
+      example: 'ops.labs("W5N5", "status")',
     },
     {
       command: "ops.log([roomName], [limit])",
@@ -1546,6 +1560,12 @@ module.exports = {
       empire: function (section) {
         return module.exports.empire(section);
       },
+      factory: function (roomName, mode, product) {
+        return module.exports.factory(roomName, mode, product);
+      },
+      labs: function (roomName, mode) {
+        return module.exports.labs(roomName, mode);
+      },
       log: function (arg1, arg2) {
         return module.exports.log(arg1, arg2);
       },
@@ -1857,7 +1877,7 @@ module.exports = {
 
     if (!lines) {
       return printLine(
-        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, roles, sources, resources, logistics, advanced, power, observer, cpu, or all.',
+        '[OPS] room: invalid section. Use overview, economy, build, defense, creeps, roles, sources, resources, factory, labs, labor, logistics, advanced, power, observer, cpu, or all.',
       );
     }
 
@@ -1868,6 +1888,15 @@ module.exports = {
     }
     if (parsed.section === "logistics") {
       return `[OPS][${room.name}][LOGISTICS] report generated`;
+    }
+    if (parsed.section === "factory") {
+      return `[OPS][${room.name}][FACTORY] report generated`;
+    }
+    if (parsed.section === "labs") {
+      return `[OPS][${room.name}][LABS] report generated`;
+    }
+    if (parsed.section === "labor") {
+      return `[OPS][${room.name}][LABOR] report generated`;
     }
 
     return {
@@ -2234,11 +2263,95 @@ module.exports = {
       };
     }
 
+    if (normalizedSection === "labor") {
+      const rollup = roomReporting.buildEmpireLaborRollup(reports);
+      const lines = roomReporting.formatEmpireLaborRollup(rollup);
+      printBlock(lines);
+      return {
+        section: "labor",
+        lines: lines,
+        rollup: rollup,
+      };
+    }
+
     const report = empireManager.buildReport(reports);
 
     printBlock(report.lines);
 
     return report;
+  },
+
+  factory(roomName, mode, product) {
+    const normalizedMode =
+      typeof mode === "string" ? mode.trim().toLowerCase() : "status";
+    const room = getTargetRoomOrPrintError(roomName, "factory");
+    if (!room) return null;
+    opsState.setCurrentRoomName(room.name);
+
+    if (
+      normalizedMode === "stop" ||
+      normalizedMode === "pause" ||
+      normalizedMode === "off"
+    ) {
+      return printLine(
+        `[OPS][${room.name}][FACTORY] ${normalizedMode}: blocked; factory manager has no safe operator pause/stop control yet.`,
+      );
+    }
+
+    if (
+      normalizedMode !== "status" &&
+      normalizedMode !== "preview" &&
+      normalizedMode !== "battery" &&
+      normalizedMode !== "undefined"
+    ) {
+      return printLine(
+        '[OPS] factory: invalid mode. Use status, preview, battery, pause, or stop.',
+      );
+    }
+
+    const report = roomReporting.build(room, null, { updateProgress: true });
+    const lines = roomReporting.getSectionLines(report, "factory").slice();
+    if (normalizedMode === "preview" || normalizedMode === "battery") {
+      const previewProduct =
+        normalizedMode === "battery"
+          ? "battery"
+          : product || report.factory.configuredProduct || "none";
+      lines.push(
+        `[OPS][${room.name}][FACTORY] preview ${previewProduct} | No production executed.`,
+      );
+    }
+    printBlock(lines);
+    return `[OPS][${room.name}][FACTORY] report generated`;
+  },
+
+  labs(roomName, mode) {
+    const normalizedMode =
+      typeof mode === "string" ? mode.trim().toLowerCase() : "status";
+    const room = getTargetRoomOrPrintError(roomName, "labs");
+    if (!room) return null;
+    opsState.setCurrentRoomName(room.name);
+
+    if (normalizedMode === "pause" || normalizedMode === "stop" || normalizedMode === "off") {
+      return printLine(
+        `[OPS][${room.name}][LABS] ${normalizedMode}: blocked; lab manager has no safe operator pause/stop control yet.`,
+      );
+    }
+
+    if (
+      normalizedMode !== "status" &&
+      normalizedMode !== "preview" &&
+      normalizedMode !== "undefined"
+    ) {
+      return printLine('[OPS] labs: invalid mode. Use status, preview, pause, or stop.');
+    }
+
+    const report = roomReporting.build(room, null, { updateProgress: true });
+    const lines = roomReporting.getSectionLines(report, "labs").slice();
+    if (normalizedMode === "preview") {
+      lines.push(`[OPS][${room.name}][LABS] preview | No reaction executed.`);
+    }
+    printBlock(lines);
+    return `[OPS][${room.name}][LABS] report generated`;
   },
 
   log(arg1, arg2) {
