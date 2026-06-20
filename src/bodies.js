@@ -426,7 +426,11 @@ module.exports = {
       carry: 1,
       move: 1,
     };
-    const minimums = { work: 2, carry: hasStorage ? 2 : 1, move: 1 };
+    const minimums = {
+      work: 2,
+      carry: hasStorage && energyCapacity >= 400 ? 2 : 1,
+      move: 1,
+    };
     let profile = hasStorage ? "storage_fed" : "self_fed";
 
     counts.carry = hasStorage

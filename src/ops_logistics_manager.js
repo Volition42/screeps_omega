@@ -1065,7 +1065,9 @@ function getRoomDiagnostics(roomName, options) {
     },
   };
 
-  summary.history = recordHistorySnapshot(roomName, summary);
+  summary.history = settings.recordHistory === false
+    ? summarizeHistory(getHistoryRoot()[roomName] || [])
+    : recordHistorySnapshot(roomName, summary);
   return summary;
 }
 

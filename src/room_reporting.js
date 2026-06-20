@@ -1523,6 +1523,31 @@ function getWorkerBodyCost(room, state) {
   return room.energyCapacityAvailable >= 300 ? 300 : room.energyCapacityAvailable || 0;
 }
 
+function getUpgraderBodyPlan(room, state) {
+  const spawnManager = require("spawn_manager");
+  const queue = getQueue(room);
+  for (let i = 0; i < queue.length; i++) {
+    if (queue[i].role === "upgrader") {
+      return {
+        profile: queue[i].bodyProfile || "unknown",
+        cost: typeof queue[i].bodyCost === "number" ? queue[i].bodyCost : 0,
+        priority: typeof queue[i].priority === "number" ? queue[i].priority : 0,
+      };
+    }
+  }
+
+  const plan = spawnManager.getSpawnBodyPlan(
+    room,
+    state,
+    { role: "upgrader", priority: spawnManager.getUpgraderSpawnPriority(room, state) },
+  );
+  return {
+    profile: plan.profile || "unknown",
+    cost: plan.cost || 0,
+    priority: spawnManager.getUpgraderSpawnPriority(room, state),
+  };
+}
+
 function getLaborDesired(room, state, advanceMissing) {
   const spawnManager = require("spawn_manager");
   const phase = state.phase || "bootstrap";
@@ -1609,6 +1634,65 @@ function getLaborDiagnostics(room, state, advanceMissing, nextTask) {
   };
 }
 
+function classifyGclPushDemandBlocker(room, state, gclPush, desired, current, queued, spawn) {
+  if (!gclPush || gclPush.rcl < 8) return "not-rcl8";
+  if (!gclPush.eligible) return gclPush.blocker || "blocked";
+  if (desired <= current) return "covered";
+
+  const plan = getUpgraderBodyPlan(room, state);
+  const spawns = state.spawns || [];
+  const busy = spawns.filter(function (item) { return !!item.spawning; }).length;
+  const queue = getQueue(room);
+  const upgraderQueued = queued > 0;
+  const first = queue.length > 0 ? queue[0] : null;
+
+  if (room.energyCapacityAvailable < plan.cost) return "body profile too expensive";
+  if (room.energyAvailable < Math.min(plan.cost, room.energyCapacityAvailable || plan.cost)) {
+    return "low energy";
+  }
+  if (spawns.length > 0 && busy >= spawns.length) return "busy spawn";
+  if (upgraderQueued && first && first.role !== "upgrader") return "higher priority work";
+  if (!upgraderQueued && desired > current) return "role target mismatch";
+  if (!spawn || spawns.length === 0) return "missing memory/state";
+
+  return "unknown";
+}
+
+function attachGclPushDemandDiagnostics(room, state, laborDiagnostics, gclPush) {
+  const spawnManager = require("spawn_manager");
+  const roleCounts = state.roleCounts || {};
+  const queue = getQueue(room);
+  const desired = gclPush && gclPush.eligible
+    ? spawnManager.getDesiredUpgraders(room, state)
+    : 0;
+  const current = roleCounts.upgrader || 0;
+  const queued = queue.filter(function (row) { return row.role === "upgrader"; }).length;
+  const deficit = Math.max(0, desired - current);
+  const demandPresent = queue.some(function (row) {
+    return row.role === "upgrader" && row.priority === spawnManager.getUpgraderSpawnPriority(room, state);
+  });
+  const bodyPlan = getUpgraderBodyPlan(room, state);
+
+  gclPush.desiredUpgraders = desired;
+  gclPush.currentUpgraders = current;
+  gclPush.queuedUpgraders = queued;
+  gclPush.upgraderDeficit = deficit;
+  gclPush.upgraderSurplus = Math.max(0, current - desired);
+  gclPush.spawnDemandPresent = demandPresent;
+  gclPush.bodyProfile = bodyPlan.profile;
+  gclPush.bodyCost = bodyPlan.cost;
+  gclPush.spawnPriority = bodyPlan.priority;
+  gclPush.demandBlocker = classifyGclPushDemandBlocker(
+    room,
+    state,
+    gclPush,
+    desired,
+    current,
+    queued,
+    laborDiagnostics.spawn,
+  );
+}
+
 function formatGclPushLine(gclPush) {
   if (!gclPush || gclPush.rcl < 8) {
     return "GCL Push: blocked | RCL " + (gclPush ? gclPush.rcl : 0) + " | Blocker not-rcl8 | Upgrade Mode throttled";
@@ -1630,6 +1714,44 @@ function formatGclPushLine(gclPush) {
   );
 }
 
+function formatGclPushDemandLine(gclPush) {
+  if (!gclPush || gclPush.rcl < 8) {
+    return "GCL Push Demand: desired 0 | current 0 | deficit 0 | demand no | blocker not-rcl8";
+  }
+
+  return (
+    "GCL Push Demand: desired " +
+    (gclPush.desiredUpgraders || 0) +
+    " | current " +
+    (gclPush.currentUpgraders || 0) +
+    " | queued " +
+    (gclPush.queuedUpgraders || 0) +
+    " | deficit " +
+    (gclPush.upgraderDeficit || 0) +
+    " | surplus " +
+    (gclPush.upgraderSurplus || 0) +
+    " | demand " +
+    (gclPush.spawnDemandPresent ? "yes" : "no") +
+    " | blocker " +
+    (gclPush.demandBlocker || "none")
+  );
+}
+
+function formatGclPushBodyLine(gclPush) {
+  if (!gclPush || gclPush.rcl < 8) {
+    return "GCL Push Body: profile none | cost 0 | priority 0";
+  }
+
+  return (
+    "GCL Push Body: profile " +
+    (gclPush.bodyProfile || "unknown") +
+    " | cost " +
+    fmtAmount(gclPush.bodyCost || 0) +
+    " | priority " +
+    (gclPush.spawnPriority || 0)
+  );
+}
+
 function formatLaborLines(room, labor) {
   const lines = [
     `[OPS][${room.name}][LABOR]`,
@@ -1642,6 +1764,8 @@ function formatLaborLines(room, labor) {
   ];
   if (labor.gclPush) {
     lines.push(formatGclPushLine(labor.gclPush));
+    lines.push(formatGclPushDemandLine(labor.gclPush));
+    lines.push(formatGclPushBodyLine(labor.gclPush));
   }
   lines.push("No spawn policy change or spawn action performed.");
   return lines;
@@ -1672,10 +1796,16 @@ function buildEmpireLaborRollup(reports) {
     return row.gclPush.blocker === "reserve-low";
   });
   const eligibleNoLabor = eligibleGcl.filter(function (row) {
-    return (row.gclPush.upgraderCount || 0) <= 0;
+    return (row.gclPush.upgraderDeficit || 0) > 0;
   });
   const pushing = eligibleGcl.filter(function (row) {
     return row.gclPush.pushing;
+  });
+  const activeDemand = eligibleGcl.filter(function (row) {
+    return row.gclPush.spawnDemandPresent;
+  });
+  const higherPriorityBlocked = eligibleGcl.filter(function (row) {
+    return row.gclPush.demandBlocker === "higher priority work";
   });
   const blockerCounts = {};
   for (let i = 0; i < blockedGcl.length; i++) {
@@ -1705,9 +1835,17 @@ function buildEmpireLaborRollup(reports) {
       reserveLow: reserveLow.length,
       eligibleNoLabor: eligibleNoLabor.length,
       pushing: pushing.length,
+      activeDemand: activeDemand.length,
+      higherPriorityBlocked: higherPriorityBlocked.length,
       topBlockers: topBlockers.map(function (blocker) {
         return blocker + " " + blockerCounts[blocker];
       }),
+      needsUpgradeLabor: eligibleNoLabor.slice().sort(function (a, b) {
+        if ((b.gclPush.upgraderDeficit || 0) !== (a.gclPush.upgraderDeficit || 0)) {
+          return (b.gclPush.upgraderDeficit || 0) - (a.gclPush.upgraderDeficit || 0);
+        }
+        return a.room.localeCompare(b.room);
+      }).slice(0, 5),
     },
     largest: largest.slice(0, 5),
     topAttention: largest.slice(0, 5),
@@ -1720,8 +1858,20 @@ function formatEmpireLaborRollup(rollup) {
     `Rooms evaluated ${rollup.roomsEvaluated} | Labor deficit rooms ${rollup.deficitRooms}`,
     `Spawn busy ${rollup.blockedBusy.length} | Energy insufficient ${rollup.blockedEnergy.length} | Repeated restore-next ${rollup.repeatedNext.length}`,
     `RCL8 GCL rooms ${rollup.gclPush.rcl8Rooms} | eligible ${rollup.gclPush.eligible} | blocked ${rollup.gclPush.blocked} | reserve-low ${rollup.gclPush.reserveLow}`,
-    `GCL push labor gaps ${rollup.gclPush.eligibleNoLabor} | pushing ${rollup.gclPush.pushing} | blockers ${rollup.gclPush.topBlockers.length > 0 ? rollup.gclPush.topBlockers.join(", ") : "none"}`,
+    `GCL push labor gaps ${rollup.gclPush.eligibleNoLabor} | active demand ${rollup.gclPush.activeDemand} | pushing ${rollup.gclPush.pushing} | higher-priority blocked ${rollup.gclPush.higherPriorityBlocked}`,
+    `GCL push blockers ${rollup.gclPush.topBlockers.length > 0 ? rollup.gclPush.topBlockers.join(", ") : "none"}`,
   ];
+
+  if (rollup.gclPush.needsUpgradeLabor.length === 0) {
+    lines.push("GCL push upgrade labor needed none");
+  } else {
+    lines.push(
+      "GCL push upgrade labor needed " +
+        rollup.gclPush.needsUpgradeLabor.map(function (row) {
+          return `${row.room} deficit ${row.gclPush.upgraderDeficit || 0} demand ${row.gclPush.spawnDemandPresent ? "yes" : "no"} blocker ${row.gclPush.demandBlocker || "none"}`;
+        }).join(", "),
+    );
+  }
 
   if (rollup.largest.length === 0) {
     lines.push("Largest deficits none");
@@ -2661,6 +2811,7 @@ module.exports = {
       advanced: advanced,
       laborDesired: laborDiagnostics.desired,
     });
+    attachGclPushDemandDiagnostics(room, summaryState, laborDiagnostics, gclPush);
     laborDiagnostics.gclPush = gclPush;
     const gclPushLine = formatGclPushLine(gclPush);
     const roleIntentLines = roleIntentDiagnostics.formatLines(roleIntent);

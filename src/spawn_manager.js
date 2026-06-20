@@ -21,6 +21,7 @@ const empireManager = require("empire_manager");
 const reservationManager = require("reservation_manager");
 const attackManager = require("attack_manager");
 const reservePolicy = require("economy_reserve_policy");
+const opsLogisticsManager = require("ops_logistics_manager");
 const utils = require("utils");
 
 module.exports = {
@@ -738,6 +739,8 @@ module.exports = {
     var currentUpgraders = roleCounts.upgrader || 0;
     var queuedUpgraders = this.countQueued(room, "upgrader");
 
+    var upgraderPriority = this.getUpgraderSpawnPriority(room, state);
+
     while (
       currentUpgraders +
         queuedUpgraders +
@@ -748,7 +751,7 @@ module.exports = {
     ) {
       requests.push({
         role: "upgrader",
-        priority: 80,
+        priority: upgraderPriority,
       });
     }
 
@@ -1158,10 +1161,13 @@ module.exports = {
 
     if (
       controllerLevel >= 8 &&
-      !reservePolicy.isDowngradeCritical(room.controller) &&
-      !reservePolicy.shouldAllowRcl8GclPush(room, state)
+      !reservePolicy.isDowngradeCritical(room.controller)
     ) {
-      return 0;
+      if (!this.shouldAllowRcl8GclPushDemand(room, state)) {
+        return 0;
+      }
+
+      return reservePolicy.getRcl8GclPushMinUpgraders();
     }
 
     if (
@@ -1232,6 +1238,42 @@ module.exports = {
     }
 
     return Math.ceil(Math.min(15, targetWork) / workPerCreep);
+  },
+
+  shouldAllowRcl8GclPushDemand(room, state) {
+    return reservePolicy.shouldAllowRcl8GclPush(
+      room,
+      state,
+      this.getRcl8GclPushDemandOptions(room, state),
+    );
+  },
+
+  getRcl8GclPushDemandOptions(room, state) {
+    var roleCounts = state && state.roleCounts ? state.roleCounts : {};
+    var desiredHaulers = require("room_state").getDesiredTotalHaulers(
+      state && state.sources ? state.sources : [],
+    );
+
+    return {
+      logistics: opsLogisticsManager.getRoomDiagnostics(room.name, {
+        currentHaulers: roleCounts.hauler || 0,
+        desiredHaulers: desiredHaulers,
+        advanced: state && state.advancedOps ? state.advancedOps : null,
+        recordHistory: false,
+      }),
+      advanced: state && state.advancedOps ? state.advancedOps : null,
+      laborDesired: this.getDesiredWorkers(room, state),
+    };
+  },
+
+  getUpgraderSpawnPriority(room, state) {
+    var controller = room && room.controller ? room.controller : null;
+    if (controller && controller.level >= 8) {
+      if (reservePolicy.isDowngradeCritical(controller)) return 115;
+      if (this.shouldAllowRcl8GclPushDemand(room, state)) return 50;
+    }
+
+    return 80;
   },
 
   getThresholdWork(thresholds, energy, fallback) {

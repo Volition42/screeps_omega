@@ -82,6 +82,13 @@ module.exports = {
       : 50000;
   },
 
+  getRcl8GclPushMinUpgraders() {
+    return config.UPGRADING &&
+      typeof config.UPGRADING.RCL8_GCL_PUSH_MIN_UPGRADERS === "number"
+      ? Math.max(0, config.UPGRADING.RCL8_GCL_PUSH_MIN_UPGRADERS)
+      : 1;
+  },
+
   shouldBankStorageEnergy(room, state) {
     if (!room || !room.storage) return false;
 
