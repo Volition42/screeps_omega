@@ -106,6 +106,7 @@ const RESOURCE_SILICON = "silicon";
 const RESOURCE_METAL = "metal";
 const RESOURCE_BIOMASS = "biomass";
 const RESOURCE_MIST = "mist";
+const RESOURCE_BATTERY = "battery";
 
 const WORK = "work";
 const CARRY = "carry";
@@ -290,6 +291,7 @@ Object.assign(global, {
   RESOURCE_METAL,
   RESOURCE_BIOMASS,
   RESOURCE_MIST,
+  RESOURCE_BATTERY,
   RESOURCES_ALL: [
     RESOURCE_ENERGY,
     RESOURCE_POWER,
@@ -306,6 +308,7 @@ Object.assign(global, {
     RESOURCE_METAL,
     RESOURCE_BIOMASS,
     RESOURCE_MIST,
+    RESOURCE_BATTERY,
   ],
   WORK,
   CARRY,
@@ -960,6 +963,31 @@ function createStructure(structureType, x, y, options) {
     };
   }
 
+  if (structureType === STRUCTURE_FACTORY) {
+    structure.produce = function (product) {
+      currentRuntime.factoryActions.push({
+        factoryId: this.id,
+        roomName: this.room ? this.room.name : this.pos.roomName,
+        product: product,
+        tick: Game.time,
+      });
+      return OK;
+    };
+  }
+
+  if (structureType === STRUCTURE_LAB) {
+    structure.runReaction = function (inputA, inputB) {
+      currentRuntime.labReactionActions.push({
+        labId: this.id,
+        roomName: this.room ? this.room.name : this.pos.roomName,
+        inputA: inputA ? inputA.id : null,
+        inputB: inputB ? inputB.id : null,
+        tick: Game.time,
+      });
+      return OK;
+    };
+  }
+
   return structure;
 }
 
@@ -1371,6 +1399,8 @@ function resetRuntime(tick) {
     renewPowerCreepActions: [],
     spawnEvents: [],
     observerActions: [],
+    factoryActions: [],
+    labReactionActions: [],
     terminalSends: [],
     towerActions: [],
     creepActions: [],
@@ -15476,6 +15506,7 @@ function runProductionFactoryVisibilityScenario() {
       summary: {
         factoryStatus: "ready",
         factoryProduct: "battery",
+        batteryPolicy: "reserve",
         labStatus: "inactive",
         powerSpawnStatus: "inactive",
         nukerStatus: "inactive",
@@ -15484,6 +15515,7 @@ function runProductionFactoryVisibilityScenario() {
           { label: "factory_output", resourceType: "battery", amount: 250 },
         ],
       },
+      batteryPolicy: "reserve",
     },
   };
   ops.registerGlobals();
@@ -15495,11 +15527,13 @@ function runProductionFactoryVisibilityScenario() {
   });
   assert(captured.result === `[OPS][${room.name}][FACTORY] report generated`, `factory report should return printable status, got ${captured.result}`);
   assert(
-    captured.lines.some(function (line) { return line.indexOf("[FACTORY]") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("[FACTORY]") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Factory exists") !== -1 && line.indexOf("State accumulating") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Recipe battery") !== -1; }) &&
-      captured.lines.some(function (line) { return line.indexOf("Battery 850") !== -1 && line.indexOf("Energy 600") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Battery policy reserve") !== -1 && line.indexOf("Stock 850") !== -1 && line.indexOf("Classification reserve") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Battery energy 600") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Output accumulation battery 250>=100") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Ownership supply unknown") !== -1 && line.indexOf("withdraw advanced-hauler") !== -1 && line.indexOf("alignment bypasses request standards") !== -1; }) &&
       captured.lines.join("\n").indexOf("[object Object]") === -1,
     `factory report should include printable battery/energy/state/output details, got ${captured.lines.join(" / ")}`,
   );
@@ -15512,6 +15546,72 @@ function runProductionFactoryVisibilityScenario() {
       captured.lines.some(function (line) { return line.indexOf("preview battery | No production executed") !== -1; }),
     `ops.factory battery should be report-only preview, got ${captured.lines.join(" / ")}`,
   );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.factory(room.name, "battery", "commodity");
+  });
+  assert(
+    Memory.rooms[room.name].advancedOps.batteryPolicy === "commodity" &&
+      captured.lines.some(function (line) { return line.indexOf("battery policy commodity stored") !== -1; }),
+    `ops.factory battery commodity should persist policy, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.factory(room.name, "battery", "disabled");
+  });
+  assert(
+    Memory.rooms[room.name].advancedOps.batteryPolicy === "disabled" &&
+      captured.lines.some(function (line) { return line.indexOf("battery policy disabled stored") !== -1; }),
+    `ops.factory battery disabled should persist policy, got ${captured.lines.join(" / ")}`,
+  );
+
+  Game.time += 1;
+  let state = roomState.collect(room);
+  let summary = advancedStructureManager.getStatus(room, state);
+  assert(summary.factoryProduct === null, `disabled battery policy should suppress battery product, got ${summary.factoryProduct}`);
+
+  captured = captureConsoleLines(function () {
+    return global.ops.factory(room.name, "battery", "reserve");
+  });
+  assert(
+    Memory.rooms[room.name].advancedOps.batteryPolicy === "reserve" &&
+      captured.lines.some(function (line) { return line.indexOf("battery policy reserve stored") !== -1; }),
+    `ops.factory battery reserve should persist policy, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.factory(room.name, "pause");
+  });
+  assert(
+    Memory.rooms[room.name].advancedOps.factoryPaused === true &&
+      captured.lines.some(function (line) { return line.indexOf("factory pause enabled") !== -1; }),
+    `ops.factory pause should persist pause state, got ${captured.lines.join(" / ")}`,
+  );
+  Game.time += 1;
+  state = roomState.collect(room);
+  advancedStructureManager.run(room, state);
+  assert(currentRuntime.factoryActions.length === 0, "paused factory must not call produce");
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "factory");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Status paused") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Blocked operator paused") !== -1; }),
+    `factory report should reflect pause state, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.factory(room.name, "resume");
+  });
+  assert(
+    Memory.rooms[room.name].advancedOps.factoryPaused === false &&
+      captured.lines.some(function (line) { return line.indexOf("factory pause cleared") !== -1; }),
+    `ops.factory resume should clear pause state, got ${captured.lines.join(" / ")}`,
+  );
+  Game.time += 1;
+  state = roomState.collect(room);
+  advancedStructureManager.run(room, state);
+  assert(currentRuntime.factoryActions.length === 1, "resumed ready factory should call produce exactly once");
   assert(currentRuntime.terminalSends.length === terminalSendsBefore, "factory reports must not send terminal resources");
   assert(currentRuntime.spawnEvents.length === spawnEventsBefore, "factory reports must not spawn creeps");
   assert(storage.store.energy === 100000 && factory.store.energy === 600, "factory reports must not move resources");
@@ -15532,6 +15632,13 @@ function runProductionFactoryVisibilityScenario() {
     captured.lines.some(function (line) { return line.indexOf("Factory missing") !== -1; }) &&
       captured.lines.join("\n").indexOf("[object Object]") === -1,
     `missing factory report should be printable, got ${captured.lines.join(" / ")}`,
+  );
+  captured = captureConsoleLines(function () {
+    return global.ops.factory(missingRoom.name, "battery", "reserve");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("blocked; factory missing") !== -1; }),
+    `battery control should validate factory existence, got ${captured.lines.join(" / ")}`,
   );
 }
 
@@ -15617,6 +15724,7 @@ function runProductionLabVisibilityScenario() {
       captured.lines.some(function (line) { return line.indexOf("Energy 1,250") !== -1 && line.indexOf("Cooldowns 1") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Missing reagents none") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Output accumulation") !== -1 && line.indexOf("OH 300") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Ownership supply unknown") !== -1 && line.indexOf("withdraw advanced-hauler") !== -1 && line.indexOf("alignment bypasses request standards") !== -1; }) &&
       captured.lines.join("\n").indexOf("[object Object]") === -1,
     `labs report should include printable reaction/reagent/output details, got ${captured.lines.join(" / ")}`,
   );
@@ -15628,6 +15736,38 @@ function runProductionLabVisibilityScenario() {
     captured.result === `[OPS][${room.name}][LABS] report generated` &&
       captured.lines.some(function (line) { return line.indexOf("preview | No reaction executed") !== -1; }),
     `ops.labs preview should be report-only, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.labs(room.name, "pause");
+  });
+  assert(
+    Memory.rooms[room.name].advancedOps.labsPaused === true &&
+      captured.lines.some(function (line) { return line.indexOf("lab pause enabled") !== -1; }),
+    `ops.labs pause should persist pause state, got ${captured.lines.join(" / ")}`,
+  );
+  Game.time += 1;
+  let state = roomState.collect(room);
+  const pausedSummary = advancedStructureManager.getStatus(room, state);
+  assert(pausedSummary.labStatus === "paused", `paused labs should report paused status, got ${pausedSummary.labStatus}`);
+  advancedStructureManager.run(room, state);
+  assert(currentRuntime.labReactionActions.length === 0, "paused labs must not call runReaction");
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "labs");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Status paused") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Blocked operator paused") !== -1; }),
+    `lab report should reflect pause state, got ${captured.lines.join(" / ")}`,
+  );
+
+  captured = captureConsoleLines(function () {
+    return global.ops.labs(room.name, "resume");
+  });
+  assert(
+    Memory.rooms[room.name].advancedOps.labsPaused === false &&
+      captured.lines.some(function (line) { return line.indexOf("lab pause cleared") !== -1; }),
+    `ops.labs resume should clear pause state, got ${captured.lines.join(" / ")}`,
   );
   assert(currentRuntime.terminalSends.length === terminalSendsBefore, "lab reports must not send terminal resources");
   assert(currentRuntime.spawnEvents.length === spawnEventsBefore, "lab reports must not spawn creeps");
@@ -15648,6 +15788,13 @@ function runProductionLabVisibilityScenario() {
     captured.lines.some(function (line) { return line.indexOf("Labs missing") !== -1; }) &&
       captured.lines.join("\n").indexOf("[object Object]") === -1,
     `missing labs report should be printable, got ${captured.lines.join(" / ")}`,
+  );
+  captured = captureConsoleLines(function () {
+    return global.ops.labs(missingRoom.name, "pause");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("blocked; labs missing") !== -1; }),
+    `lab pause should validate lab existence, got ${captured.lines.join(" / ")}`,
   );
 }
 

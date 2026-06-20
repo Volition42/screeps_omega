@@ -29,5 +29,14 @@
 
 - Factory and lab supply/withdraw needs currently use `advanced_structure_manager` task labels consumed by advanced hauler selection, not the `Memory.ops.logistics.requests` queue.
 - Factory battery production is configured by `config.ADVANCED.FACTORY.PRODUCT_PRIORITY`; the current code does not show a local battery consumer, market path, or terminal-balancing expansion for batteries.
-- Lab reactions are selected conservatively from configured boost targets/fallback priorities, but there is no safe operator pause flag or broad reaction planner yet.
+- Lab reactions are selected conservatively from configured boost targets/fallback priorities; broad reaction planning remains intentionally absent.
 - Worker labor deficits are now visible through report-only room and empire diagnostics; spawn policy should remain unchanged until deficit causes are observed from those reports.
+
+## Production Request Integration and Battery Policy Control
+
+- Factory supply (`factory_input`, `factory_energy`), factory withdraw (`factory_output`), lab supply (`lab_input`), and lab withdraw (`lab_output`, `lab_cleanup`) are still advanced-hauler owned by `advanced_structure_manager`.
+- Ops logistics requests remain the canonical request store for storage/terminal/power-spawn endpoints, but they do not yet safely address factory or lab endpoints. Migrating production hauling would require an endpoint/schema adapter phase, not a direct rewrite.
+- Factory and lab reports now classify supply ownership, withdraw ownership, active logistics path, and request-alignment status so duplicated or mixed ownership is visible before any migration.
+- Battery policy is now operator-controlled in room `advancedOps` memory as `reserve`, `commodity`, or `disabled`; `disabled` suppresses battery selection without adding market automation, terminal balancing, commodity planning, or a production planner.
+- Factory and lab pause flags are explicit room `advancedOps` controls and are honored by `advanced_structure_manager`; no automatic pause/resume policy was added.
+- Labor diagnostics were reviewed and no small spawn-policy defect was identified in this phase. A focused labor correction phase should use observed repeated restore-worker states before changing worker desired calculations.

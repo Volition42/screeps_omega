@@ -125,7 +125,7 @@ module.exports = {
       powerSpawn: powerSpawn,
       nuker: nuker,
       lab: this.buildLabPlan(room, labs, storage, terminal, memory),
-      factoryPlan: this.buildFactoryPlan(room, factory, storage, terminal),
+      factoryPlan: this.buildFactoryPlan(room, factory, storage, terminal, memory),
       powerSpawnPlan: this.buildPowerSpawnPlan(powerSpawn, storage, terminal),
       nukerPlan: this.buildNukerPlan(nuker, storage, terminal),
       taskCandidates: {},
@@ -144,6 +144,19 @@ module.exports = {
     var labsConfig = config.ADVANCED && config.ADVANCED.LABS
       ? config.ADVANCED.LABS
       : {};
+
+    if (memory.labsPaused === true) {
+      return {
+        enabled: false,
+        paused: true,
+        status: "paused",
+        product: null,
+        reagentA: null,
+        reagentB: null,
+        inputIds: [],
+        reactorIds: [],
+      };
+    }
 
     if (labsConfig.ENABLED === false || labs.length < 3) {
       memory.labLayout = null;
@@ -602,14 +615,25 @@ module.exports = {
     return null;
   },
 
-  buildFactoryPlan(room, factory, storage, terminal) {
+  buildFactoryPlan(room, factory, storage, terminal, memory) {
     var factoryConfig = config.ADVANCED && config.ADVANCED.FACTORY
       ? config.ADVANCED.FACTORY
       : {};
 
+    if (memory && memory.factoryPaused === true) {
+      return {
+        enabled: false,
+        paused: true,
+        status: "paused",
+        product: null,
+        factoryId: factory ? factory.id : null,
+      };
+    }
+
     if (factoryConfig.ENABLED === false || !factory) {
       return {
         enabled: false,
+        paused: false,
         status: "inactive",
         product: null,
         factoryId: null,
@@ -619,10 +643,12 @@ module.exports = {
     var products = factoryConfig.PRODUCT_PRIORITY || [];
     var storageEnergy = storage ? storage.store[RESOURCE_ENERGY] || 0 : 0;
     var chosen = null;
+    var batteryPolicy = memory && memory.batteryPolicy ? memory.batteryPolicy : null;
 
     for (var i = 0; i < products.length; i++) {
       if (
         products[i] === "battery" &&
+        batteryPolicy !== "disabled" &&
         storageEnergy >= (factoryConfig.MIN_STORAGE_ENERGY || 50000) &&
         typeof COMMODITIES !== "undefined" &&
         COMMODITIES[products[i]]
@@ -634,6 +660,7 @@ module.exports = {
 
     return {
       enabled: true,
+      paused: false,
       status: chosen ? "ready" : "idle",
       product: chosen,
       factoryId: factory.id,
@@ -1123,8 +1150,11 @@ module.exports = {
       labGoal: plan.lab.goal || null,
       labNeed: plan.lab.need || 0,
       labReason: plan.lab.reason || null,
+      labsPaused: plan.lab.paused === true,
       factoryStatus: plan.factoryPlan.status,
       factoryProduct: plan.factoryPlan.product || null,
+      factoryPaused: plan.factoryPlan.paused === true,
+      batteryPolicy: this.getRoomMemory(plan.room).batteryPolicy || null,
       powerSpawnStatus: plan.powerSpawnPlan.status,
       powerSpawnRefillOwner: "power_manager",
       nukerStatus: plan.nukerPlan.status,
@@ -1497,8 +1527,11 @@ module.exports = {
       labGoal: null,
       labNeed: 0,
       labReason: null,
+      labsPaused: false,
       factoryStatus: "inactive",
       factoryProduct: null,
+      factoryPaused: false,
+      batteryPolicy: null,
       powerSpawnStatus: "inactive",
       nukerStatus: "inactive",
       taskLabel: null,

@@ -5,3 +5,6 @@ node_modules/
 .env
 .env.local
 __pycache__/
+docs/*-IMPROVED.pdf
+docs/Figma API Manual.pdf
+scripts/generate_omega_operator_manual_pdf.py

@@ -687,7 +687,18 @@ function getFactoryRecipe(product) {
     : null;
 }
 
+function getAdvancedOpsMemory(room) {
+  return Memory.rooms &&
+    Memory.rooms[room.name] &&
+    Memory.rooms[room.name].advancedOps
+    ? Memory.rooms[room.name].advancedOps
+    : {};
+}
+
 function getFactoryProduct(advanced, room) {
+  const memory = getAdvancedOpsMemory(room);
+  if (memory.batteryPolicy === "disabled") return null;
+
   const settings = getFactorySettings();
   if (advanced && advanced.factoryProduct) return advanced.factoryProduct;
 
@@ -766,40 +777,149 @@ function getFactoryOutputAccumulation(factory, product, recipe) {
 }
 
 function getBatteryUsefulness(room, factory) {
+  const memory = getAdvancedOpsMemory(room);
   const settings = getFactorySettings();
   const products = settings.PRODUCT_PRIORITY || [];
   const battery = "battery";
   const configured = products.indexOf(battery) !== -1;
+  const policy = ["reserve", "commodity", "disabled"].indexOf(memory.batteryPolicy) !== -1
+    ? memory.batteryPolicy
+    : "unknown";
   const stock =
     getStoredAmount(factory, battery) +
     getStoredAmount(room.storage, battery) +
     getStoredAmount(room.terminal, battery);
+  let trend = "unavailable";
+  let classification = policy;
+
+  if (policy === "unknown") {
+    classification = configured ? "unknown" : "disabled";
+  }
+
+  if (memory.batteryStockLast && typeof memory.batteryStockLast.amount === "number") {
+    if (stock > memory.batteryStockLast.amount) trend = "up";
+    else if (stock < memory.batteryStockLast.amount) trend = "down";
+    else trend = "flat";
+  }
 
   if (!configured) {
     return {
       status: "not-configured",
+      policy: policy,
+      classification: classification,
       stock: stock,
+      trend: trend,
       reason: "battery is not in factory product priority",
+    };
+  }
+
+  if (policy === "disabled") {
+    return {
+      status: "disabled",
+      policy: policy,
+      classification: "disabled",
+      stock: stock,
+      trend: trend,
+      reason: "operator disabled battery production intent",
+    };
+  }
+
+  if (policy === "reserve") {
+    return {
+      status: "reserve",
+      policy: policy,
+      classification: "reserve",
+      stock: stock,
+      trend: trend,
+      reason: "batteries treated as compressed energy reserve",
+    };
+  }
+
+  if (policy === "commodity") {
+    return {
+      status: "commodity",
+      policy: policy,
+      classification: "commodity",
+      stock: stock,
+      trend: trend,
+      reason: "batteries reserved for future commodity chains",
     };
   }
 
   if (stock >= 10000) {
     return {
       status: "excessive",
+      policy: policy,
+      classification: classification,
       stock: stock,
+      trend: trend,
       reason: "local battery stock is high and no local consumer is known",
     };
   }
 
   return {
     status: "unclear",
+    policy: policy,
+    classification: classification,
     stock: stock,
+    trend: trend,
     reason: "configured factory fallback; no local battery consumer is known",
+  };
+}
+
+function getProductionOwnership(room, backlog, labelPrefix, supplyLabels, withdrawLabels) {
+  const supply = {};
+  const withdraw = {};
+  const active = [];
+
+  for (let i = 0; i < supplyLabels.length; i++) supply[supplyLabels[i]] = true;
+  for (let i = 0; i < withdrawLabels.length; i++) withdraw[withdrawLabels[i]] = true;
+
+  let advancedSupply = false;
+  let advancedWithdraw = false;
+
+  for (let i = 0; i < backlog.length; i++) {
+    const row = backlog[i];
+    if (!row || !row.label || row.label.indexOf(labelPrefix) !== 0) continue;
+    active.push(`${row.label} ${row.resourceType} ${fmtAmount(row.amount)}`);
+    if (supply[row.label]) advancedSupply = true;
+    if (withdraw[row.label]) advancedWithdraw = true;
+  }
+
+  const opsSupply = false;
+  const opsWithdraw = false;
+  const classify = function (advancedOwned, opsOwned) {
+    if (advancedOwned && opsOwned) return "mixed";
+    if (opsOwned) return "ops-logistics";
+    if (advancedOwned) return "advanced-hauler";
+    return "unknown";
+  };
+  const supplyOwner = classify(advancedSupply, opsSupply);
+  const withdrawOwner = classify(advancedWithdraw, opsWithdraw);
+  const activePath = supplyOwner === withdrawOwner
+    ? supplyOwner
+    : `${supplyOwner}/${withdrawOwner}`;
+  let status = "bypasses request standards";
+
+  if (activePath === "ops-logistics") status = "request aligned";
+  else if (activePath.indexOf("mixed") !== -1 || activePath.indexOf("ops-logistics") !== -1) {
+    status = "mixed ownership";
+  } else if (activePath === "unknown") {
+    status = "unknown";
+  }
+
+  return {
+    supplyOwner: supplyOwner,
+    withdrawOwner: withdrawOwner,
+    activePath: activePath,
+    status: status,
+    active: active,
   };
 }
 
 function getFactoryDiagnostics(room, state, advanced) {
   const factory = findFirstStructure(state, STRUCTURE_FACTORY);
+  const memory = getAdvancedOpsMemory(room);
   const settings = getFactorySettings();
   const enabled = settings.ENABLED !== false;
   const product = enabled ? getFactoryProduct(advanced, room) : null;
@@ -807,10 +927,20 @@ function getFactoryDiagnostics(room, state, advanced) {
   const bottlenecks = getFactoryInputBottlenecks(room, factory, recipe);
   const output = getFactoryOutputAccumulation(factory, product, recipe);
   const battery = getBatteryUsefulness(room, factory);
+  const ownership = getProductionOwnership(
+    room,
+    advanced && advanced.taskBacklog ? advanced.taskBacklog : [],
+    "factory_",
+    ["factory_input", "factory_energy"],
+    ["factory_output"],
+  );
   let classification = "missing";
   let blockedReason = "factory missing";
 
-  if (factory && !enabled) {
+  if (factory && memory.factoryPaused === true) {
+    classification = "idle";
+    blockedReason = "operator paused";
+  } else if (factory && !enabled) {
     classification = "idle";
     blockedReason = "factory config disabled";
   } else if (factory && output.length > 0) {
@@ -840,12 +970,17 @@ function getFactoryDiagnostics(room, state, advanced) {
     configuredProduct: product,
     recipe: recipe,
     battery: battery,
+    ownership: ownership,
     energy: getStoredAmount(factory, RESOURCE_ENERGY),
     bottlenecks: bottlenecks,
     output: output,
     classification: classification,
     blockedReason: blockedReason,
-    advancedStatus: advanced && advanced.factoryStatus ? advanced.factoryStatus : "inactive",
+    advancedStatus: memory.factoryPaused === true
+      ? "paused"
+      : advanced && advanced.factoryStatus
+        ? advanced.factoryStatus
+        : "inactive",
     taskBacklog: advanced && advanced.taskBacklog ? advanced.taskBacklog : [],
   };
 }
@@ -855,16 +990,15 @@ function formatFactoryLines(room, diagnostics) {
   if (!diagnostics.exists) {
     lines.push("Factory missing");
     lines.push("State missing | Blocked factory missing");
-    lines.push("Battery 0 | Energy 0 | Usefulness not-configured");
+    lines.push("Battery policy unknown | Stock 0 | Trend unavailable | Classification unknown");
+    lines.push("Ownership supply unknown | withdraw unknown | active unknown | alignment unknown");
     lines.push("No market, terminal balancing, or production action performed.");
     return lines;
   }
 
   const recipeLabel = diagnostics.configuredProduct || "none";
   const outputLabel = diagnostics.output.length > 0 ? diagnostics.output.join(", ") : "none";
-  const backlog = diagnostics.taskBacklog
-    .filter(function (row) { return row.label && row.label.indexOf("factory_") === 0; })
-    .map(function (row) { return `${row.label} ${row.resourceType} ${fmtAmount(row.amount)}`; });
+  const backlog = diagnostics.ownership.active;
 
   lines.push(
     `Factory exists | State ${diagnostics.classification} | Status ${diagnostics.advancedStatus} | Cooldown ${diagnostics.cooldown}`,
@@ -872,12 +1006,14 @@ function formatFactoryLines(room, diagnostics) {
   lines.push(`Recipe ${recipeLabel} | Last action not tracked`);
   lines.push(`Store ${formatStoreSummary(diagnostics.factory, 6)}`);
   lines.push(
-    `Battery ${fmtAmount(diagnostics.battery.stock)} | Energy ${fmtAmount(diagnostics.energy)} | Usefulness ${diagnostics.battery.status}`,
+    `Battery policy ${diagnostics.battery.policy} | Stock ${fmtAmount(diagnostics.battery.stock)} | Trend ${diagnostics.battery.trend} | Classification ${diagnostics.battery.classification}`,
   );
+  lines.push(`Battery energy ${fmtAmount(diagnostics.energy)} | Usefulness ${diagnostics.battery.status}`);
   lines.push(`Battery note ${diagnostics.battery.reason}`);
   lines.push(`Input bottlenecks ${formatFactoryBottlenecks(diagnostics.bottlenecks)}`);
   lines.push(`Output accumulation ${outputLabel}`);
   lines.push(`Blocked ${diagnostics.blockedReason}`);
+  lines.push(`Ownership supply ${diagnostics.ownership.supplyOwner} | withdraw ${diagnostics.ownership.withdrawOwner} | active ${diagnostics.ownership.activePath} | alignment ${diagnostics.ownership.status}`);
   lines.push(`Logistics alignment ${backlog.length > 0 ? backlog.join(", ") : "no factory advanced backlog"}`);
   lines.push("No market, terminal balancing, or production action performed.");
   return lines;
@@ -948,6 +1084,7 @@ function getLabDiagnostics(room, state, advanced) {
       ? state.structuresByType[STRUCTURE_LAB]
       : [];
   const settings = getLabSettings();
+  const memory = getAdvancedOpsMemory(room);
   const enabled = settings.ENABLED !== false;
   const layout = getLabLayoutMemory(room);
   const inputIds = layout && layout.inputIds ? layout.inputIds.slice(0, 2) : [];
@@ -964,6 +1101,13 @@ function getLabDiagnostics(room, state, advanced) {
   const outputRows = [];
   const cooldowns = labs.filter(function (lab) { return lab.cooldown > 0; }).length;
   const backlog = advanced && advanced.taskBacklog ? advanced.taskBacklog : [];
+  const ownership = getProductionOwnership(
+    room,
+    backlog,
+    "lab_",
+    ["lab_input"],
+    ["lab_output", "lab_cleanup"],
+  );
 
   if (desiredInputs) {
     const desiredA = desiredInputs.reagentA;
@@ -990,7 +1134,10 @@ function getLabDiagnostics(room, state, advanced) {
 
   let classification = "missing";
   let blockedReason = "labs missing";
-  if (labs.length > 0 && !enabled) {
+  if (labs.length > 0 && memory.labsPaused === true) {
+    classification = "idle";
+    blockedReason = "operator paused";
+  } else if (labs.length > 0 && !enabled) {
     classification = "idle";
     blockedReason = "lab config disabled";
   } else if (labs.length > 0 && labs.length < 3) {
@@ -1029,8 +1176,13 @@ function getLabDiagnostics(room, state, advanced) {
     cooldowns: cooldowns,
     classification: classification,
     blockedReason: blockedReason,
-    advancedStatus: advanced && advanced.labStatus ? advanced.labStatus : "inactive",
+    advancedStatus: memory.labsPaused === true
+      ? "paused"
+      : advanced && advanced.labStatus
+        ? advanced.labStatus
+        : "inactive",
     advancedReason: advanced && advanced.labReason ? advanced.labReason : null,
+    ownership: ownership,
     taskBacklog: backlog,
   };
 }
@@ -1051,13 +1203,12 @@ function formatLabLines(room, diagnostics) {
   if (diagnostics.labs.length === 0) {
     lines.push("Labs missing | Count 0");
     lines.push("State missing | Blocked labs missing");
+    lines.push("Ownership supply unknown | withdraw unknown | active unknown | alignment unknown");
     lines.push("No boost, combat, market, terminal, or reaction action performed.");
     return lines;
   }
 
-  const backlog = diagnostics.taskBacklog
-    .filter(function (row) { return row.label && row.label.indexOf("lab_") === 0; })
-    .map(function (row) { return `${row.label} ${row.resourceType} ${fmtAmount(row.amount)}`; });
+  const backlog = diagnostics.ownership.active;
   const inputLabel = diagnostics.inputIds.length > 0 ? diagnostics.inputIds.join(", ") : "unknown";
   const reactorLabel = diagnostics.reactorIds.length > 0 ? diagnostics.reactorIds.join(", ") : "unknown";
 
@@ -1071,6 +1222,7 @@ function formatLabLines(room, diagnostics) {
   lines.push(`Missing reagents ${diagnostics.missing.length > 0 ? diagnostics.missing.join(", ") : "none"}`);
   lines.push(`Output accumulation ${diagnostics.outputRows.length > 0 ? diagnostics.outputRows.join(", ") : "none"}`);
   lines.push(`Blocked ${diagnostics.blockedReason}${diagnostics.advancedReason ? " | reason " + diagnostics.advancedReason : ""}`);
+  lines.push(`Ownership supply ${diagnostics.ownership.supplyOwner} | withdraw ${diagnostics.ownership.withdrawOwner} | active ${diagnostics.ownership.activePath} | alignment ${diagnostics.ownership.status}`);
   lines.push(`Logistics alignment ${backlog.length > 0 ? backlog.join(", ") : "no lab advanced backlog"}`);
   lines.push("No boost, combat, market, terminal, or reaction action performed.");
   return lines;

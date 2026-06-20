@@ -143,6 +143,22 @@ function getOpsConsoleMemory() {
   return runtime.opsConsole;
 }
 
+function getRoomAdvancedOpsMemory(roomName) {
+  if (!Memory.rooms) Memory.rooms = {};
+  if (!Memory.rooms[roomName]) Memory.rooms[roomName] = {};
+  if (!Memory.rooms[roomName].advancedOps) Memory.rooms[roomName].advancedOps = {};
+  return Memory.rooms[roomName].advancedOps;
+}
+
+function findOwnedStructure(room, structureType) {
+  const matches = room.find(FIND_MY_STRUCTURES, {
+    filter: function (structure) {
+      return structure.structureType === structureType;
+    },
+  });
+  return matches.length > 0 ? matches[0] : null;
+}
+
 function buildToggleResult(label, enabled) {
   return {
     enabled: enabled,
@@ -1182,18 +1198,18 @@ function getConsoleCommandHelp() {
       example: 'ops.empire("labor")',
     },
     {
-      command: 'ops.factory(roomName, ["status"|"preview"|"battery"])',
+      command: 'ops.factory(roomName, ["status"|"preview"|"battery"|"pause"|"resume"], [policy])',
       group: "Reports",
       description:
-        "Show read-only factory status and battery-production preflight. pause/stop report unsupported control.",
-      example: 'ops.factory("W5N5", "battery")',
+        "Show factory status or explicitly set battery policy/pause state. No market, terminal, planner, or production action is created.",
+      example: 'ops.factory("W5N5", "battery", "reserve")',
     },
     {
-      command: 'ops.labs(roomName, ["status"|"preview"])',
+      command: 'ops.labs(roomName, ["status"|"preview"|"pause"|"resume"])',
       group: "Reports",
       description:
-        "Show read-only lab reaction, reagent, output, cooldown, and logistics alignment status.",
-      example: 'ops.labs("W5N5", "status")',
+        "Show lab status or explicitly set lab pause state. No boost, market, terminal, or reaction action is created.",
+      example: 'ops.labs("W5N5", "pause")',
     },
     {
       command: "ops.log([roomName], [limit])",
@@ -2288,13 +2304,40 @@ module.exports = {
     if (!room) return null;
     opsState.setCurrentRoomName(room.name);
 
-    if (
-      normalizedMode === "stop" ||
-      normalizedMode === "pause" ||
-      normalizedMode === "off"
-    ) {
+    if (normalizedMode === "pause" || normalizedMode === "resume") {
+      const factory = findOwnedStructure(room, STRUCTURE_FACTORY);
+      if (!factory) {
+        return printLine(`[OPS][${room.name}][FACTORY] ${normalizedMode}: blocked; factory missing.`);
+      }
+
+      const memory = getRoomAdvancedOpsMemory(room.name);
+      memory.factoryPaused = normalizedMode === "pause";
+      memory.factoryPauseUpdated = Game.time;
       return printLine(
-        `[OPS][${room.name}][FACTORY] ${normalizedMode}: blocked; factory manager has no safe operator pause/stop control yet.`,
+        `[OPS][${room.name}][FACTORY] ${normalizedMode}: factory pause ${memory.factoryPaused ? "enabled" : "cleared"}.`,
+      );
+    }
+
+    if (normalizedMode === "stop" || normalizedMode === "off") {
+      return printLine('[OPS] factory: invalid mode. Use status, preview, battery, pause, or resume.');
+    }
+
+    if (normalizedMode === "battery" && typeof product === "string") {
+      const policy = product.trim().toLowerCase();
+      if (["reserve", "commodity", "disabled"].indexOf(policy) === -1) {
+        return printLine('[OPS] factory battery: invalid policy. Use reserve, commodity, or disabled.');
+      }
+
+      const factory = findOwnedStructure(room, STRUCTURE_FACTORY);
+      if (!factory) {
+        return printLine(`[OPS][${room.name}][FACTORY] battery ${policy}: blocked; factory missing.`);
+      }
+
+      const memory = getRoomAdvancedOpsMemory(room.name);
+      memory.batteryPolicy = policy;
+      memory.batteryPolicyUpdated = Game.time;
+      return printLine(
+        `[OPS][${room.name}][FACTORY] battery policy ${policy} stored | No market, terminal, planner, or production action performed.`,
       );
     }
 
@@ -2305,7 +2348,7 @@ module.exports = {
       normalizedMode !== "undefined"
     ) {
       return printLine(
-        '[OPS] factory: invalid mode. Use status, preview, battery, pause, or stop.',
+        '[OPS] factory: invalid mode. Use status, preview, battery, pause, or resume.',
       );
     }
 
@@ -2331,10 +2374,26 @@ module.exports = {
     if (!room) return null;
     opsState.setCurrentRoomName(room.name);
 
-    if (normalizedMode === "pause" || normalizedMode === "stop" || normalizedMode === "off") {
+    if (normalizedMode === "pause" || normalizedMode === "resume") {
+      const labs = room.find(FIND_MY_STRUCTURES, {
+        filter: function (structure) {
+          return structure.structureType === STRUCTURE_LAB;
+        },
+      });
+      if (labs.length === 0) {
+        return printLine(`[OPS][${room.name}][LABS] ${normalizedMode}: blocked; labs missing.`);
+      }
+
+      const memory = getRoomAdvancedOpsMemory(room.name);
+      memory.labsPaused = normalizedMode === "pause";
+      memory.labsPauseUpdated = Game.time;
       return printLine(
-        `[OPS][${room.name}][LABS] ${normalizedMode}: blocked; lab manager has no safe operator pause/stop control yet.`,
+        `[OPS][${room.name}][LABS] ${normalizedMode}: lab pause ${memory.labsPaused ? "enabled" : "cleared"}.`,
       );
+    }
+
+    if (normalizedMode === "stop" || normalizedMode === "off") {
+      return printLine('[OPS] labs: invalid mode. Use status, preview, pause, or resume.');
     }
 
     if (
@@ -2342,7 +2401,7 @@ module.exports = {
       normalizedMode !== "preview" &&
       normalizedMode !== "undefined"
     ) {
-      return printLine('[OPS] labs: invalid mode. Use status, preview, pause, or stop.');
+      return printLine('[OPS] labs: invalid mode. Use status, preview, pause, or resume.');
     }
 
     const report = roomReporting.build(room, null, { updateProgress: true });
