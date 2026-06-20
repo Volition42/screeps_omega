@@ -1157,6 +1157,14 @@ module.exports = {
     }
 
     if (
+      controllerLevel >= 8 &&
+      !reservePolicy.isDowngradeCritical(room.controller) &&
+      !reservePolicy.shouldAllowRcl8GclPush(room, state)
+    ) {
+      return 0;
+    }
+
+    if (
       sites > 0 &&
       (state.phase === "foundation" || state.phase === "development")
     ) {

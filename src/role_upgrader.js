@@ -38,6 +38,15 @@ module.exports = {
       return;
     }
 
+    if (this.shouldHoldRcl8GclPush(creep.room, state)) {
+      roleIntentDiagnostics.recordDeferred(
+        creep.room,
+        "upgrade-gcl-push-blocked",
+      );
+      this.runReserveHold(creep);
+      return;
+    }
+
     if (creep.memory.upgrading && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.upgrading = false;
       delete creep.memory.withdrawTargetId;
@@ -121,6 +130,13 @@ module.exports = {
   getRuntimeState(room) {
     const cache = room ? utils.getRoomRuntimeCache(room) : null;
     return cache && cache.state ? cache.state : null;
+  },
+
+  shouldHoldRcl8GclPush(room, state) {
+    const controller = room && room.controller ? room.controller : null;
+    if (!controller || controller.level < 8) return false;
+    if (reservePolicy.isDowngradeCritical(controller)) return false;
+    return !reservePolicy.shouldAllowRcl8GclPush(room, state);
   },
 
   runReserveHold(creep) {

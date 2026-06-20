@@ -335,7 +335,11 @@ function getStableEconomyMissing(room, state, desiredTotalHaulers) {
   if (laborers < 1) missing.push("labor");
   if (
     (roleCounts.upgrader || 0) < 1 &&
-    !reservePolicy.shouldHoldRcl8Upgrading(room, state)
+    (
+      !(room.controller && room.controller.level >= 8) ||
+      reservePolicy.isDowngradeCritical(room.controller) ||
+      reservePolicy.shouldAllowRcl8GclPush(room, state)
+    )
   ) {
     missing.push("upgrader");
   }
@@ -1605,8 +1609,29 @@ function getLaborDiagnostics(room, state, advanceMissing, nextTask) {
   };
 }
 
+function formatGclPushLine(gclPush) {
+  if (!gclPush || gclPush.rcl < 8) {
+    return "GCL Push: blocked | RCL " + (gclPush ? gclPush.rcl : 0) + " | Blocker not-rcl8 | Upgrade Mode throttled";
+  }
+
+  return (
+    "GCL Push: " +
+    (gclPush.eligible ? "eligible" : "blocked") +
+    " | RCL " +
+    gclPush.rcl +
+    " | Storage Energy " +
+    fmtAmount(gclPush.storageEnergy) +
+    " / threshold " +
+    fmtAmount(gclPush.threshold) +
+    " | Blocker " +
+    (gclPush.blocker || "none") +
+    " | Upgrade Mode " +
+    (gclPush.upgradeMode || "throttled")
+  );
+}
+
 function formatLaborLines(room, labor) {
-  return [
+  const lines = [
     `[OPS][${room.name}][LABOR]`,
     `Labor ${labor.current}/${labor.desired} | Deficit ${labor.deficit} | Queued ${labor.queued} | Pipeline deficit ${labor.pipelineDeficit}`,
     `Roles worker ${labor.roleCounts.worker || 0} | jrworker ${labor.roleCounts.jrworker || 0} | miner ${labor.roleCounts.miner || 0} | hauler ${labor.roleCounts.hauler || 0} | upgrader ${labor.roleCounts.upgrader || 0} | repair ${labor.roleCounts.repair || 0}`,
@@ -1614,8 +1639,12 @@ function formatLaborLines(room, labor) {
     `Spawn idle ${labor.idleSpawns}/${labor.spawns} | Busy ${labor.busySpawns} | Queue ${labor.spawn.queueSize} | Pending ${labor.pending ? formatQueuedSpawn(labor.pending) : "none"}`,
     `Energy ${fmtAmount(labor.energyAvailable)}/${fmtAmount(labor.energyCapacity)} | Reserve pressure ${labor.reservePressure ? "yes" : "no"}`,
     `Blocked reason ${labor.blockedReason}`,
-    "No spawn policy change or spawn action performed.",
   ];
+  if (labor.gclPush) {
+    lines.push(formatGclPushLine(labor.gclPush));
+  }
+  lines.push("No spawn policy change or spawn action performed.");
+  return lines;
 }
 
 function buildEmpireLaborRollup(reports) {
@@ -1630,6 +1659,33 @@ function buildEmpireLaborRollup(reports) {
   const repeatedNext = rooms.filter(function (row) {
     return row.nextTask === NEXT_TASK_LABEL.labor;
   });
+  const rcl8Rooms = rooms.filter(function (row) {
+    return row.gclPush && row.gclPush.rcl === 8;
+  });
+  const eligibleGcl = rcl8Rooms.filter(function (row) {
+    return row.gclPush.eligible;
+  });
+  const blockedGcl = rcl8Rooms.filter(function (row) {
+    return !row.gclPush.eligible;
+  });
+  const reserveLow = blockedGcl.filter(function (row) {
+    return row.gclPush.blocker === "reserve-low";
+  });
+  const eligibleNoLabor = eligibleGcl.filter(function (row) {
+    return (row.gclPush.upgraderCount || 0) <= 0;
+  });
+  const pushing = eligibleGcl.filter(function (row) {
+    return row.gclPush.pushing;
+  });
+  const blockerCounts = {};
+  for (let i = 0; i < blockedGcl.length; i++) {
+    const blocker = blockedGcl[i].gclPush.blocker || "unknown";
+    blockerCounts[blocker] = (blockerCounts[blocker] || 0) + 1;
+  }
+  const topBlockers = Object.keys(blockerCounts).sort(function (a, b) {
+    if (blockerCounts[b] !== blockerCounts[a]) return blockerCounts[b] - blockerCounts[a];
+    return a.localeCompare(b);
+  }).slice(0, 4);
   const largest = deficitRooms.slice().sort(function (a, b) {
     if (b.deficit !== a.deficit) return b.deficit - a.deficit;
     return a.room.localeCompare(b.room);
@@ -1642,6 +1698,17 @@ function buildEmpireLaborRollup(reports) {
     blockedBusy: blockedBusy,
     blockedEnergy: blockedEnergy,
     repeatedNext: repeatedNext,
+    gclPush: {
+      rcl8Rooms: rcl8Rooms.length,
+      eligible: eligibleGcl.length,
+      blocked: blockedGcl.length,
+      reserveLow: reserveLow.length,
+      eligibleNoLabor: eligibleNoLabor.length,
+      pushing: pushing.length,
+      topBlockers: topBlockers.map(function (blocker) {
+        return blocker + " " + blockerCounts[blocker];
+      }),
+    },
     largest: largest.slice(0, 5),
     topAttention: largest.slice(0, 5),
   };
@@ -1652,6 +1719,8 @@ function formatEmpireLaborRollup(rollup) {
     "[OPS][EMPIRE][LABOR]",
     `Rooms evaluated ${rollup.roomsEvaluated} | Labor deficit rooms ${rollup.deficitRooms}`,
     `Spawn busy ${rollup.blockedBusy.length} | Energy insufficient ${rollup.blockedEnergy.length} | Repeated restore-next ${rollup.repeatedNext.length}`,
+    `RCL8 GCL rooms ${rollup.gclPush.rcl8Rooms} | eligible ${rollup.gclPush.eligible} | blocked ${rollup.gclPush.blocked} | reserve-low ${rollup.gclPush.reserveLow}`,
+    `GCL push labor gaps ${rollup.gclPush.eligibleNoLabor} | pushing ${rollup.gclPush.pushing} | blockers ${rollup.gclPush.topBlockers.length > 0 ? rollup.gclPush.topBlockers.join(", ") : "none"}`,
   ];
 
   if (rollup.largest.length === 0) {
@@ -2587,6 +2656,13 @@ module.exports = {
       nextTask,
     );
     laborDiagnostics.room = room.name;
+    const gclPush = reservePolicy.getRcl8GclPushStatus(room, summaryState, {
+      logistics: logistics,
+      advanced: advanced,
+      laborDesired: laborDiagnostics.desired,
+    });
+    laborDiagnostics.gclPush = gclPush;
+    const gclPushLine = formatGclPushLine(gclPush);
     const roleIntentLines = roleIntentDiagnostics.formatLines(roleIntent);
     roleIntentLines.splice(
       roleIntentLines.length - 1,
@@ -2619,6 +2695,9 @@ module.exports = {
     if (upgradeReserveLine) {
       overviewLines.push(upgradeReserveLine);
     }
+    if (gclPush.rcl >= 8) {
+      overviewLines.push(gclPushLine);
+    }
     overviewLines.push(`Next ${nextTask}`);
 
     const buildLines = [
@@ -2635,6 +2714,9 @@ module.exports = {
     }
     if (upgradeReserveLine) {
       buildLines.push(upgradeReserveLine);
+    }
+    if (gclPush.rcl >= 8) {
+      buildLines.push(gclPushLine);
     }
     buildLines.push(`Next ${nextTask}`);
 
@@ -2669,7 +2751,7 @@ module.exports = {
         `[OPS][${room.name}][ECONOMY]`,
         `Stage ${infrastructure.economyStage || "unknown"} | Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Storage ${getStorageEnergy(room)}`,
         `Hub ${getContainerEnergy(summaryState.hubContainer)} | Ctrl ${getContainerEnergy(summaryState.controllerContainer)} | Upgrade ${progress && progress.rate > 0 ? progress.rate.toFixed(2) : "0.00"}/t`,
-        upgradeReserveLine || buildIntentLine || `Upgrade mode ${room.controller && room.controller.level >= 8 ? "maintenance" : "active"}`,
+        gclPush.rcl >= 8 ? gclPushLine : upgradeReserveLine || buildIntentLine || `Upgrade mode ${room.controller && room.controller.level >= 8 ? "maintenance" : "active"}`,
         `Spawn ${spawn.spawnLabel} | Queue ${spawn.queueSize} | Hauler ${summaryState.logistics ? summaryState.logistics.haulerMode : "normal"}`,
       ],
       build: buildLines,

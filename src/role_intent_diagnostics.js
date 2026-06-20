@@ -17,6 +17,7 @@ const DEFERRED_ORDER = [
   "construction-reserve-pressure",
   "repair-reserve-pressure",
   "upgrade-reserve-pressure",
+  "upgrade-gcl-push-blocked",
   "invalid-target",
   "missing-energy",
   "missing-request",

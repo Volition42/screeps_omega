@@ -1900,6 +1900,7 @@ const towerManager = require("tower_manager");
 const statsManager = require("stats_manager");
 const utils = require("utils");
 const config = require("config");
+const reservePolicy = require("economy_reserve_policy");
 const stamps = require("stamp_library");
 const scheduler = require("scheduler");
 const marketRequestManager = require("market_request_manager");
@@ -3512,7 +3513,7 @@ function runUpgraderReserveScenario() {
       { name: "upgrader1", role: "upgrader", x: 24, y: 24 },
     ],
     extraStructures: [
-      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 10000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: 60000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
       { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
       { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
       { type: STRUCTURE_FACTORY, x: 27, y: 30, options: { store: { energy: 0 }, storeCapacity: 50000, hits: 1000, hitsMax: 1000, cooldown: 0 } },
@@ -3559,7 +3560,7 @@ function runUpgraderReserveScenario() {
     `expected reserve-hold line in overview, got ${JSON.stringify(lowReport.sections.overview)}`,
   );
 
-  room.storage.store.energy = 120000;
+  room.storage.store.energy = 500000;
   state = roomState.collect(room);
   const highPlan = bodies.plan("upgrader", room, { role: "upgrader" }, state);
   const highDesired = spawnManager.getDesiredUpgraders(room, state);
@@ -3571,6 +3572,215 @@ function runUpgraderReserveScenario() {
   assert(
     highDesired >= lowDesired,
     `expected healthy storage to allow at least as much upgrader demand, got low ${lowDesired} high ${highDesired}`,
+  );
+}
+
+function buildRcl8GclPushRoom(name, options) {
+  const settings = options || {};
+  const creeps = settings.creeps || [
+    { name: `${name}_worker`, role: "worker", x: 24, y: 25 },
+    { name: `${name}_miner1`, role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+    { name: `${name}_miner2`, role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+    { name: `${name}_hauler1`, role: "hauler", x: 25, y: 24 },
+    { name: `${name}_hauler2`, role: "hauler", x: 26, y: 24 },
+    { name: `${name}_upgrader`, role: "upgrader", x: 21, y: 20, store: { energy: 50 }, memory: { upgrading: true } },
+  ];
+  const room = buildRoomScenario(name, {
+    tick: settings.tick || 556,
+    controllerLevel: settings.controllerLevel || 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    foundationRoads: true,
+    backboneRoads: true,
+    creeps: creeps,
+    extraSites: settings.extraSites || [],
+    extraStructures: [
+      { type: STRUCTURE_TERMINAL, x: 25, y: 32, options: { store: { energy: settings.terminalEnergy !== undefined ? settings.terminalEnergy : 60000 }, storeCapacity: 300000, hits: 3000, hitsMax: 3000 } },
+      { type: STRUCTURE_CONTAINER, x: 39, y: 10, options: { store: {}, storeCapacity: 2000, hits: 250000, hitsMax: 250000 } },
+      { type: STRUCTURE_EXTRACTOR, x: 40, y: 10, options: { hits: 500, hitsMax: 500 } },
+      { type: STRUCTURE_LINK, x: 24, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 16, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 36, y: 25, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+      { type: STRUCTURE_LINK, x: 26, y: 30, options: { store: { energy: 0 }, storeCapacityResource: { energy: 800 }, hits: 1000, hitsMax: 1000 } },
+    ],
+  });
+  satisfyDevelopmentRequirements(room);
+  room.controller.my = true;
+  room.controller.owner = { username: "tester" };
+  room.controller.ticksToDowngrade =
+    settings.ticksToDowngrade !== undefined ? settings.ticksToDowngrade : 200000;
+  room.storage.store.energy =
+    settings.storageEnergy !== undefined ? settings.storageEnergy : 500000;
+  return room;
+}
+
+function runRcl8GclPushPolicyScenario() {
+  let room = buildRcl8GclPushRoom("VAL_GCL_PUSH_OK", {
+    tick: 557,
+    storageEnergy: 620000,
+  });
+  let state = roomState.collect(room);
+  utils.setRoomRuntimeState(room, state);
+  let status = reservePolicy.getRcl8GclPushStatus(room, state);
+  assert(status.eligible, `expected surplus RCL8 room to be eligible, got ${JSON.stringify(status)}`);
+  assert(status.threshold === 300000, `expected configured threshold 300000, got ${status.threshold}`);
+  assert(spawnManager.getDesiredUpgraders(room, state) > 0, "eligible RCL8 room should request upgrader work");
+
+  roleUpgrader.run(Game.creeps.VAL_GCL_PUSH_OK_upgrader);
+  assert(
+    currentRuntime.creepActions.some((row) => row.creep === "VAL_GCL_PUSH_OK_upgrader" && row.action === "upgradeController"),
+    `eligible upgrader should upgrade, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+
+  const lowRoom = buildRcl8GclPushRoom("VAL_GCL_PUSH_LOW", {
+    tick: 558,
+    storageEnergy: 180000,
+  });
+  let lowState = roomState.collect(lowRoom);
+  utils.setRoomRuntimeState(lowRoom, lowState);
+  status = reservePolicy.getRcl8GclPushStatus(lowRoom, lowState);
+  assert(!status.eligible && status.blocker === "reserve-low", `expected reserve-low blocker, got ${JSON.stringify(status)}`);
+  assert(spawnManager.getDesiredUpgraders(lowRoom, lowState) === 0, "reserve-low RCL8 room should not request surplus upgraders");
+  currentRuntime.creepActions = [];
+  roleUpgrader.run(Game.creeps.VAL_GCL_PUSH_LOW_upgrader);
+  assert(
+    !currentRuntime.creepActions.some((row) => row.action === "upgradeController"),
+    `reserve-low upgrader should not upgrade, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+
+  const nonRclRoom = buildRcl8GclPushRoom("VAL_GCL_PUSH_RCL7", {
+    tick: 559,
+    controllerLevel: 7,
+    storageEnergy: 620000,
+  });
+  status = reservePolicy.getRcl8GclPushStatus(nonRclRoom, roomState.collect(nonRclRoom));
+  assert(!status.eligible && status.blocker === "not-rcl8", `expected not-rcl8 blocker, got ${JSON.stringify(status)}`);
+
+  room = buildRcl8GclPushRoom("VAL_GCL_PUSH_BLOCKERS", {
+    tick: 560,
+    storageEnergy: 620000,
+  });
+  state = roomState.collect(room);
+  assert(
+    reservePolicy.getRcl8GclPushStatus(room, state, { logistics: { state: "aging", haulers: { short: false } } }).blocker === "logistics-starvation",
+    "logistics starvation should block GCL push",
+  );
+  assert(
+    reservePolicy.getRcl8GclPushStatus(room, state, { laborDesired: 2 }).blocker === "labor-deficit",
+    "worker labor deficit should block GCL push",
+  );
+  assert(
+    reservePolicy.getRcl8GclPushStatus(room, state, { advanced: { taskLabel: "factory_energy" } }).blocker === "production-energy",
+    "factory/lab energy need should block GCL push",
+  );
+  room.controller.ticksToDowngrade = 1000;
+  assert(
+    reservePolicy.getRcl8GclPushStatus(room, state).blocker === "downgrade-critical",
+    "downgrade protection should still win",
+  );
+
+  const buildBlockedRoom = buildRcl8GclPushRoom("VAL_GCL_PUSH_BUILD", {
+    tick: 561,
+    storageEnergy: 620000,
+    extraSites: [{ x: 23, y: 24, type: STRUCTURE_EXTENSION }],
+  });
+  assert(
+    reservePolicy.getRcl8GclPushStatus(buildBlockedRoom, roomState.collect(buildBlockedRoom)).blocker === "critical-construction",
+    "critical construction should block GCL push",
+  );
+
+  const repairBlockedRoom = buildRcl8GclPushRoom("VAL_GCL_PUSH_REPAIR", {
+    tick: 562,
+    storageEnergy: 620000,
+  });
+  repairBlockedRoom.spawn.hits = 100;
+  assert(
+    reservePolicy.getRcl8GclPushStatus(repairBlockedRoom, roomState.collect(repairBlockedRoom)).blocker === "critical-repair",
+    "critical repair should block GCL push",
+  );
+
+  const workerBlockedRoom = buildRcl8GclPushRoom("VAL_GCL_PUSH_WORKER_BLOCK", {
+    tick: 563,
+    storageEnergy: 180000,
+    creeps: [
+      { name: "blockedWorker", role: "worker", x: 24, y: 28, store: { energy: 50 }, memory: { working: true } },
+      { name: "blockedMiner1", role: "miner", x: 16, y: 25, memory: { sourceId: "source1" } },
+      { name: "blockedMiner2", role: "miner", x: 36, y: 25, memory: { sourceId: "source2" } },
+      { name: "blockedHauler1", role: "hauler", x: 25, y: 24 },
+      { name: "blockedHauler2", role: "hauler", x: 26, y: 24 },
+    ],
+  });
+  const workerBlockedState = roomState.collect(workerBlockedRoom);
+  utils.setRoomRuntimeState(workerBlockedRoom, workerBlockedState);
+  currentRuntime.creepActions = [];
+  roleWorker.run(Game.creeps.blockedWorker);
+  assert(
+    !currentRuntime.creepActions.some((row) => row.action === "upgradeController") &&
+      currentRuntime.creepActions.some((row) => row.action === "transfer" && row.targetId === workerBlockedRoom.storage.id),
+    `blocked worker should bank instead of upgrading, got ${JSON.stringify(currentRuntime.creepActions)}`,
+  );
+
+  const reportRoom = buildRcl8GclPushRoom("VAL_GCL_PUSH_REPORT", {
+    tick: 564,
+    storageEnergy: 620000,
+  });
+  ops.registerGlobals();
+  const capturedRoom = captureConsoleLines(function () {
+    return global.ops.room(reportRoom.name, "labor");
+  });
+  assert(
+    capturedRoom.result === `[OPS][${reportRoom.name}][LABOR] report generated` &&
+      capturedRoom.lines.some(function (line) {
+        return line.indexOf("GCL Push: eligible") !== -1 &&
+          line.indexOf("Storage Energy 620,000 / threshold 300,000") !== -1 &&
+          line.indexOf("Blocker none") !== -1 &&
+          line.indexOf("Upgrade Mode surplus") !== -1;
+      }) &&
+      capturedRoom.lines.join("\n").indexOf("[object Object]") === -1,
+    `room labor report should show printable GCL push state, got ${capturedRoom.lines.join(" / ")}`,
+  );
+
+  const capturedEmpire = captureConsoleLines(function () {
+    return global.ops.empire("labor");
+  });
+  assert(
+    capturedEmpire.result &&
+      capturedEmpire.result.section === "labor" &&
+      capturedEmpire.lines.some(function (line) { return line.indexOf("RCL8 GCL rooms") !== -1 && line.indexOf("eligible") !== -1 && line.indexOf("blocked") !== -1; }) &&
+      capturedEmpire.lines.some(function (line) { return line.indexOf("GCL push labor gaps") !== -1 && line.indexOf("pushing") !== -1; }) &&
+      capturedEmpire.lines.join("\n").indexOf("[object Object]") === -1,
+    `empire labor report should show printable GCL rollup, got ${capturedEmpire.lines.join(" / ")}`,
+  );
+
+  const requests = spawnManager.getSpawnRequests(reportRoom, roomState.collect(reportRoom));
+  const roles = requests.map(function (request) { return request.role; });
+  assert(
+    roles.every(function (role) {
+      return [
+        "jrworker",
+        "worker",
+        "miner",
+        "mineral_miner",
+        "hauler",
+        "upgrader",
+        "repair",
+        "defender",
+        "claimer",
+        "reserver",
+        "pioneer",
+        "remoteworker",
+        "remoteminer",
+        "remotehauler",
+        "dismantler",
+        "assault",
+        "combat_healer",
+        "controller_attacker",
+      ].indexOf(role) !== -1;
+    }),
+    `GCL push should not create new roles, got ${roles.join(",")}`,
   );
 }
 
@@ -16432,6 +16642,7 @@ function main() {
     ["mineral_blocked", runMineralMiningBlockedScenario],
     ["mineral_ops", runMineralOpsScenario],
     ["upgrader_reserve", runUpgraderReserveScenario],
+    ["rcl8_gcl_push_policy", runRcl8GclPushPolicyScenario],
     ["worker_reserve_banking", runWorkerReserveBankingScenario],
     ["worker_construction_body", runWorkerConstructionBodyScenario],
     ["worker_construction_demand", runWorkerConstructionDemandScenario],

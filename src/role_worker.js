@@ -148,6 +148,19 @@ module.exports = {
     }
 
     if (creep.room.controller) {
+      if (!this.shouldAllowControllerFallback(creep.room, this.getRuntimeState(creep.room))) {
+        roleIntentDiagnostics.recordDeferred(
+          creep.room,
+          "upgrade-gcl-push-blocked",
+        );
+        const storageTarget = utils.getStorageDeliveryTarget(creep.room);
+        if (storageTarget) {
+          if (creep.transfer(storageTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+            utils.moveTo(creep, storageTarget, MOVE_OPTIONS);
+          }
+        }
+        return;
+      }
       if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
         utils.moveTo(creep, creep.room.controller.pos, INTERACT_MOVE_OPTIONS);
       }
@@ -316,6 +329,13 @@ module.exports = {
   getRuntimeState(room) {
     const cache = room ? utils.getRoomRuntimeCache(room) : null;
     return cache && cache.state ? cache.state : null;
+  },
+
+  shouldAllowControllerFallback(room, state) {
+    const controller = room && room.controller ? room.controller : null;
+    if (!controller || controller.level < 8) return true;
+    if (reservePolicy.isDowngradeCritical(controller)) return true;
+    return reservePolicy.shouldAllowRcl8GclPush(room, state);
   },
 
   getCachedWithdrawalTarget(creep) {

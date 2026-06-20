@@ -489,6 +489,10 @@ module.exports = {
   UPGRADING: {
     CONTROLLER_LINK_PROFILE_STORAGE_ENERGY: 20000,
     RESERVE_BANK_MIN_STORAGE_ENERGY: 5000,
+    RCL8_GCL_PUSH_ENABLED: true,
+    RCL8_GCL_PUSH_MIN_STORAGE_ENERGY: 300000,
+    RCL8_GCL_PUSH_PREFERRED_STORAGE_ENERGY: 500000,
+    RCL8_GCL_PUSH_MIN_TERMINAL_ENERGY: 50000,
     TARGET_WORK_THRESHOLDS: [
       { energy: 20000, work: 6 },
       { energy: 60000, work: 10 },
@@ -505,11 +509,15 @@ module.exports = {
       { energy: 0, work: 2 },
       { energy: 30000, work: 4 },
       { energy: 80000, work: 6 },
+      { energy: 300000, work: 10 },
+      { energy: 500000, work: 14 },
     ],
     RCL8_BODY_WORK_CAPS: [
       { energy: 0, work: 2 },
       { energy: 30000, work: 3 },
       { energy: 80000, work: 4 },
+      { energy: 300000, work: 6 },
+      { energy: 500000, work: 8 },
     ],
   },
 

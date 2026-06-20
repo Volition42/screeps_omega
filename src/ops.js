@@ -1161,7 +1161,7 @@ function getConsoleCommandHelp() {
     {
       command: "ops.room([roomName], [section])",
       description:
-        "Show one room report. Sections include roles, factory, labs, labor, logistics, power, observer, and resources status.",
+        "Show one room report. Labor/economy lines include RCL8 GCL push eligibility when applicable.",
       example: 'ops.room("W5N5", "labor")',
     },
     {
@@ -1194,7 +1194,7 @@ function getConsoleCommandHelp() {
     {
       command: 'ops.empire(["logistics"|"labor"])',
       group: "Reports",
-      description: "Show empire summary, logistics pressure, or labor coverage rollup across owned rooms.",
+      description: "Show empire summary, logistics pressure, or labor and RCL8 GCL push rollups across owned rooms.",
       example: 'ops.empire("labor")',
     },
     {
