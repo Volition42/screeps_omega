@@ -40,3 +40,13 @@
 - Battery policy is now operator-controlled in room `advancedOps` memory as `reserve`, `commodity`, or `disabled`; `disabled` suppresses battery selection without adding market automation, terminal balancing, commodity planning, or a production planner.
 - Factory and lab pause flags are explicit room `advancedOps` controls and are honored by `advanced_structure_manager`; no automatic pause/resume policy was added.
 - Labor diagnostics were reviewed and no small spawn-policy defect was identified in this phase. A focused labor correction phase should use observed repeated restore-worker states before changing worker desired calculations.
+
+## Production Logistics Adapter Design
+
+- Production endpoint identity should stay room-local and deterministic: `roomName:endpointType:resourceType:structureId`, where endpoint types are `factory_supply`, `factory_supply_energy`, `factory_withdraw`, `lab_supply`, `lab_withdraw`, and `lab_withdraw_cleanup`.
+- Endpoint rows should classify each facility endpoint as a `target` for supply/fill work or a `source` for withdraw/cleanup work, with requested resource, requested amount, remaining amount, lifecycle state, ownership state, blocked reason, and execution owner printed as strings.
+- Supported lifecycle labels are `needed`, `pending`, `claimed`, `blocked`, `satisfied`, `stale`, `disabled`, and `paused`; current report-only rows mostly use `needed`, `blocked`, `satisfied`, and `disabled`.
+- Supported ownership labels are `advanced-hauler`, `ops-logistics`, `request-visible`, `dual-owned`, `unmanaged`, and `unknown`. Current factory/lab execution-owned endpoints should report `advanced-hauler`; suppressed or missing preview-only rows may report `request-visible`; any matching active ops logistics request against the same facility id should report `dual-owned`.
+- Release/completion rules for a future migration should mirror ops logistics: complete only after remaining amount reaches zero or the endpoint is already satisfied; release claims when the target is full, source is empty, endpoint is missing, request is no longer open, or the facility is paused/disabled/stale.
+- Blocked endpoint reasons should remain explicit and printable, including `factory missing`, `labs missing`, `operator paused`, `battery policy disabled`, `missing source resource`, `wrong lab mineral`, output accumulation, cooldown, and missing inputs/reagents.
+- The current adapter is intentionally read-only: it renders request-style visibility in factory/lab reports and detects duplicate ownership, but it does not write `Memory.ops.logistics.requests`, change hauler task selection, create a queue, or migrate execution away from advanced haulers.

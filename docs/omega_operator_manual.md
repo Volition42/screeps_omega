@@ -276,10 +276,10 @@ Economy:
 
 - `ops.room([roomName], "economy")`: room energy, storage, hub/controller container, upgrade rate, spawn queue, and hauler mode.
 - `ops.room([roomName], "resources")`: storage energy, terminal energy, terminal power, ghodium, minerals, and terminal balance state.
-- `ops.room("ROOM", "factory")` and `ops.factory("ROOM", "status")`: read-only factory status, battery policy/stock/trend/classification, recipe, bottlenecks, output accumulation, and ownership alignment.
+- `ops.room("ROOM", "factory")` and `ops.factory("ROOM", "status")`: read-only factory status, battery policy/stock/trend/classification, recipe, bottlenecks, output accumulation, ownership alignment, and request-style production endpoint visibility. Factory endpoints remain advanced-hauler execution-owned unless explicitly reported otherwise.
 - `ops.factory("ROOM", "battery", "reserve"|"commodity"|"disabled")`: explicitly stores battery intent only; it does not create market behavior, terminal balancing, commodity planning, or logistics requests.
 - `ops.factory("ROOM", "pause"|"resume")`: explicitly stores or clears factory pause state. The advanced structure manager honors the pause state before selecting/running factory production.
-- `ops.room("ROOM", "labs")` and `ops.labs("ROOM", "status")`: read-only lab count, input/output layout when known, reaction, stores, reagent/output blockers, cooldowns, and ownership alignment.
+- `ops.room("ROOM", "labs")` and `ops.labs("ROOM", "status")`: read-only lab count, input/output layout when known, reaction, stores, reagent/output blockers, cooldowns, ownership alignment, and request-style production endpoint visibility. Lab endpoints remain advanced-hauler execution-owned unless explicitly reported otherwise.
 - `ops.labs("ROOM", "pause"|"resume")`: explicitly stores or clears lab pause state. The advanced structure manager honors the pause state before running reactions.
 - `ops.terminalStatus([roomName])`: terminal stock and congestion status.
 - `market.stock([roomName])`, `market.needs()`, and `market.surplus()`: economy visibility from the market helper.
@@ -287,7 +287,7 @@ Economy:
 Logistics:
 
 - `ops.move(resource, amount, roomName, from, to)`: create storage/terminal movement requests.
-- `ops.room("ROOM", "logistics")`: read-only room logistics diagnostics for open/blocked requests, unclaimed work, hauler pressure, advanced backlog labels, recent history, and starvation trend.
+- `ops.room("ROOM", "logistics")`: read-only room logistics diagnostics for open/blocked requests, unclaimed work, hauler pressure, advanced backlog labels, recent history, and starvation trend. Factory/lab request-style endpoint rows are shown in the factory/labs sections, not consumed as ops logistics requests.
 - `ops.empire("logistics")`: read-only empire logistics pressure rollup across owned rooms, with top rooms and suggested room-level inspection commands.
 - `ops.room("ROOM", "labor")` and `ops.empire("labor")`: read-only worker labor coverage diagnostics for current/desired labor, deficits, spawn state, pending worker intents, low-energy/busy-spawn/priority blockers, and repeated `restore worker labor coverage` rooms.
 - `ops.transfer(resource, amount, fromRoom, fromLocation, toRoom, toLocation, "check")`: preview an explicit staged cross-room transfer without creating a plan.

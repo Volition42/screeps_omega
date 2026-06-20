@@ -15534,9 +15534,38 @@ function runProductionFactoryVisibilityScenario() {
       captured.lines.some(function (line) { return line.indexOf("Battery energy 600") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Output accumulation battery 250>=100") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Ownership supply unknown") !== -1 && line.indexOf("withdraw advanced-hauler") !== -1 && line.indexOf("alignment bypasses request standards") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Production Requests") !== -1 && line.indexOf("request-style only") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("factory_withdraw battery") !== -1 && line.indexOf("lifecycle needed") !== -1 && line.indexOf("ownership advanced-hauler") !== -1 && line.indexOf("execution advanced-hauler") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Production Ownership Guard dual-owned 0") !== -1; }) &&
       captured.lines.join("\n").indexOf("[object Object]") === -1,
     `factory report should include printable battery/energy/state/output details, got ${captured.lines.join(" / ")}`,
   );
+
+  Memory.ops.logistics.requests.dualFactoryVisibility = {
+    id: "dualFactoryVisibility",
+    roomName: room.name,
+    type: "move",
+    status: "open",
+    resourceType: "battery",
+    amount: 250,
+    remaining: 250,
+    from: "factory",
+    to: "storage",
+    sourceId: factory.id,
+    targetId: storage.id,
+    claims: {},
+    createdAt: Game.time,
+    updatedAt: Game.time,
+  };
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "factory");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("factory_withdraw battery") !== -1 && line.indexOf("ownership dual-owned") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Production Ownership Guard dual-owned 1") !== -1; }),
+    `factory report should make dual ownership printable, got ${captured.lines.join(" / ")}`,
+  );
+  delete Memory.ops.logistics.requests.dualFactoryVisibility;
 
   captured = captureConsoleLines(function () {
     return global.ops.factory(room.name, "battery");
@@ -15555,6 +15584,13 @@ function runProductionFactoryVisibilityScenario() {
       captured.lines.some(function (line) { return line.indexOf("battery policy commodity stored") !== -1; }),
     `ops.factory battery commodity should persist policy, got ${captured.lines.join(" / ")}`,
   );
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "factory");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Battery policy commodity") !== -1 && line.indexOf("Classification commodity") !== -1; }),
+    `factory report should represent commodity battery policy, got ${captured.lines.join(" / ")}`,
+  );
 
   captured = captureConsoleLines(function () {
     return global.ops.factory(room.name, "battery", "disabled");
@@ -15564,11 +15600,28 @@ function runProductionFactoryVisibilityScenario() {
       captured.lines.some(function (line) { return line.indexOf("battery policy disabled stored") !== -1; }),
     `ops.factory battery disabled should persist policy, got ${captured.lines.join(" / ")}`,
   );
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "factory");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Battery policy disabled") !== -1 && line.indexOf("Classification disabled") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("factory_supply battery") !== -1 && line.indexOf("lifecycle disabled") !== -1 && line.indexOf("blocked battery policy disabled") !== -1; }),
+    `factory report should represent disabled battery policy endpoint, got ${captured.lines.join(" / ")}`,
+  );
 
   Game.time += 1;
   let state = roomState.collect(room);
   let summary = advancedStructureManager.getStatus(room, state);
   assert(summary.factoryProduct === null, `disabled battery policy should suppress battery product, got ${summary.factoryProduct}`);
+
+  delete Memory.rooms[room.name].advancedOps.batteryPolicy;
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "factory");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("Battery policy unknown") !== -1 && line.indexOf("Classification unknown") !== -1; }),
+    `factory report should represent unknown battery policy, got ${captured.lines.join(" / ")}`,
+  );
 
   captured = captureConsoleLines(function () {
     return global.ops.factory(room.name, "battery", "reserve");
@@ -15725,9 +15778,38 @@ function runProductionLabVisibilityScenario() {
       captured.lines.some(function (line) { return line.indexOf("Missing reagents none") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Output accumulation") !== -1 && line.indexOf("OH 300") !== -1; }) &&
       captured.lines.some(function (line) { return line.indexOf("Ownership supply unknown") !== -1 && line.indexOf("withdraw advanced-hauler") !== -1 && line.indexOf("alignment bypasses request standards") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Production Requests") !== -1 && line.indexOf("request-style only") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("lab_withdraw OH") !== -1 && line.indexOf("lifecycle needed") !== -1 && line.indexOf("ownership advanced-hauler") !== -1 && line.indexOf("execution advanced-hauler") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Production Ownership Guard dual-owned 0") !== -1; }) &&
       captured.lines.join("\n").indexOf("[object Object]") === -1,
     `labs report should include printable reaction/reagent/output details, got ${captured.lines.join(" / ")}`,
   );
+
+  Memory.ops.logistics.requests.dualLabVisibility = {
+    id: "dualLabVisibility",
+    roomName: room.name,
+    type: "move",
+    status: "open",
+    resourceType: "OH",
+    amount: 300,
+    remaining: 300,
+    from: "lab",
+    to: "storage",
+    sourceId: reactor.id,
+    targetId: room.storage.id,
+    claims: {},
+    createdAt: Game.time,
+    updatedAt: Game.time,
+  };
+  captured = captureConsoleLines(function () {
+    return global.ops.room(room.name, "labs");
+  });
+  assert(
+    captured.lines.some(function (line) { return line.indexOf("lab_withdraw OH") !== -1 && line.indexOf("ownership dual-owned") !== -1; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Production Ownership Guard dual-owned 1") !== -1; }),
+    `labs report should make dual ownership printable, got ${captured.lines.join(" / ")}`,
+  );
+  delete Memory.ops.logistics.requests.dualLabVisibility;
 
   captured = captureConsoleLines(function () {
     return global.ops.labs(room.name, "preview");

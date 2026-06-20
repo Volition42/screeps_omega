@@ -917,6 +917,187 @@ function getProductionOwnership(room, backlog, labelPrefix, supplyLabels, withdr
   };
 }
 
+function getRawOpsLogisticsRequests(roomName) {
+  if (
+    !Memory.ops ||
+    !Memory.ops.logistics ||
+    !Memory.ops.logistics.requests
+  ) {
+    return [];
+  }
+
+  const root = Memory.ops.logistics.requests;
+  return Object.keys(root).map(function (id) {
+    return root[id];
+  }).filter(function (request) {
+    return request && (!roomName || request.roomName === roomName);
+  });
+}
+
+function hasOpsProductionRequest(room, endpointId, direction, resourceType) {
+  if (!room || !endpointId) return false;
+
+  const rows = opsLogisticsManager.listRequests(room.name).filter(function (row) {
+    if (!row || row.status === "done" || row.status === "canceled") return false;
+    if (resourceType && row.resourceType !== resourceType) return false;
+    if (row.from === "factory" || row.to === "factory" || row.from === "lab" || row.to === "lab") return true;
+    return false;
+  });
+  if (rows.length > 0) return true;
+
+  const raw = getRawOpsLogisticsRequests(room.name);
+  for (let i = 0; i < raw.length; i++) {
+    const request = raw[i];
+    if (!request || request.status === "done" || request.status === "canceled") continue;
+    if (resourceType && request.resourceType !== resourceType) continue;
+    if (direction === "source" && request.sourceId === endpointId) return true;
+    if (direction === "target" && request.targetId === endpointId) return true;
+  }
+
+  return false;
+}
+
+function classifyProductionEndpointOwnership(executionOwned, opsVisible) {
+  if (executionOwned && opsVisible) return "dual-owned";
+  if (executionOwned) return "advanced-hauler";
+  if (opsVisible) return "ops-logistics";
+  return "request-visible";
+}
+
+function lifecycleForEndpoint(baseState, blockedReason, remaining) {
+  if (baseState) return baseState;
+  if (blockedReason && blockedReason !== "none" && blockedReason !== "ready") return "blocked";
+  if ((remaining || 0) <= 0) return "satisfied";
+  return "needed";
+}
+
+function createProductionEndpoint(room, settings) {
+  const opts = settings || {};
+  const endpointId = opts.endpointId || "unknown";
+  const direction = opts.classification === "source" ? "source" : "target";
+  const opsVisible = hasOpsProductionRequest(room, endpointId, direction, opts.resourceType);
+  const executionOwned = opts.executionOwned !== false;
+  const remaining = Math.max(0, opts.remaining || opts.amount || 0);
+  const blockedReason = opts.blockedReason || "none";
+
+  return {
+    identity: `${room.name}:${opts.type || "production_endpoint"}:${opts.resourceType || "resource"}:${endpointId}`,
+    type: opts.type || "production_endpoint",
+    classification: opts.classification || "target",
+    resourceType: opts.resourceType || "unknown",
+    requestedAmount: Math.max(0, opts.amount || 0),
+    remaining: remaining,
+    endpointId: endpointId,
+    lifecycle: lifecycleForEndpoint(opts.lifecycle, blockedReason, remaining),
+    ownership: classifyProductionEndpointOwnership(executionOwned, opsVisible),
+    blockedReason: blockedReason,
+    executionOwner: executionOwned ? "advanced-hauler" : "none",
+  };
+}
+
+function formatProductionEndpointRow(row) {
+  return `${row.type} ${row.resourceType} need ${fmtAmount(row.requestedAmount)} remaining ${fmtAmount(row.remaining)} ${row.classification} ${String(row.endpointId).slice(-6)} lifecycle ${row.lifecycle} ownership ${row.ownership} blocked ${row.blockedReason} execution ${row.executionOwner}`;
+}
+
+function formatProductionEndpointLines(rows) {
+  if (!rows || rows.length === 0) {
+    return ["Production Requests none | visibility request-style only | no ops logistics requests created"];
+  }
+
+  const lines = [
+    `Production Requests ${rows.length} | visibility request-style only | no ops logistics requests created`,
+  ];
+  for (let i = 0; i < rows.length && i < 5; i++) {
+    lines.push(formatProductionEndpointRow(rows[i]));
+  }
+  const dual = rows.filter(function (row) {
+    return row.ownership === "dual-owned";
+  });
+  lines.push(`Production Ownership Guard dual-owned ${dual.length}${dual.length > 0 ? " | " + dual.map(function (row) { return row.type + ":" + row.resourceType; }).join(", ") : ""}`);
+  return lines;
+}
+
+function buildFactoryProductionEndpoints(room, diagnostics) {
+  const rows = [];
+  const factory = diagnostics.factory;
+  const recipe = diagnostics.recipe;
+  const settings = getFactorySettings();
+  const product = diagnostics.configuredProduct;
+
+  if (!factory) {
+    return [
+      createProductionEndpoint(room, {
+        type: "factory_supply",
+        classification: "target",
+        resourceType: "unknown",
+        endpointId: "factory_missing",
+        amount: 0,
+        remaining: 0,
+        lifecycle: "blocked",
+        blockedReason: "factory missing",
+        executionOwned: false,
+      }),
+    ];
+  }
+
+  if (diagnostics.battery.policy === "disabled" && (settings.PRODUCT_PRIORITY || []).indexOf("battery") !== -1) {
+    rows.push(createProductionEndpoint(room, {
+      type: "factory_supply",
+      classification: "target",
+      resourceType: "battery",
+      endpointId: factory.id,
+      amount: 0,
+      remaining: 0,
+      lifecycle: "disabled",
+      blockedReason: "battery policy disabled",
+      executionOwned: false,
+    }));
+  }
+
+  for (let i = 0; i < diagnostics.bottlenecks.length; i++) {
+    const row = diagnostics.bottlenecks[i];
+    const label = row.resourceType === RESOURCE_ENERGY ? "factory_energy" : "factory_input";
+    rows.push(createProductionEndpoint(room, {
+      type: label === "factory_energy" ? "factory_supply_energy" : "factory_supply",
+      classification: "target",
+      resourceType: row.resourceType,
+      endpointId: factory.id,
+      amount: Math.max(0, row.need - row.factory),
+      remaining: Math.max(0, row.need - row.factory),
+      blockedReason: row.fillable ? "none" : "missing source resource",
+      executionOwned: true,
+    }));
+  }
+
+  if (recipe && recipe.components) {
+    const resources = getStoreResourceTypes(factory);
+    const exportBatch = settings.EXPORT_BATCH || 100;
+    for (let i = 0; i < resources.length; i++) {
+      const resourceType = resources[i];
+      if (resourceType === RESOURCE_ENERGY) continue;
+      const amount = getStoredAmount(factory, resourceType);
+      const expectedInput = recipe.components[resourceType];
+      if (
+        (resourceType === product && amount >= exportBatch) ||
+        (resourceType !== product && !expectedInput && amount > 0)
+      ) {
+        rows.push(createProductionEndpoint(room, {
+          type: "factory_withdraw",
+          classification: "source",
+          resourceType: resourceType,
+          endpointId: factory.id,
+          amount: amount,
+          remaining: amount,
+          blockedReason: "none",
+          executionOwned: true,
+        }));
+      }
+    }
+  }
+
+  return rows;
+}
+
 function getFactoryDiagnostics(room, state, advanced) {
   const factory = findFirstStructure(state, STRUCTURE_FACTORY);
   const memory = getAdvancedOpsMemory(room);
@@ -987,11 +1168,13 @@ function getFactoryDiagnostics(room, state, advanced) {
 
 function formatFactoryLines(room, diagnostics) {
   const lines = [`[OPS][${room.name}][FACTORY]`];
+  const endpointLines = formatProductionEndpointLines(buildFactoryProductionEndpoints(room, diagnostics));
   if (!diagnostics.exists) {
     lines.push("Factory missing");
     lines.push("State missing | Blocked factory missing");
     lines.push("Battery policy unknown | Stock 0 | Trend unavailable | Classification unknown");
     lines.push("Ownership supply unknown | withdraw unknown | active unknown | alignment unknown");
+    Array.prototype.push.apply(lines, endpointLines);
     lines.push("No market, terminal balancing, or production action performed.");
     return lines;
   }
@@ -1015,6 +1198,7 @@ function formatFactoryLines(room, diagnostics) {
   lines.push(`Blocked ${diagnostics.blockedReason}`);
   lines.push(`Ownership supply ${diagnostics.ownership.supplyOwner} | withdraw ${diagnostics.ownership.withdrawOwner} | active ${diagnostics.ownership.activePath} | alignment ${diagnostics.ownership.status}`);
   lines.push(`Logistics alignment ${backlog.length > 0 ? backlog.join(", ") : "no factory advanced backlog"}`);
+  Array.prototype.push.apply(lines, endpointLines);
   lines.push("No market, terminal balancing, or production action performed.");
   return lines;
 }
@@ -1187,6 +1371,96 @@ function getLabDiagnostics(room, state, advanced) {
   };
 }
 
+function getLabExpectedResource(diagnostics, labId) {
+  if (!diagnostics || !labId) return null;
+  if (diagnostics.inputIds[0] === labId) return diagnostics.reagentA;
+  if (diagnostics.inputIds[1] === labId) return diagnostics.reagentB;
+  if (diagnostics.reactorIds.indexOf(labId) !== -1) return diagnostics.product;
+  return null;
+}
+
+function buildLabProductionEndpoints(room, diagnostics) {
+  const rows = [];
+  const settings = getLabSettings();
+  const reactionAmount = settings.REACTION_AMOUNT || 5;
+  const outputUnloadAt = settings.OUTPUT_UNLOAD_AT || 250;
+
+  if (!diagnostics.labs || diagnostics.labs.length === 0) {
+    return [
+      createProductionEndpoint(room, {
+        type: "lab_supply",
+        classification: "target",
+        resourceType: "unknown",
+        endpointId: "labs_missing",
+        amount: 0,
+        remaining: 0,
+        lifecycle: "blocked",
+        blockedReason: "labs missing",
+        executionOwned: false,
+      }),
+    ];
+  }
+
+  const inputLabs = diagnostics.inputIds.map(getObjectByIdSafe).filter(Boolean);
+  for (let i = 0; i < inputLabs.length; i++) {
+    const lab = inputLabs[i];
+    const resourceType = getLabExpectedResource(diagnostics, lab.id);
+    if (!resourceType) continue;
+    const current = getStoredAmount(lab, resourceType);
+    if (current >= reactionAmount) continue;
+    const hub = getHubAmount(room, resourceType);
+    rows.push(createProductionEndpoint(room, {
+      type: "lab_supply",
+      classification: "target",
+      resourceType: resourceType,
+      endpointId: lab.id,
+      amount: Math.max(0, reactionAmount - current),
+      remaining: Math.max(0, reactionAmount - current),
+      blockedReason: hub > 0 ? "none" : "missing source resource",
+      executionOwned: true,
+    }));
+  }
+
+  const reactors = diagnostics.reactorIds.map(getObjectByIdSafe).filter(Boolean);
+  for (let i = 0; i < reactors.length; i++) {
+    const lab = reactors[i];
+    if (!diagnostics.product) continue;
+    const amount = getStoredAmount(lab, diagnostics.product);
+    if (amount >= outputUnloadAt) {
+      rows.push(createProductionEndpoint(room, {
+        type: "lab_withdraw",
+        classification: "source",
+        resourceType: diagnostics.product,
+        endpointId: lab.id,
+        amount: amount,
+        remaining: amount,
+        blockedReason: "none",
+        executionOwned: true,
+      }));
+    }
+  }
+
+  for (let i = 0; i < diagnostics.labs.length; i++) {
+    const lab = diagnostics.labs[i];
+    const primary = getPrimaryMineral(lab);
+    const expected = getLabExpectedResource(diagnostics, lab.id);
+    if (primary && expected && primary !== expected) {
+      rows.push(createProductionEndpoint(room, {
+        type: "lab_withdraw_cleanup",
+        classification: "source",
+        resourceType: primary,
+        endpointId: lab.id,
+        amount: getStoredAmount(lab, primary),
+        remaining: getStoredAmount(lab, primary),
+        blockedReason: "wrong lab mineral",
+        executionOwned: true,
+      }));
+    }
+  }
+
+  return rows;
+}
+
 function formatLabStores(labs) {
   if (!labs || labs.length === 0) return "none";
 
@@ -1200,10 +1474,12 @@ function formatLabStores(labs) {
 
 function formatLabLines(room, diagnostics) {
   const lines = [`[OPS][${room.name}][LABS]`];
+  const endpointLines = formatProductionEndpointLines(buildLabProductionEndpoints(room, diagnostics));
   if (diagnostics.labs.length === 0) {
     lines.push("Labs missing | Count 0");
     lines.push("State missing | Blocked labs missing");
     lines.push("Ownership supply unknown | withdraw unknown | active unknown | alignment unknown");
+    Array.prototype.push.apply(lines, endpointLines);
     lines.push("No boost, combat, market, terminal, or reaction action performed.");
     return lines;
   }
@@ -1224,6 +1500,7 @@ function formatLabLines(room, diagnostics) {
   lines.push(`Blocked ${diagnostics.blockedReason}${diagnostics.advancedReason ? " | reason " + diagnostics.advancedReason : ""}`);
   lines.push(`Ownership supply ${diagnostics.ownership.supplyOwner} | withdraw ${diagnostics.ownership.withdrawOwner} | active ${diagnostics.ownership.activePath} | alignment ${diagnostics.ownership.status}`);
   lines.push(`Logistics alignment ${backlog.length > 0 ? backlog.join(", ") : "no lab advanced backlog"}`);
+  Array.prototype.push.apply(lines, endpointLines);
   lines.push("No boost, combat, market, terminal, or reaction action performed.");
   return lines;
 }
