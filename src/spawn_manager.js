@@ -24,6 +24,92 @@ const reservePolicy = require("economy_reserve_policy");
 const opsLogisticsManager = require("ops_logistics_manager");
 const utils = require("utils");
 
+let spawnOptimizationCacheTick = null;
+let spawnOptimizationByRoom = {};
+
+function resetSpawnOptimizationCacheIfNeeded() {
+  if (spawnOptimizationCacheTick === Game.time) return;
+  spawnOptimizationCacheTick = Game.time;
+  spawnOptimizationByRoom = {};
+}
+
+function cloneBodyPlan(plan) {
+  if (!plan) return plan;
+  const cloned = Object.assign({}, plan);
+  if (Array.isArray(plan.body)) cloned.body = plan.body.slice();
+  return cloned;
+}
+
+function cloneRequest(request) {
+  const cloned = Object.assign({}, request);
+  if (request && request._bodyPlan) {
+    cloned._bodyPlan = cloneBodyPlan(request._bodyPlan);
+  }
+  return cloned;
+}
+
+function cloneRequests(requests) {
+  const rows = requests || [];
+  const cloned = [];
+  for (let i = 0; i < rows.length; i++) {
+    cloned.push(cloneRequest(rows[i]));
+  }
+  return cloned;
+}
+
+function getRoomOptimizationCache(room) {
+  resetSpawnOptimizationCacheIfNeeded();
+  const roomName = room && room.name ? room.name : "unknown";
+  if (!spawnOptimizationByRoom[roomName]) {
+    spawnOptimizationByRoom[roomName] = {
+      demand: null,
+      demandHits: 0,
+      demandMisses: 0,
+      bodyPlans: {},
+      bodyHits: 0,
+      bodyMisses: 0,
+    };
+  }
+  return spawnOptimizationByRoom[roomName];
+}
+
+function getBodyPlanCacheKey(room, state, request) {
+  const infrastructure = state && state.infrastructure ? state.infrastructure : {};
+  const sourceContainersBySourceId =
+    state && state.sourceContainersBySourceId ? state.sourceContainersBySourceId : {};
+  const sourceContainer = request && request.sourceId
+    ? sourceContainersBySourceId[request.sourceId]
+    : null;
+  return [
+    request && request.role ? request.role : "unknown",
+    request && request.sourceId ? request.sourceId : "",
+    request && request.targetId ? request.targetId : "",
+    request && request.targetRoom ? request.targetRoom : "",
+    request && request.operation ? request.operation : "",
+    request && request.supportRole ? request.supportRole : "",
+    request && request.responseMode ? request.responseMode : "",
+    request && request.defenseType ? request.defenseType : "",
+    request && request.attackStatus ? request.attackStatus : "",
+    request && typeof request.threatLevel === "number" ? request.threatLevel : "",
+    request && typeof request.threatScore === "number" ? request.threatScore : "",
+    request && request.breachSeverity ? request.breachSeverity : "",
+    request && typeof request.energyLimit === "number" ? request.energyLimit : "",
+    room && typeof room.energyCapacityAvailable === "number" ? room.energyCapacityAvailable : "",
+    room && typeof room.energyAvailable === "number" ? room.energyAvailable : "",
+    room && room.controller ? room.controller.level || 0 : 0,
+    state && state.phase ? state.phase : "",
+    infrastructure.hasStorage ? 1 : 0,
+    infrastructure.hasControllerLink ? 1 : 0,
+    infrastructure.hasStorageLink ? 1 : 0,
+    typeof infrastructure.storageEnergy === "number" ? infrastructure.storageEnergy : 0,
+    infrastructure.economyStage || "",
+    state && state.sites ? state.sites.length : 0,
+    state && state.sources ? state.sources.length : 0,
+    sourceContainer ? 1 : 0,
+    state && state.mineralContainer ? 1 : 0,
+  ].join("|");
+}
+
 module.exports = {
   run(room, state) {
     var spawns = state.spawns || [];
@@ -42,6 +128,7 @@ module.exports = {
     var self = this;
     Memory.rooms[room.name].spawnQueue = _.map(requests, function (request) {
       var plan = self.getSpawnBodyPlan(room, state, request);
+      request._bodyPlan = plan;
 
       return {
         role: request.role,
@@ -142,6 +229,20 @@ module.exports = {
         request.threatScore !== undefined
       )
     );
+  },
+
+  getOptimizationCache(room) {
+    return getRoomOptimizationCache(room);
+  },
+
+  getSpawnOptimizationStats(room) {
+    const cache = getRoomOptimizationCache(room);
+    return {
+      demandHits: cache.demandHits,
+      demandMisses: cache.demandMisses,
+      bodyHits: cache.bodyHits,
+      bodyMisses: cache.bodyMisses,
+    };
   },
 
   trySpawnRequest(room, state, spawn, request) {
@@ -266,6 +367,10 @@ module.exports = {
   },
 
   getSpawnBodyPlan(room, state, request) {
+    if (request && request._bodyPlan) {
+      return cloneBodyPlan(request._bodyPlan);
+    }
+
     var plannedRequest = request;
 
     if (this.shouldUseAvailableEnergyFallback(room, request)) {
@@ -274,7 +379,17 @@ module.exports = {
       });
     }
 
-    var plan = bodies.plan(plannedRequest.role, room, plannedRequest, state);
+    const cache = getRoomOptimizationCache(room);
+    const cacheKey = getBodyPlanCacheKey(room, state, plannedRequest);
+    let plan = cache.bodyPlans[cacheKey];
+    if (plan) {
+      cache.bodyHits++;
+      plan = cloneBodyPlan(plan);
+    } else {
+      cache.bodyMisses++;
+      plan = bodies.plan(plannedRequest.role, room, plannedRequest, state);
+      cache.bodyPlans[cacheKey] = cloneBodyPlan(plan);
+    }
 
     if (plannedRequest !== request) {
       plan = Object.assign({}, plan, {
@@ -419,6 +534,22 @@ module.exports = {
   },
 
   getSpawnRequests(room, state) {
+    const cache = getRoomOptimizationCache(room);
+    if (cache.demand && cache.demand.state === state) {
+      cache.demandHits++;
+      return cloneRequests(cache.demand.requests);
+    }
+
+    cache.demandMisses++;
+    const requests = this.buildSpawnRequests(room, state);
+    cache.demand = {
+      state: state,
+      requests: cloneRequests(requests),
+    };
+    return requests;
+  },
+
+  buildSpawnRequests(room, state) {
     var requests = [];
     var roleCounts = state.roleCounts || {};
     var reaction = defenseManager.getReactionConfig();
@@ -434,9 +565,7 @@ module.exports = {
         while (
           currentJrWorkers +
             queuedJrWorkers +
-            requests.filter(function (r) {
-              return r.role === "jrworker";
-            }).length <
+            this.countPlanned(requests, "jrworker") <
           recoveryTarget
         ) {
           requests.push({ role: "jrworker", priority: 1000 });
@@ -458,11 +587,9 @@ module.exports = {
       var queuedBootJrWorkers = this.countQueued(room, "jrworker");
 
       while (
-        currentBootJrWorkers +
-          queuedBootJrWorkers +
-          requests.filter(function (r) {
-            return r.role === "jrworker";
-          }).length <
+          currentBootJrWorkers +
+            queuedBootJrWorkers +
+          this.countPlanned(requests, "jrworker") <
         desiredJrWorkers
       ) {
         requests.push({ role: "jrworker", priority: 100 });
@@ -507,12 +634,10 @@ module.exports = {
         while (
           currentBootstrapWorkers +
             queuedBootstrapWorkers +
-            requests.filter(function (r) {
-              return r.role === "worker";
-            }).length <
-          desiredBootstrapWorkers
-        ) {
-          requests.push({ role: "worker", priority: 100 });
+          this.countPlanned(requests, "worker") <
+        desiredBootstrapWorkers
+      ) {
+        requests.push({ role: "worker", priority: 100 });
         }
 
         requests.sort(function (a, b) {
@@ -562,6 +687,28 @@ module.exports = {
     });
 
     return requests;
+  },
+
+  countPlanned(requests, role) {
+    let count = 0;
+    for (let i = 0; i < (requests || []).length; i++) {
+      if (requests[i] && requests[i].role === role) count++;
+    }
+    return count;
+  },
+
+  countPlannedAny(requests, roles) {
+    const roleLookup = {};
+    for (let i = 0; i < (roles || []).length; i++) {
+      roleLookup[roles[i]] = true;
+    }
+
+    let count = 0;
+    for (let j = 0; j < (requests || []).length; j++) {
+      const role = requests[j] && requests[j].role;
+      if (roleLookup[role]) count++;
+    }
+    return count;
   },
 
   addExpansionRequests(room, state, requests) {
@@ -642,9 +789,7 @@ module.exports = {
     while (
       currentRepairs +
         queuedRepairs +
-        requests.filter(function (r) {
-          return r.role === "repair";
-        }).length <
+        this.countPlanned(requests, "repair") <
       desiredRepairs
     ) {
       requests.push({ role: "repair", priority: 55 });
@@ -713,9 +858,7 @@ module.exports = {
       (roleCounts.jrworker || 0) +
       queuedWorkers +
       this.countQueued(room, "jrworker") +
-      requests.filter(function (r) {
-        return r.role === "worker" || r.role === "jrworker";
-      }).length;
+      this.countPlannedAny(requests, ["worker", "jrworker"]);
 
     if (sites > 0 && buildLabor <= 0) {
       desiredWorkers = Math.max(1, desiredWorkers);
@@ -724,9 +867,7 @@ module.exports = {
     while (
       currentWorkers +
         queuedWorkers +
-        requests.filter(function (r) {
-          return r.role === "worker";
-        }).length <
+        this.countPlanned(requests, "worker") <
       desiredWorkers
     ) {
       requests.push({
@@ -744,9 +885,7 @@ module.exports = {
     while (
       currentUpgraders +
         queuedUpgraders +
-        requests.filter(function (r) {
-          return r.role === "upgrader";
-        }).length <
+        this.countPlanned(requests, "upgrader") <
       desiredUpgraders
     ) {
       requests.push({
@@ -770,9 +909,7 @@ module.exports = {
     while (
       currentRepairs +
         queuedRepairs +
-        requests.filter(function (r) {
-          return r.role === "repair";
-        }).length <
+        this.countPlanned(requests, "repair") <
       desiredRepairs
     ) {
       requests.push({ role: "repair", priority: 60 });
@@ -1059,7 +1196,7 @@ module.exports = {
   },
 
   getDesiredWorkers(room, state) {
-    var plan = bodies.plan("worker", room, { role: "worker" }, state);
+    var plan = this.getSpawnBodyPlan(room, state, { role: "worker" });
     var workPerCreep = Math.max(1, plan.workParts || 1);
     var sites = state && state.sites ? state.sites.length : 0;
     var targetWork = 2;
@@ -1134,7 +1271,7 @@ module.exports = {
   },
 
   getDesiredUpgraders(room, state) {
-    var plan = bodies.plan("upgrader", room, { role: "upgrader" }, state);
+    var plan = this.getSpawnBodyPlan(room, state, { role: "upgrader" });
     var workPerCreep = Math.max(1, plan.workParts || 1);
     var sites = state && state.sites ? state.sites.length : 0;
     var targetWork = state.phase === "foundation"
@@ -1306,15 +1443,10 @@ module.exports = {
       return overrides[sourceId];
     }
 
-    var plan = bodies.plan(
-      "hauler",
-      room,
-      {
-        role: "hauler",
-        sourceId: sourceId,
-      },
-      state,
-    );
+    var plan = this.getSpawnBodyPlan(room, state, {
+      role: "hauler",
+      sourceId: sourceId,
+    });
     var carryDemand = Math.max(1, plan.carryDemand || plan.carryParts || 1);
     var carryPerCreep = Math.max(1, plan.carryParts || 1);
 
@@ -1376,7 +1508,7 @@ module.exports = {
   getDesiredRepairs(room, state) {
     if (state.phase === "foundation") return 0;
 
-    var plan = bodies.plan("repair", room, { role: "repair" }, state);
+    var plan = this.getSpawnBodyPlan(room, state, { role: "repair" });
     var workPerCreep = Math.max(1, plan.workParts || 1);
     var targetWork = 0;
     var groups = utils.getRepairTargetGroups(room);

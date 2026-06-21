@@ -3,6 +3,7 @@ const scheduler = require("scheduler");
 
 const FULL_CLEANUP_INTERVAL = 500;
 const ROOM_MEMORY_STALE_AGE = 5000;
+const DEFAULT_MEMORY_LIMIT_KB = 2048;
 
 var lastFullCleanupTick = 0;
 
@@ -26,6 +27,35 @@ function getSettings() {
       typeof settings.ROOM_REVIEW_MIN_BUCKET === "number"
         ? settings.ROOM_REVIEW_MIN_BUCKET
         : 3000,
+    pressureCleanupEnabled: settings.PRESSURE_CLEANUP_ENABLED !== false,
+    pressureCleanupInterval:
+      typeof settings.PRESSURE_CLEANUP_INTERVAL === "number"
+        ? Math.max(10, settings.PRESSURE_CLEANUP_INTERVAL)
+        : 100,
+    pressureCleanupMinBucket:
+      typeof settings.PRESSURE_CLEANUP_MIN_BUCKET === "number"
+        ? settings.PRESSURE_CLEANUP_MIN_BUCKET
+        : 2000,
+    statsHistoryLimit:
+      typeof settings.STATS_HISTORY_LIMIT === "number"
+        ? Math.max(10, settings.STATS_HISTORY_LIMIT)
+        : 50,
+    roomStatsMaxAge:
+      typeof settings.ROOM_STATS_MAX_AGE === "number"
+        ? Math.max(100, settings.ROOM_STATS_MAX_AGE)
+        : 1000,
+    diagnosticTtl:
+      typeof settings.DIAGNOSTIC_TTL === "number"
+        ? Math.max(10, settings.DIAGNOSTIC_TTL)
+        : 500,
+    completedRequestTtl:
+      typeof settings.COMPLETED_REQUEST_TTL === "number"
+        ? Math.max(100, settings.COMPLETED_REQUEST_TTL)
+        : 5000,
+    memoryLimitKb:
+      typeof settings.MEMORY_LIMIT_KB === "number"
+        ? Math.max(1000, settings.MEMORY_LIMIT_KB)
+        : DEFAULT_MEMORY_LIMIT_KB,
   };
 }
 
@@ -44,6 +74,22 @@ function ensureReviewMemory() {
   }
 
   return Memory.runtime.roomReview;
+}
+
+function ensurePressureCleanupMemory() {
+  if (!Memory.runtime) Memory.runtime = {};
+  if (!Memory.runtime.memoryCleanup) {
+    Memory.runtime.memoryCleanup = {
+      lastRun: 0,
+      entriesRemoved: 0,
+      pathsTouched: [],
+      lastSummary: null,
+    };
+  }
+  if (!Array.isArray(Memory.runtime.memoryCleanup.pathsTouched)) {
+    Memory.runtime.memoryCleanup.pathsTouched = [];
+  }
+  return Memory.runtime.memoryCleanup;
 }
 
 function getRoomMemory(roomName) {
@@ -113,6 +159,360 @@ function countDefenseQueue(queue) {
 
 function pushChanged(changed, key) {
   if (changed.indexOf(key) === -1) changed.push(key);
+}
+
+function noteCleanup(summary, path, removed) {
+  const amount = typeof removed === "number" ? removed : 1;
+  if (amount <= 0) return;
+  summary.entriesRemoved += amount;
+  if (summary.pathsTouched.indexOf(path) === -1) {
+    summary.pathsTouched.push(path);
+  }
+}
+
+function trimArray(array, limit) {
+  if (!Array.isArray(array)) return 0;
+  const max = Math.max(0, Math.floor(limit || 0));
+  if (array.length <= max) return 0;
+  const removed = array.length - max;
+  array.splice(0, removed);
+  return removed;
+}
+
+function getObjectSizeKb(value) {
+  if (typeof value === "undefined") return 0;
+  try {
+    return Number((JSON.stringify(value).length / 1024).toFixed(1));
+  } catch (error) {
+    return 0;
+  }
+}
+
+function classifyMemoryPressure(usedKb, limitKb) {
+  if (typeof usedKb !== "number" || usedKb <= 0) return "unknown";
+  const limit = Math.max(1, limitKb || DEFAULT_MEMORY_LIMIT_KB);
+  if (usedKb >= limit * 0.92) return "critical";
+  if (usedKb >= limit * 0.82) return "warning";
+  return "normal";
+}
+
+function pruneDeadCreepMemory(summary) {
+  if (!Memory.creeps) Memory.creeps = {};
+  let removed = 0;
+  for (const name in Memory.creeps) {
+    if (!Object.prototype.hasOwnProperty.call(Memory.creeps, name)) continue;
+    if (!Game.creeps[name]) {
+      delete Memory.creeps[name];
+      removed++;
+    }
+  }
+  noteCleanup(summary, "Memory.creeps", removed);
+  return removed;
+}
+
+function prunePowerCreepMemory(summary) {
+  let removed = 0;
+  if (Memory.powerCreeps && typeof Memory.powerCreeps === "object") {
+    for (const name in Memory.powerCreeps) {
+      if (!Object.prototype.hasOwnProperty.call(Memory.powerCreeps, name)) continue;
+      if (!Game.powerCreeps || !Game.powerCreeps[name]) {
+        delete Memory.powerCreeps[name];
+        removed++;
+      }
+    }
+  }
+  noteCleanup(summary, "Memory.powerCreeps", removed);
+
+  if (!Memory.rooms) return;
+  for (const roomName in Memory.rooms) {
+    if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+    const power = Memory.rooms[roomName] && Memory.rooms[roomName].power;
+    const generateOps = power && power.generateOps;
+    const name = generateOps && generateOps.name;
+    if (name && (!Game.powerCreeps || !Game.powerCreeps[name])) {
+      delete power.generateOps;
+      noteCleanup(summary, `Memory.rooms.${roomName}.power.generateOps`, 1);
+    }
+  }
+}
+
+function pruneStatsMemory(settings, summary) {
+  if (!Memory.stats) return;
+  const removedHistory = trimArray(Memory.stats.history, settings.statsHistoryLimit);
+  noteCleanup(summary, "Memory.stats.history", removedHistory);
+
+  if (Memory.stats.rooms) {
+    let removedRooms = 0;
+    for (const roomName in Memory.stats.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Memory.stats.rooms, roomName)) continue;
+      const row = Memory.stats.rooms[roomName];
+      const tick = row && row.cpu && typeof row.cpu.tick === "number" ? row.cpu.tick : 0;
+      if (!tick || Game.time - tick > settings.roomStatsMaxAge) {
+        delete Memory.stats.rooms[roomName];
+        removedRooms++;
+      }
+    }
+    noteCleanup(summary, "Memory.stats.rooms", removedRooms);
+    if (Object.keys(Memory.stats.rooms).length === 0) delete Memory.stats.rooms;
+  }
+
+  if (Memory.stats.hud) {
+    let removedHud = 0;
+    for (const roomName in Memory.stats.hud) {
+      if (!Object.prototype.hasOwnProperty.call(Memory.stats.hud, roomName)) continue;
+      const row = Memory.stats.hud[roomName];
+      const tick = row && typeof row.tick === "number" ? row.tick : 0;
+      if (!Game.rooms[roomName] || !tick || Game.time - tick > settings.diagnosticTtl) {
+        delete Memory.stats.hud[roomName];
+        removedHud++;
+      }
+    }
+    noteCleanup(summary, "Memory.stats.hud", removedHud);
+    if (Object.keys(Memory.stats.hud).length === 0) delete Memory.stats.hud;
+  }
+}
+
+function pruneRuntimeMemory(settings, summary) {
+  if (!Memory.runtime) return;
+  if (Memory.runtime.scheduler) {
+    const removedRecent = trimArray(
+      Memory.runtime.scheduler.recent,
+      config.SCHEDULING && typeof config.SCHEDULING.HISTORY_SIZE === "number"
+        ? config.SCHEDULING.HISTORY_SIZE
+        : 25,
+    );
+    noteCleanup(summary, "Memory.runtime.scheduler.recent", removedRecent);
+  }
+
+  if (Memory.runtime.rooms) {
+    let removedRooms = 0;
+    for (const roomName in Memory.runtime.rooms) {
+      if (!Object.prototype.hasOwnProperty.call(Memory.runtime.rooms, roomName)) continue;
+      const row = Memory.runtime.rooms[roomName];
+      const tick = row && typeof row.tick === "number" ? row.tick : 0;
+      if (!Game.rooms[roomName] || !tick || Game.time - tick > settings.diagnosticTtl) {
+        delete Memory.runtime.rooms[roomName];
+        removedRooms++;
+      }
+    }
+    noteCleanup(summary, "Memory.runtime.rooms", removedRooms);
+    if (Object.keys(Memory.runtime.rooms).length === 0) delete Memory.runtime.rooms;
+  }
+}
+
+function pruneRoomDiagnostics(settings, summary) {
+  if (!Memory.rooms) return;
+  for (const roomName in Memory.rooms) {
+    if (!Object.prototype.hasOwnProperty.call(Memory.rooms, roomName)) continue;
+    const roomMemory = Memory.rooms[roomName];
+    if (!roomMemory || typeof roomMemory !== "object") continue;
+
+    if (
+      roomMemory.roleIntent &&
+      (!roomMemory.roleIntent.tick ||
+        Game.time - roomMemory.roleIntent.tick > settings.diagnosticTtl)
+    ) {
+      delete roomMemory.roleIntent;
+      noteCleanup(summary, `Memory.rooms.${roomName}.roleIntent`, 1);
+    }
+
+    if (
+      roomMemory.hud &&
+      (!roomMemory.hud.tick || Game.time - roomMemory.hud.tick > settings.diagnosticTtl)
+    ) {
+      delete roomMemory.hud;
+      noteCleanup(summary, `Memory.rooms.${roomName}.hud`, 1);
+    }
+
+    if (
+      roomMemory.review &&
+      roomMemory.review.tick &&
+      Game.time - roomMemory.review.tick > settings.diagnosticTtl
+    ) {
+      delete roomMemory.review;
+      noteCleanup(summary, `Memory.rooms.${roomName}.review`, 1);
+    }
+
+    if (
+      roomMemory.power &&
+      roomMemory.power.generateOps &&
+      roomMemory.power.generateOps.lastTick &&
+      Game.time - roomMemory.power.generateOps.lastTick > settings.diagnosticTtl &&
+      (!roomMemory.power.generateOps.name ||
+        !Game.powerCreeps ||
+        !Game.powerCreeps[roomMemory.power.generateOps.name])
+    ) {
+      delete roomMemory.power.generateOps;
+      noteCleanup(summary, `Memory.rooms.${roomName}.power.generateOps`, 1);
+    }
+
+    if (roomMemory.advancedOps && typeof roomMemory.advancedOps === "object") {
+      const advanced = roomMemory.advancedOps;
+
+      if (
+        advanced.labSchedule &&
+        (
+          !advanced.labSchedule.tick ||
+          Game.time - advanced.labSchedule.tick > settings.diagnosticTtl
+        )
+      ) {
+        delete advanced.labSchedule;
+        noteCleanup(summary, `Memory.rooms.${roomName}.advancedOps.labSchedule`, 1);
+      }
+
+      if (
+        advanced.taskClaim &&
+        advanced.taskClaim.until &&
+        advanced.taskClaim.until < Game.time
+      ) {
+        delete advanced.taskClaim;
+        noteCleanup(summary, `Memory.rooms.${roomName}.advancedOps.taskClaim`, 1);
+      }
+
+      if (!Game.rooms[roomName] && advanced.summary) {
+        delete advanced.summary;
+        noteCleanup(summary, `Memory.rooms.${roomName}.advancedOps.summary`, 1);
+      }
+
+      if (Object.keys(advanced).length === 0) {
+        delete roomMemory.advancedOps;
+        noteCleanup(summary, `Memory.rooms.${roomName}.advancedOps`, 1);
+      }
+    }
+
+    if (roomMemory.spawnRequestAges && typeof roomMemory.spawnRequestAges === "object") {
+      const queue = Array.isArray(roomMemory.spawnQueue) ? roomMemory.spawnQueue : [];
+      const activeKeys = {};
+      for (let i = 0; i < queue.length; i++) {
+        if (queue[i] && queue[i].requestKey) activeKeys[queue[i].requestKey] = true;
+      }
+
+      let removedAges = 0;
+      for (const key in roomMemory.spawnRequestAges) {
+        if (!Object.prototype.hasOwnProperty.call(roomMemory.spawnRequestAges, key)) continue;
+        if (queue.length > 0 && activeKeys[key]) continue;
+        delete roomMemory.spawnRequestAges[key];
+        removedAges++;
+      }
+      noteCleanup(summary, `Memory.rooms.${roomName}.spawnRequestAges`, removedAges);
+      if (Object.keys(roomMemory.spawnRequestAges).length === 0) {
+        delete roomMemory.spawnRequestAges;
+      }
+    }
+  }
+}
+
+function pruneOpsLogistics(settings, summary) {
+  if (!Memory.ops || !Memory.ops.logistics) return;
+  const logistics = Memory.ops.logistics;
+
+  if (logistics.history) {
+    let removedHistory = 0;
+    const historyLimit = 8;
+    for (const roomName in logistics.history) {
+      if (!Object.prototype.hasOwnProperty.call(logistics.history, roomName)) continue;
+      const removed = trimArray(logistics.history[roomName], historyLimit);
+      removedHistory += removed;
+      if (Array.isArray(logistics.history[roomName]) && logistics.history[roomName].length === 0) {
+        delete logistics.history[roomName];
+      }
+    }
+    noteCleanup(summary, "Memory.ops.logistics.history", removedHistory);
+    if (Object.keys(logistics.history).length === 0) delete logistics.history;
+  }
+
+  if (logistics.requests) {
+    let removedRequests = 0;
+    const terminalStatuses = {
+      done: true,
+      canceled: true,
+      expired: true,
+    };
+    for (const id in logistics.requests) {
+      if (!Object.prototype.hasOwnProperty.call(logistics.requests, id)) continue;
+      const request = logistics.requests[id];
+      if (!request || typeof request !== "object") {
+        delete logistics.requests[id];
+        removedRequests++;
+        continue;
+      }
+      if (request.status === "open" && request.expiresAt && request.expiresAt < Game.time) {
+        request.status = "expired";
+        request.updatedAt = Game.time;
+      }
+      const lastTick = Math.max(
+        request.updatedAt || 0,
+        request.completedAt || 0,
+        request.canceledAt || 0,
+        request.expiresAt || 0,
+        request.createdAt || 0,
+      );
+      if (
+        terminalStatuses[request.status] &&
+        lastTick &&
+        Game.time - lastTick > settings.completedRequestTtl
+      ) {
+        delete logistics.requests[id];
+        removedRequests++;
+      }
+    }
+    noteCleanup(summary, "Memory.ops.logistics.requests", removedRequests);
+    if (Object.keys(logistics.requests).length === 0) delete logistics.requests;
+  }
+}
+
+function buildTopLevelSizeRows() {
+  const rows = [];
+  for (const key in Memory) {
+    if (!Object.prototype.hasOwnProperty.call(Memory, key)) continue;
+    rows.push({
+      key: "Memory." + key,
+      kb: getObjectSizeKb(Memory[key]),
+    });
+  }
+  rows.sort(function (a, b) {
+    if (b.kb !== a.kb) return b.kb - a.kb;
+    return a.key.localeCompare(b.key);
+  });
+  return rows;
+}
+
+function buildKnownCategoryRows() {
+  const categories = [
+    ["Memory.rooms", Memory.rooms],
+    ["Memory.creeps", Memory.creeps],
+    ["Memory.stats", Memory.stats],
+    ["Memory.stats.history", Memory.stats && Memory.stats.history],
+    ["Memory.stats.rooms", Memory.stats && Memory.stats.rooms],
+    ["Memory.ops", Memory.ops],
+    ["Memory.ops.logistics.requests", Memory.ops && Memory.ops.logistics && Memory.ops.logistics.requests],
+    ["Memory.ops.logistics.history", Memory.ops && Memory.ops.logistics && Memory.ops.logistics.history],
+    ["Memory.runtime", Memory.runtime],
+    ["Memory.powerCreeps", Memory.powerCreeps],
+  ];
+  const rows = [];
+  for (let i = 0; i < categories.length; i++) {
+    if (typeof categories[i][1] === "undefined") continue;
+    rows.push({
+      key: categories[i][0],
+      kb: getObjectSizeKb(categories[i][1]),
+    });
+  }
+  rows.sort(function (a, b) {
+    if (b.kb !== a.kb) return b.kb - a.kb;
+    return a.key.localeCompare(b.key);
+  });
+  return rows;
+}
+
+function formatSizeRows(rows, limit) {
+  const visible = rows.slice(0, limit || 5);
+  if (visible.length === 0) return "none";
+  return visible
+    .map(function (row) {
+      return row.key + " " + row.kb + "KB";
+    })
+    .join(" | ");
 }
 
 function pruneSpawnQueue(room, state, roomMemory, changed) {
@@ -340,11 +740,12 @@ module.exports = {
     if (!Memory.creeps) Memory.creeps = {};
     if (!Memory.rooms) Memory.rooms = {};
 
-    for (const name in Memory.creeps) {
-      if (!Game.creeps[name]) {
-        delete Memory.creeps[name];
-      }
-    }
+    pruneDeadCreepMemory({
+      entriesRemoved: 0,
+      pathsTouched: [],
+    });
+
+    this.runPressureCleanup();
 
     if (Game.time - lastFullCleanupTick < FULL_CLEANUP_INTERVAL) return;
     const cleanupDecision = scheduler.canRunOptional(
@@ -360,6 +761,136 @@ module.exports = {
     lastFullCleanupTick = Game.time;
     this.runFullCleanup();
     scheduler.markOptionalRun("memory.fullCleanup", before);
+  },
+
+  runPressureCleanup() {
+    const settings = getSettings();
+    const memory = ensurePressureCleanupMemory();
+
+    if (!settings.pressureCleanupEnabled) {
+      memory.lastSummary = {
+        tick: Game.time,
+        skipped: "disabled",
+        entriesRemoved: 0,
+        pathsTouched: [],
+      };
+      return memory.lastSummary;
+    }
+
+    if (memory.lastRun && Game.time - memory.lastRun < settings.pressureCleanupInterval) {
+      return memory.lastSummary || {
+        tick: Game.time,
+        skipped: "interval",
+        entriesRemoved: 0,
+        pathsTouched: [],
+      };
+    }
+
+    const cleanupDecision = scheduler.canRunOptional(
+      "memory.pressureCleanup",
+      settings.pressureCleanupInterval,
+      {
+        minBucket: settings.pressureCleanupMinBucket,
+      },
+    );
+    if (!cleanupDecision.ok) {
+      scheduler.recordSkip("memory.pressureCleanup", cleanupDecision.reason);
+      memory.lastSummary = {
+        tick: Game.time,
+        skipped: cleanupDecision.reason,
+        entriesRemoved: 0,
+        pathsTouched: [],
+      };
+      return memory.lastSummary;
+    }
+
+    const before = Game.cpu ? Game.cpu.getUsed() : 0;
+    const summary = this.runDeepCleanup(settings);
+    scheduler.markOptionalRun("memory.pressureCleanup", before);
+    return summary;
+  },
+
+  runDeepCleanup(settingsOverride) {
+    const settings = settingsOverride || getSettings();
+    const memory = ensurePressureCleanupMemory();
+    const summary = {
+      tick: Game.time,
+      skipped: null,
+      entriesRemoved: 0,
+      pathsTouched: [],
+    };
+
+    pruneDeadCreepMemory(summary);
+    prunePowerCreepMemory(summary);
+    pruneStatsMemory(settings, summary);
+    pruneRuntimeMemory(settings, summary);
+    pruneRoomDiagnostics(settings, summary);
+    pruneOpsLogistics(settings, summary);
+
+    const usedKb = getObjectSizeKb(Memory);
+    summary.usedKb = usedKb;
+    summary.limitKb = settings.memoryLimitKb;
+    summary.pressure = classifyMemoryPressure(usedKb, settings.memoryLimitKb);
+    summary.topLevel = buildTopLevelSizeRows().slice(0, 5);
+    summary.largestKnown = buildKnownCategoryRows().slice(0, 5);
+
+    memory.lastRun = Game.time;
+    memory.entriesRemoved = summary.entriesRemoved;
+    memory.pathsTouched = summary.pathsTouched.slice(0, 12);
+    memory.lastSummary = {
+      tick: summary.tick,
+      skipped: summary.skipped,
+      entriesRemoved: summary.entriesRemoved,
+      pathsTouched: summary.pathsTouched.slice(0, 12),
+      usedKb: summary.usedKb,
+      limitKb: summary.limitKb,
+      pressure: summary.pressure,
+      topLevel: summary.topLevel,
+      largestKnown: summary.largestKnown,
+    };
+
+    return memory.lastSummary;
+  },
+
+  getMemoryReport() {
+    const settings = getSettings();
+    const cleanup = ensurePressureCleanupMemory();
+    const usedKb = getObjectSizeKb(Memory);
+    const pressure = classifyMemoryPressure(usedKb, settings.memoryLimitKb);
+    return {
+      tick: Game.time,
+      usedKb: usedKb,
+      limitKb: settings.memoryLimitKb,
+      pressure: pressure,
+      cleanupLastRun: cleanup.lastRun || 0,
+      cleanupEntriesRemoved: cleanup.entriesRemoved || 0,
+      cleanupPathsTouched: cleanup.pathsTouched || [],
+      topLevel: buildTopLevelSizeRows().slice(0, 5),
+      largestKnown: buildKnownCategoryRows().slice(0, 6),
+    };
+  },
+
+  formatMemoryReportLines(report) {
+    const summary = report || this.getMemoryReport();
+    return [
+      "[OPS][MEMORY]",
+      "Used " +
+        summary.usedKb +
+        " / " +
+        summary.limitKb +
+        " KB | pressure " +
+        summary.pressure,
+      "Cleanup last " +
+        (summary.cleanupLastRun || "--") +
+        " | removed " +
+        (summary.cleanupEntriesRemoved || 0),
+      "Touched " +
+        (summary.cleanupPathsTouched && summary.cleanupPathsTouched.length > 0
+          ? summary.cleanupPathsTouched.slice(0, 6).join(", ")
+          : "none"),
+      "Top keys " + formatSizeRows(summary.topLevel || [], 5),
+      "Known categories " + formatSizeRows(summary.largestKnown || [], 6),
+    ];
   },
 
   runFullCleanup() {

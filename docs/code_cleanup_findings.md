@@ -1,5 +1,14 @@
 # Code Cleanup Findings
 
+## Deep CPU and Memory Pressure Optimization
+
+- Added bounded Memory pressure cleanup for stale creep/PowerCreep memory, stats history, HUD/cache stats, role intent diagnostics, spawn request ages, production schedules/claims, and completed logistics history while preserving active room policy/config fields.
+- Added `ops.memory()` as a compact printable Memory pressure report; it reports approximate used KB, top categories, known large categories, last cleanup tick, removed entries, and touched paths.
+- HUD normal mode now uses a lightweight upper-left room summary without creep labels or full room report generation. Full mode keeps detailed HUD behavior and optional creep labels. Off/pressure paths skip noncritical HUD work while owned-room critical alerts still draw.
+- Spawn planning now has tick-local demand and body-plan reuse; room reporting reuses registered room state where available; repair role dispatch reuses the already-collected room state.
+- Power Spawn refill evaluation now respects refill cadence before scanning active logistics requests, and cached Power Spawn ids avoid fallback structure scans when state is unavailable.
+- Scheduler skip coverage confirms skipped optional work does not call the expensive function body; skipped advanced ops now reuses the last stored summary instead of rebuilding factory/lab status during the skip path.
+
 ## Scheduled Memory Review
 
 - Added a long-interval room memory review so stale room memory cleanup is centralized instead of scattered through normal report and plan-read paths.

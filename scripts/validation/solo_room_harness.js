@@ -14887,15 +14887,22 @@ function runReservedRoomHudScenario() {
     report.hudLines.some(function (line) { return line.indexOf("Sources 1/2 ctr") !== -1 && line.indexOf("M 1 H 1 W 1") !== -1; }),
     `expected source and remote creep counts in reserved HUD, got ${JSON.stringify(report.hudLines)}`,
   );
-  currentRuntime.visuals = [];
-  hud.runReservedRooms();
-  const labels = currentRuntime.visuals
-    .filter(function (item) { return item.type === "text"; })
-    .map(function (item) { return item.text; });
-  assert(labels.indexOf("RM") !== -1, `expected remoteminer label, got ${labels.join(",")}`);
-  assert(labels.indexOf("RH") !== -1, `expected remotehauler label, got ${labels.join(",")}`);
-  assert(labels.indexOf("RW") !== -1, `expected remoteworker label, got ${labels.join(",")}`);
-  assert(labels.indexOf("Rs") !== -1, `expected reserver label, got ${labels.join(",")}`);
+  const originalHud = Object.assign({}, config.HUD);
+  try {
+    config.HUD.MODE = "full";
+    config.HUD.CREEP_LABELS = true;
+    currentRuntime.visuals = [];
+    hud.runReservedRooms();
+    const labels = currentRuntime.visuals
+      .filter(function (item) { return item.type === "text"; })
+      .map(function (item) { return item.text; });
+    assert(labels.indexOf("RM") !== -1, `expected remoteminer label, got ${labels.join(",")}`);
+    assert(labels.indexOf("RH") !== -1, `expected remotehauler label, got ${labels.join(",")}`);
+    assert(labels.indexOf("RW") !== -1, `expected remoteworker label, got ${labels.join(",")}`);
+    assert(labels.indexOf("Rs") !== -1, `expected reserver label, got ${labels.join(",")}`);
+  } finally {
+    config.HUD = originalHud;
+  }
 }
 
 function runReservationStableGateScenario() {
@@ -15587,35 +15594,37 @@ function runHudConfigControlsScenario() {
     config.HUD.ROOM_SUMMARY = true;
     config.HUD.ROOM_SUMMARY_INTERVAL = 10;
     config.HUD.CREEP_LABELS = false;
+    config.HUD.MODE = "normal";
     room.energyAvailable = 300;
     hud.drawSummary(room, state);
 
     let energyLine = currentRuntime.visuals.find(function (item) {
-      return item.type === "text" && String(item.text).indexOf("Energy ") === 0;
+      return item.type === "text" && String(item.text).indexOf("E ") === 0;
     });
-    assert(energyLine && energyLine.text.indexOf("Energy 300/550") === 0, `expected initial room HUD energy line, got ${energyLine ? energyLine.text : "none"}`);
+    assert(energyLine && energyLine.text.indexOf("E 300/550") === 0, `expected initial room HUD energy line, got ${energyLine ? energyLine.text : "none"}`);
 
     currentRuntime.visuals = [];
     Game.time = 1005;
     room.energyAvailable = 500;
     hud.drawSummary(room, state);
     energyLine = currentRuntime.visuals.find(function (item) {
-      return item.type === "text" && String(item.text).indexOf("Energy ") === 0;
+      return item.type === "text" && String(item.text).indexOf("E ") === 0;
     });
-    assert(energyLine && energyLine.text.indexOf("Energy 300/550") === 0, `expected cached room HUD before configured interval, got ${energyLine ? energyLine.text : "none"}`);
+    assert(energyLine && energyLine.text.indexOf("E 300/550") === 0, `expected cached room HUD before configured interval, got ${energyLine ? energyLine.text : "none"}`);
 
     currentRuntime.visuals = [];
     Game.time = 1010;
     hud.drawSummary(room, state);
     energyLine = currentRuntime.visuals.find(function (item) {
-      return item.type === "text" && String(item.text).indexOf("Energy ") === 0;
+      return item.type === "text" && String(item.text).indexOf("E ") === 0;
     });
-    assert(energyLine && energyLine.text.indexOf("Energy 500/550") === 0, `expected room HUD refresh at configured interval, got ${energyLine ? energyLine.text : "none"}`);
+    assert(energyLine && energyLine.text.indexOf("E 500/550") === 0, `expected room HUD refresh at configured interval, got ${energyLine ? energyLine.text : "none"}`);
 
     currentRuntime.visuals = [];
     config.HUD.ROOM_SUMMARY = false;
     config.HUD.CREEP_LABELS = true;
     config.HUD.LABEL_INTERVAL = 2;
+    config.HUD.MODE = "full";
     Game.time = 1011;
     hud.run(room, state);
     assert(
@@ -15725,6 +15734,23 @@ function runRoomStateTickLocalCacheScenario() {
     `expected room-state cache hit/miss stats, got ${JSON.stringify(Memory.stats.roomState)}`,
   );
 
+  utils.setRoomRuntimeState(room, first);
+  const originalCollect = roomState.collect;
+  let reportCollectCalls = 0;
+  roomState.collect = function () {
+    reportCollectCalls++;
+    return originalCollect.apply(roomState, arguments);
+  };
+  try {
+    roomReporting.build(room, null, { updateProgress: false });
+  } finally {
+    roomState.collect = originalCollect;
+  }
+  assert(
+    reportCollectCalls === 0,
+    `expected room report to reuse registered room state, got ${reportCollectCalls} collect calls`,
+  );
+
   Game.time += 1;
   roomState.collect(room);
   assert(
@@ -15733,6 +15759,370 @@ function runRoomStateTickLocalCacheScenario() {
       Memory.stats.roomState.misses === 1,
     `expected room-state cache to reset on a new tick, got ${JSON.stringify(Memory.stats.roomState)}`,
   );
+}
+
+function runMemoryPressureCleanupScenario() {
+  const room = buildRoomScenario("VAL_MEMORY_CLEANUP", {
+    tick: 1070,
+    controllerLevel: 8,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    creeps: [
+      { name: "activeCleanupWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  const oldTick = Game.time - 250;
+  Memory.creeps.activeCleanupWorker = { role: "worker", room: room.name };
+  Memory.creeps.deadCleanupWorker = { role: "worker", room: room.name };
+  Game.powerCreeps.ActiveOperator = { name: "ActiveOperator" };
+  Memory.powerCreeps = {
+    ActiveOperator: { role: "operator" },
+    StaleOperator: { role: "operator" },
+  };
+  Memory.rooms[room.name] = {
+    powerPolicy: {
+      processingEnabled: true,
+      refillEnabled: false,
+      minStorageEnergy: 75000,
+    },
+    power: {
+      generateOps: {
+        name: "MissingOperator",
+        lastTick: oldTick,
+      },
+    },
+    advancedOps: {
+      batteryPolicy: "reserve",
+      factoryPaused: true,
+      labsPaused: true,
+      factoryProduct: "battery",
+      labSchedule: {
+        tick: oldTick,
+        product: "GH",
+      },
+      taskClaim: {
+        creep: "missing",
+        key: "stale",
+        until: Game.time - 1,
+      },
+      summary: {
+        factoryStatus: "ready",
+      },
+    },
+    roleIntent: {
+      tick: oldTick,
+      deferred: { "no-safe-work": 2 },
+    },
+    hud: {
+      tick: oldTick,
+      hudLines: ["old"],
+    },
+    review: {
+      tick: oldTick,
+      changed: [],
+    },
+    spawnQueue: [
+      {
+        role: "worker",
+        requestKey: "worker||||||||",
+      },
+    ],
+    spawnRequestAges: {
+      "worker||||||||": { firstSeen: Game.time - 5 },
+      "repair||||||||": { firstSeen: oldTick },
+    },
+  };
+  Memory.stats.history = [];
+  for (let i = 0; i < 65; i++) {
+    Memory.stats.history.push({ tick: Game.time - 65 + i, cpuUsed: i });
+  }
+  Memory.stats.rooms = {
+    STALE_STATS_ROOM: { cpu: { tick: oldTick } },
+    [room.name]: { cpu: { tick: Game.time } },
+  };
+  Memory.stats.hud = {
+    STALE_HUD_ROOM: { tick: oldTick, status: "draw" },
+  };
+  Memory.runtime.rooms = {
+    STALE_RUNTIME_ROOM: { tick: oldTick, pressure: "normal" },
+  };
+  Memory.runtime.scheduler = {
+    recent: [],
+  };
+  for (let j = 0; j < 40; j++) {
+    Memory.runtime.scheduler.recent.push({ tick: Game.time - j, key: "task" + j });
+  }
+  Memory.ops = {
+    logistics: {
+      history: {
+        [room.name]: [
+          { t: Game.time - 10 },
+          { t: Game.time - 9 },
+          { t: Game.time - 8 },
+          { t: Game.time - 7 },
+          { t: Game.time - 6 },
+          { t: Game.time - 5 },
+          { t: Game.time - 4 },
+          { t: Game.time - 3 },
+          { t: Game.time - 2 },
+          { t: Game.time - 1 },
+        ],
+      },
+      requests: {
+        doneOld: {
+          status: "done",
+          roomName: room.name,
+          updatedAt: oldTick,
+          completedAt: oldTick,
+        },
+        openKeep: {
+          status: "open",
+          roomName: room.name,
+          updatedAt: oldTick,
+        },
+        blockedKeep: {
+          status: "blocked",
+          roomName: room.name,
+          updatedAt: oldTick,
+        },
+      },
+    },
+  };
+
+  const summary = kernelMemory.runDeepCleanup({
+    statsHistoryLimit: 50,
+    roomStatsMaxAge: 50,
+    diagnosticTtl: 50,
+    completedRequestTtl: 100,
+    memoryLimitKb: 2048,
+  });
+
+  assert(summary.entriesRemoved > 0, `expected cleanup removals, got ${JSON.stringify(summary)}`);
+  assert(Memory.creeps.activeCleanupWorker, "active creep memory should be preserved");
+  assert(!Memory.creeps.deadCleanupWorker, "stale creep memory should be pruned");
+  assert(Memory.powerCreeps.ActiveOperator, "valid PowerCreep memory should be preserved");
+  assert(!Memory.powerCreeps.StaleOperator, "invalid PowerCreep memory should be pruned");
+  assert(!Memory.rooms[room.name].power.generateOps, "invalid stale generateOps status should be pruned");
+  assert(Memory.rooms[room.name].powerPolicy.processingEnabled === true, "active power policy should be preserved");
+  assert(Memory.rooms[room.name].advancedOps.batteryPolicy === "reserve", "battery policy should be preserved");
+  assert(Memory.rooms[room.name].advancedOps.factoryPaused === true, "factory pause should be preserved");
+  assert(Memory.rooms[room.name].advancedOps.labsPaused === true, "lab pause should be preserved");
+  assert(Memory.rooms[room.name].advancedOps.summary, "active advanced summary should be preserved");
+  assert(!Memory.rooms[room.name].advancedOps.labSchedule, "stale lab schedule should be pruned");
+  assert(!Memory.rooms[room.name].advancedOps.taskClaim, "expired advanced task claim should be pruned");
+  assert(!Memory.rooms[room.name].roleIntent, "stale role intent diagnostics should be pruned");
+  assert(!Memory.rooms[room.name].hud, "stale HUD room cache should be pruned");
+  assert(!Memory.rooms[room.name].review, "stale room review diagnostics should be pruned");
+  assert(Memory.rooms[room.name].spawnRequestAges["worker||||||||"], "active spawn request age should be preserved");
+  assert(!Memory.rooms[room.name].spawnRequestAges["repair||||||||"], "stale spawn request age should be pruned");
+  assert(Memory.stats.history.length === 50, `stats history should be trimmed to 50, got ${Memory.stats.history.length}`);
+  assert(!Memory.stats.rooms.STALE_STATS_ROOM, "stale room CPU stats should be pruned");
+  assert(!Memory.stats.hud, "empty stale HUD stats container should be removed");
+  assert(!Memory.runtime.rooms, "empty stale runtime room container should be removed");
+  assert(Memory.runtime.scheduler.recent.length === config.SCHEDULING.HISTORY_SIZE, "scheduler history should be trimmed");
+  assert(!Memory.ops.logistics.requests.doneOld, "old completed logistics request should be pruned");
+  assert(Memory.ops.logistics.requests.openKeep, "open logistics request should be preserved");
+  assert(Memory.ops.logistics.requests.blockedKeep, "blocked logistics request should be preserved");
+  assert(Memory.ops.logistics.history[room.name].length === 8, "logistics history should be trimmed");
+}
+
+function runOpsMemoryReportScenario() {
+  buildRoomScenario("VAL_OPS_MEMORY_REPORT", {
+    tick: 1075,
+    controllerLevel: 4,
+    spawnEnergy: 300,
+    energyAvailable: 300,
+    energyCapacityAvailable: 800,
+    creeps: [],
+  });
+  kernelMemory.runDeepCleanup({
+    statsHistoryLimit: 50,
+    roomStatsMaxAge: 50,
+    diagnosticTtl: 50,
+    completedRequestTtl: 100,
+    memoryLimitKb: 2048,
+  });
+  ops.registerGlobals();
+  const captured = captureConsoleLines(function () {
+    return global.ops.memory();
+  });
+
+  assert(captured.result === "[OPS][MEMORY] report generated", `expected printable memory result, got ${captured.result}`);
+  assert(
+    captured.lines.some(function (line) { return line === "[OPS][MEMORY]"; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Used ") === 0; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Cleanup last ") === 0; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Top keys ") === 0; }) &&
+      captured.lines.some(function (line) { return line.indexOf("Known categories ") === 0; }),
+    `expected compact ops.memory report lines, got ${captured.lines.join(" / ")}`,
+  );
+  assert(
+    !captured.lines.join("\n").includes("[object Object]"),
+    `ops.memory report should not print raw objects, got ${captured.lines.join(" / ")}`,
+  );
+}
+
+function runSpawnOptimizationCacheScenario() {
+  const room = buildRoomScenario("VAL_SPAWN_OPT_CACHE", {
+    tick: 1080,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 1300,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    supportContainers: true,
+    backboneRoads: true,
+    creeps: [
+      { name: "spawnCacheMiner1", role: "miner", x: 15, y: 25, memory: { sourceId: "source1" } },
+      { name: "spawnCacheHauler1", role: "hauler", x: 24, y: 25, memory: { sourceId: "source1" } },
+    ],
+  });
+  const state = roomState.collect(room);
+
+  const first = spawnManager.getSpawnRequests(room, state);
+  const second = spawnManager.getSpawnRequests(room, state);
+  const demandStats = spawnManager.getSpawnOptimizationStats(room);
+
+  assert(
+    JSON.stringify(first) === JSON.stringify(second),
+    `cached spawn demand should preserve request ordering, first ${JSON.stringify(first)} second ${JSON.stringify(second)}`,
+  );
+  assert(demandStats.demandHits >= 1, `expected spawn demand cache hit, got ${JSON.stringify(demandStats)}`);
+
+  const beforeBodyHits = demandStats.bodyHits;
+  spawnManager.getSpawnBodyPlan(room, state, { role: "worker" });
+  spawnManager.getSpawnBodyPlan(room, state, { role: "worker" });
+  const bodyStats = spawnManager.getSpawnOptimizationStats(room);
+  assert(bodyStats.bodyHits > beforeBodyHits, `expected body plan cache hit, got ${JSON.stringify(bodyStats)}`);
+}
+
+function runHudLightweightSummaryScenario() {
+  const originalHud = Object.assign({}, config.HUD);
+  const originalBuild = roomReporting.build;
+  const room = buildRoomScenario("VAL_HUD_LIGHTWEIGHT", {
+    tick: 1085,
+    controllerLevel: 5,
+    spawnEnergy: 300,
+    energyAvailable: 800,
+    energyCapacityAvailable: 1300,
+    sourceContainers: true,
+    creeps: [
+      { name: "hudLightWorker", role: "worker", x: 24, y: 25 },
+    ],
+  });
+  const state = roomState.collect(room);
+  let buildCalls = 0;
+
+  roomReporting.build = function () {
+    buildCalls++;
+    return originalBuild.apply(roomReporting, arguments);
+  };
+
+  try {
+    config.HUD.MODE = "normal";
+    config.HUD.ROOM_SUMMARY = true;
+    config.HUD.CREEP_LABELS = true;
+    hud.drawSummary(room, state);
+    assert(buildCalls === 0, `normal HUD should avoid full room report build, got ${buildCalls}`);
+    assert(
+      currentRuntime.visuals.some(function (item) {
+        return item.type === "text" && item.text === `${room.name} RCL 5`;
+      }),
+      `normal HUD should draw compact room line, got ${JSON.stringify(currentRuntime.visuals)}`,
+    );
+    assert(
+      !currentRuntime.visuals.some(function (item) { return item.type === "text" && item.text === "W"; }),
+      `normal HUD should not draw creep labels, got ${JSON.stringify(currentRuntime.visuals)}`,
+    );
+
+    currentRuntime.visuals = [];
+    Memory.rooms[room.name].hud = {};
+    buildCalls = 0;
+    config.HUD.MODE = "full";
+    hud.drawSummary(room, state);
+    assert(buildCalls === 1, `full HUD should use full room report path once, got ${buildCalls}`);
+  } finally {
+    roomReporting.build = originalBuild;
+    config.HUD = originalHud;
+  }
+}
+
+function runPowerManagerRefillCadenceScanScenario() {
+  withPowerSettings({ POWER_SPAWN_ENERGY_TARGET: 5000, REFILL_INTERVAL: 25 }, function () {
+    const room = buildPowerProcessingRoom("VAL_POWER_REFILL_CADENCE", {
+      powerSpawnEnergy: 1000,
+      powerSpawnPower: 100,
+      storageEnergy: 200000,
+      terminalStore: { energy: 12000, power: 0 },
+    });
+    let state = roomState.collect(room);
+
+    powerManager.run(room, state);
+    assert(getOpenPowerSpawnRefillRequests(room.name, RESOURCE_ENERGY).length === 1, "first refill pass should create one request");
+
+    const originalListRequests = opsLogisticsManager.listRequests;
+    let listCalls = 0;
+    opsLogisticsManager.listRequests = function () {
+      listCalls++;
+      return originalListRequests.apply(opsLogisticsManager, arguments);
+    };
+    try {
+      Game.time += 1;
+      state = roomState.collect(room);
+      powerManager.run(room, state);
+    } finally {
+      opsLogisticsManager.listRequests = originalListRequests;
+    }
+    assert(listCalls === 0, `cadence-skipped refill should not scan logistics requests, got ${listCalls}`);
+    assert(getOpenPowerSpawnRefillRequests(room.name, RESOURCE_ENERGY).length === 1, "cadence skip should not create duplicate refill requests");
+
+    const originalFind = room.find.bind(room);
+    let powerSpawnScans = 0;
+    room.find = function (findType, options) {
+      if (findType === FIND_MY_STRUCTURES) powerSpawnScans++;
+      return originalFind(findType, options);
+    };
+    try {
+      const cachedPowerSpawns = powerManager.getPowerSpawns(room, null);
+      assert(cachedPowerSpawns.length === 1, "cached Power Spawn id should resolve one Power Spawn");
+      assert(powerSpawnScans === 0, `cached Power Spawn id should avoid structure scan, got ${powerSpawnScans}`);
+    } finally {
+      room.find = originalFind;
+    }
+  });
+}
+
+function runSchedulerSkipNoWorkScenario() {
+  resetRuntime(1090);
+  const originalMaxTasks = config.SCHEDULING.MAX_OPTIONAL_TASKS;
+
+  try {
+    config.SCHEDULING.MAX_OPTIONAL_TASKS = {
+      normal: 0,
+      tight: 0,
+      critical: 0,
+    };
+    Memory.stats.runtime = { pressure: "normal" };
+    scheduler.startTick();
+    let called = false;
+    const result = scheduler.runOptional("sched.skip.no_work", 1, function () {
+      called = true;
+      return "ran";
+    });
+
+    assert(result === null, `skipped optional work should return null, got ${result}`);
+    assert(!called, "skipped optional work should not call expensive function");
+    assert(
+      Memory.runtime.scheduler.deferred === 1 &&
+        Memory.runtime.scheduler.reasons.count === 1,
+      `scheduler skip should be recorded, got ${JSON.stringify(Memory.runtime.scheduler)}`,
+    );
+  } finally {
+    config.SCHEDULING.MAX_OPTIONAL_TASKS = originalMaxTasks;
+  }
 }
 
 function runWorkerStateSpawnTargetScenario() {
@@ -17153,6 +17543,12 @@ function main() {
     ["hud_config_controls", runHudConfigControlsScenario],
     ["hud_cpu_pressure_skip", runHudCpuPressureSkipScenario],
     ["room_state_tick_local_cache", runRoomStateTickLocalCacheScenario],
+    ["memory_pressure_cleanup", runMemoryPressureCleanupScenario],
+    ["ops_memory_report", runOpsMemoryReportScenario],
+    ["spawn_optimization_cache", runSpawnOptimizationCacheScenario],
+    ["hud_lightweight_summary", runHudLightweightSummaryScenario],
+    ["power_manager_refill_cadence_scan", runPowerManagerRefillCadenceScanScenario],
+    ["scheduler_skip_no_work", runSchedulerSkipNoWorkScenario],
     ["worker_state_spawn_target", runWorkerStateSpawnTargetScenario],
     ["power_creep_cached_power_spawn", runPowerCreepCachedPowerSpawnScenario],
     ["cpu_soft_limit", runCpuSoftLimitScenario],

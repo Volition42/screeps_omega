@@ -11,6 +11,8 @@ const powerManager = require("power_manager");
 const pclManager = require("pcl_manager");
 const bodies = require("bodies");
 const spawnManager = require("spawn_manager");
+const config = require("config");
+const kernelMemory = require("kernel_memory");
 
 const MANUAL_SPAWN_ROLES = [
   "jrworker",
@@ -1150,8 +1152,8 @@ function getConsoleCommandHelp() {
     },
     {
       command: "ops.hud(on|off)",
-      description: "Toggle the HUD overlay.",
-      example: "ops.hud(on)",
+      description: "Toggle the HUD overlay, or choose normal/full mode.",
+      example: 'ops.hud("normal")',
     },
     {
       command: "ops.reports(on|off)",
@@ -1225,6 +1227,11 @@ function getConsoleCommandHelp() {
       command: "ops.cpu([roomName])",
       description: "Show measured room CPU, top section costs, pressure, and scheduler skips.",
       example: 'ops.cpu("W5N5")',
+    },
+    {
+      command: "ops.memory()",
+      description: "Show compact Memory pressure, largest categories, and last cleanup result.",
+      example: "ops.memory()",
     },
     {
       command: "ops.power([roomName], [mode], [on|off])",
@@ -1564,6 +1571,9 @@ module.exports = {
       cpu: function (roomName) {
         return module.exports.cpu(roomName);
       },
+      memory: function () {
+        return module.exports.memory();
+      },
       rooms: function () {
         return module.exports.rooms();
       },
@@ -1856,16 +1866,43 @@ module.exports = {
 
   hud(mode) {
     const currentEnabled = opsState.getHudEnabled();
+    if (typeof mode === "string") {
+      const normalized = mode.trim().toLowerCase();
+      if (normalized === "normal" || normalized === "full") {
+        if (!config.HUD) config.HUD = {};
+        config.HUD.MODE = normalized;
+        opsState.setHudEnabled(true);
+        printLine(`[OPS] HUD ON mode ${normalized}`);
+        return {
+          enabled: true,
+          label: "hud",
+          mode: normalized,
+        };
+      }
+      if (normalized === "off" || normalized === "disable" || normalized === "disabled") {
+        if (!config.HUD) config.HUD = {};
+        config.HUD.MODE = "off";
+      }
+    }
     const nextEnabled = parseToggleMode(mode, currentEnabled);
 
     if (nextEnabled === null) {
-      return printLine('[OPS] HUD: invalid mode. Use "on" or "off".');
+      return printLine('[OPS] HUD: invalid mode. Use "on", "off", "normal", or "full".');
     }
 
     opsState.setHudEnabled(nextEnabled);
+    if (!config.HUD) config.HUD = {};
+    if (nextEnabled && config.HUD.MODE === "off") {
+      config.HUD.MODE = "normal";
+    }
+    if (!nextEnabled) {
+      config.HUD.MODE = "off";
+    }
     printLine(`[OPS] HUD ${getModeLabel(nextEnabled)}`);
 
-    return buildToggleResult("hud", nextEnabled);
+    const result = buildToggleResult("hud", nextEnabled);
+    result.mode = config.HUD.MODE || "normal";
+    return result;
   },
 
   reports(mode) {
@@ -2990,6 +3027,11 @@ module.exports = {
 
   cpu(roomName) {
     return this.room(roomName, "cpu");
+  },
+
+  memory() {
+    printBlock(kernelMemory.formatMemoryReportLines(kernelMemory.getMemoryReport()));
+    return "[OPS][MEMORY] report generated";
   },
 
   phase(roomName) {

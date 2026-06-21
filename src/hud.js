@@ -18,6 +18,7 @@ const statsManager = require("stats_manager");
 module.exports = {
   run(room, state) {
     if (!opsState.getHudEnabled()) return;
+    if (this.getHudMode() === "off") return;
     if (this.shouldSkipForCpu(room, state)) return;
 
     if (this.isRoomSummaryEnabled()) {
@@ -31,6 +32,8 @@ module.exports = {
 
   runReservedRooms() {
     if (!opsState.getHudEnabled()) return;
+    if (this.getHudMode() === "off") return;
+    if (statsManager.isPastSoftCpuLimit(2)) return;
 
     const entries = reservationManager.getVisibleReservedRooms();
     for (let i = 0; i < entries.length; i++) {
@@ -53,6 +56,8 @@ module.exports = {
 
   runAttackRooms() {
     if (!opsState.getHudEnabled()) return;
+    if (this.getHudMode() === "off") return;
+    if (statsManager.isPastSoftCpuLimit(2)) return;
 
     const entries = attackManager.getVisibleAttackRooms();
     for (let i = 0; i < entries.length; i++) {
@@ -89,21 +94,28 @@ module.exports = {
     const phase = state && state.phase ? state.phase : null;
     const rcl = room.controller ? room.controller.level : 0;
     const alertActive = this.hasAlert(state);
+    const mode = this.getHudMode();
     const needsRefresh =
       !cache.tick ||
       !cache.hudLines ||
       Game.time - cache.tick >= interval ||
       cache.phase !== phase ||
       cache.rcl !== rcl ||
+      cache.mode !== mode ||
       alertActive ||
       cache.alertActive;
 
     if (needsRefresh) {
-      const report = roomReporting.build(room, state, { updateProgress: false });
+      const report = this.isFullMode()
+        ? roomReporting.build(room, state, { updateProgress: false })
+        : alertActive
+          ? this.buildAlertSummaryReport(room, state)
+          : this.buildNormalSummaryReport(room, state);
       cache.tick = Game.time;
       cache.hudLines = report.hudLines;
       cache.phase = report.state && report.state.phase ? report.state.phase : phase;
       cache.rcl = rcl;
+      cache.mode = mode;
       cache.alertActive = report.alert ? report.alert.active : false;
 
       return report;
@@ -118,6 +130,87 @@ module.exports = {
         phase: cache.phase || phase || "bootstrap",
       },
     };
+  },
+
+  buildNormalSummaryReport(room, state) {
+    const phase = state && state.phase ? state.phase : "bootstrap";
+    const roleCounts = state && state.roleCounts ? state.roleCounts : {};
+    const queue =
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].spawnQueue
+        ? Memory.rooms[room.name].spawnQueue
+        : [];
+    const nextQueued = queue.length > 0 && queue[0] && queue[0].role
+      ? queue[0].role
+      : "none";
+    const storageEnergy =
+      room.storage && room.storage.store ? room.storage.store[RESOURCE_ENERGY] || 0 : 0;
+    const sites = state && state.sites ? state.sites.length : 0;
+
+    return {
+      hudLines: [
+        `${room.name} RCL ${room.controller ? room.controller.level : 0}`,
+        `E ${room.energyAvailable}/${room.energyCapacityAvailable} Q ${nextQueued}`,
+        `P ${phase} C ${this.getTotalRoleCount(roleCounts)} S ${sites} St ${this.formatCompact(storageEnergy)}`,
+      ],
+      alert: {
+        active: false,
+      },
+      state: {
+        phase: phase,
+      },
+    };
+  },
+
+  buildAlertSummaryReport(room, state) {
+    const defense = state && state.defense ? state.defense : {};
+    const threat = defense.homeThreat || {};
+    const queue =
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].spawnQueue
+        ? Memory.rooms[room.name].spawnQueue
+        : [];
+    const nextQueued = queue.length > 0 && queue[0] && queue[0].role
+      ? queue[0].role
+      : "none";
+    const hostiles =
+      typeof threat.hostileCount === "number"
+        ? threat.hostileCount
+        : state && state.hostileCreeps
+          ? state.hostileCreeps.length
+          : 0;
+
+    return {
+      hudLines: [
+        `${room.name} | ALERT`,
+        `Hostiles ${hostiles} | Threat ${threat.threatScore || 0}`,
+        `Energy ${room.energyAvailable}/${room.energyCapacityAvailable} | Q ${nextQueued}`,
+      ],
+      alert: {
+        active: true,
+      },
+      state: {
+        phase: state && state.phase ? state.phase : "alert",
+      },
+    };
+  },
+
+  getTotalRoleCount(roleCounts) {
+    let total = 0;
+    for (const role in roleCounts || {}) {
+      if (!Object.prototype.hasOwnProperty.call(roleCounts, role)) continue;
+      total += roleCounts[role] || 0;
+    }
+    return total;
+  },
+
+  formatCompact(value) {
+    const amount = Math.max(0, Math.floor(value || 0));
+    if (amount >= 1000000) return Math.round(amount / 100000) / 10 + "M";
+    if (amount >= 1000) return Math.round(amount / 1000) + "k";
+    return String(amount);
   },
 
   getHudCache(room) {
@@ -135,7 +228,19 @@ module.exports = {
   },
 
   isCreepLabelsEnabled() {
-    return !!(config.HUD && config.HUD.CREEP_LABELS);
+    return !!(this.isFullMode() && config.HUD && config.HUD.CREEP_LABELS);
+  },
+
+  getHudMode() {
+    const mode = config.HUD && config.HUD.MODE
+      ? String(config.HUD.MODE).toLowerCase()
+      : "normal";
+    if (mode === "full" || mode === "off") return mode;
+    return "normal";
+  },
+
+  isFullMode() {
+    return this.getHudMode() === "full";
   },
 
   getRoomSummaryInterval() {

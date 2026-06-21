@@ -16,7 +16,7 @@ Omega exposes its operator surface through runtime globals registered every tick
 
 Command philosophy:
 
-- Use `ops` for empire, room, logistics, reservation, attack, power, Power Creep, observer, CPU, and reporting workflows.
+- Use `ops` for empire, room, logistics, reservation, attack, power, Power Creep, observer, CPU, memory, and reporting workflows.
 - Use `market` for market visibility, terminal staging, dry-run planning, market execution preflight, explicit market execution, and history.
 - Most commands print operator-readable console output and return either that printed string, a lines array, or a structured result object.
 - Commands that mutate memory are still operator commands: they create plans, set policies, stage logistics requests, cancel requests, or update console workflow memory.
@@ -65,6 +65,7 @@ Execution levels used in this manual:
 - `ops.hud(on|off)`
 - `ops.log([roomName], [limit])`
 - `ops.logClear([roomName])`
+- `ops.memory()`
 - `ops.move(resource, amount, roomName, from, to)`
 - `ops.operator(name, [roomName], ["powers"])`
 - `ops.operator(name, roomName, "operateExtension", mode)`
@@ -167,11 +168,12 @@ Execution levels used in this manual:
 | Command | Description | Parameters | Example | Returns | Side Effects | Execution Level | Source |
 |---|---|---|---|---|---|---|---|
 | `ops.help()` | Print the ops help surface. | None. | `ops.help()` | Help row array. | Prints help. | Read Only | `src/ops.js:1000`, `src/ops.js:1127` |
-| `ops.hud(mode)` | Toggle the room HUD overlay. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.hud(on)` | Toggle result object. | Updates HUD flag in ops state. | Planning | `src/ops.js:994`, `src/ops.js:1135` |
+| `ops.hud(mode)` | Toggle the room HUD overlay or select normal/full/off mode. Normal mode draws only a compact room summary; full mode keeps detailed report HUD and creep labels when enabled. | `mode`: `normal`, `full`, `off`, `on`, boolean, or equivalent. | `ops.hud("normal")` | Toggle result object with mode. | Updates HUD flag and HUD mode in ops/config state. | Planning | `src/ops.js`, `src/hud.js` |
 | `ops.reports(mode)` | Toggle critical room reports. | `mode`: `on`, `off`, boolean, or equivalent. | `ops.reports(off)` | Toggle result object. | Updates reports flag in ops state. | Planning | `src/ops.js:997`, `src/ops.js:1149` |
 | `ops.room(arg1, arg2)` | Show one room report. If one argument is a section, uses the current/default room. Labor/economy output includes RCL8 GCL push eligibility, upgrader demand, body/profile, and blockers when applicable. | `arg1`: room name or section. `arg2`: section. Sections: `overview`, `economy`, `build`, `defense`, `creeps`, `sources`, `resources`, `factory`, `labs`, `labor`, `logistics`, `advanced`, `power`, `observer`, `cpu`, `all`. | `ops.room("W5N5", "labor")` | Report object, except CPU, factory, labs, labor, and logistics sections return printable status strings. | Sets current room and may update room progress/logistics history. Does not create logistics requests or execute hauler, market, terminal, spawn, factory, lab, or boost actions. | Read Only | `src/ops.js`, `src/room_reporting.js` |
 | `ops.cpu(roomName)` | Show measured room CPU, top section costs, pressure, and scheduler skips. | `roomName`: optional owned room. | `ops.cpu("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1006`, `src/ops.js:2116` |
 | `ops.cpuStatus(roomName)` | Alias for `ops.room(roomName, "cpu")`. | `roomName`: optional owned room. | `ops.cpuStatus("W5N5")` | Printable CPU report status string. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1114`, `src/ops.js:2112` |
+| `ops.memory()` | Show compact Memory pressure, largest categories, and last bounded cleanup result. | None. | `ops.memory()` | Printable memory report status string. | Reads Memory and records no raw game objects. | Read Only | `src/ops.js`, `src/kernel_memory.js` |
 | `ops.phase(roomName)` | Alias for the build section of `ops.room`. | `roomName`: optional owned room. | `ops.phase("W5N5")` | Room report object for build section. | Sets current room through `ops.room`. | Read Only | `src/ops.js:1117`, `src/ops.js:2120` |
 | `ops.rooms()` | Show overview lines for all owned rooms. | None. | `ops.rooms()` | Room reports array. | Updates progress in generated reports. | Read Only | `src/ops.js:1009`, `src/ops.js:1509` |
 | `ops.scan(roomName, section, role)` | Read-only owned-room object discovery for spawns, Power Spawns, creeps, PowerCreeps, structures, sites, and resources. | `roomName`: owned room. `section`: optional `spawns`, `powerSpawns`, `creeps`, `powerCreeps`, `structures`, `sites`, or `resources`. `role`: optional creep role filter. | `ops.scan("W42N9", "spawns")` | Printable scan block. | Prints concise object summaries only. Does not mutate memory or call Screeps action APIs. | Read Only | `src/ops.js` |
@@ -323,10 +325,15 @@ CPU:
 - CPU reports include section hotspots, scheduler skips, HUD draw/skip state, and room-state cache hit/miss counters.
 - `ops.tickRate([sampleTicks|status|cancel])` and `ops.tickSpeed(...)`: wall-clock tick-speed probe.
 
+Memory:
+
+- `ops.memory()`: compact Memory pressure report with approximate used KB, top-level categories, known large categories, cleanup last-run tick, removed entries, and touched paths.
+- Background Memory cleanup runs on a bounded cadence and prunes stale creep, Power Creep, stats, HUD, role intent, spawn-request-age, logistics, and production diagnostic retention while preserving active room policy/config state.
+
 Reporting:
 
 - `ops.room([roomName], "overview"|"all")`, `ops.room([roomName], "logistics")`, `ops.rooms()`, `ops.empire()`, and `ops.empire("logistics")`: primary room, logistics, and empire reports.
-- `ops.hud(on|off)`, `ops.reports(on|off)`, and `view(on|off)`: reporting visibility controls.
+- `ops.hud("normal"|"full"|"off")`, `ops.reports(on|off)`, and `view(on|off)`: reporting visibility controls. Normal HUD draws a compact upper-left room summary and no creep labels; full HUD draws the detailed report HUD and optional creep labels.
 
 ## 5. Power Operations
 
@@ -443,6 +450,13 @@ Room CPU high:
 - Run `ops.cpu("ROOM")`.
 - Review pressure, trend, scheduler skips, HUD skip state, room-state cache counters, and top section cost lines.
 - Run `ops.tickRate("status")` if a wall-clock probe is already active, or `ops.tickRate(5)` to sample.
+- Use `ops.hud("normal")` or `ops.hud("off")` if HUD remains a hotspot outside critical alerts.
+
+Memory near limit:
+
+- Run `ops.memory()`.
+- Review pressure, top keys, known categories, cleanup last run, removed entry count, and touched paths.
+- Cleanup is bounded and preserves operator policies such as room power policy, factory/lab pause flags, factory/battery policy, market config, and active logistics requests.
 
 Terminal clogged or market blocked:
 

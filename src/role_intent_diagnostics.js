@@ -67,13 +67,23 @@ function incrementCounter(counter, label) {
   counter[label] = Math.min(999, (counter[label] || 0) + 1);
 }
 
+function isRecordingSuppressed() {
+  return !!(
+    Memory.stats &&
+    Memory.stats.runtime &&
+    Memory.stats.runtime.pressure === "critical"
+  );
+}
+
 function recordDeferred(roomOrName, label) {
+  if (isRecordingSuppressed()) return;
   const memory = getRoomMemory(getRoomName(roomOrName));
   if (!memory) return;
   incrementCounter(memory.deferred, label);
 }
 
 function recordStaleRelease(roomOrName, label) {
+  if (isRecordingSuppressed()) return;
   const memory = getRoomMemory(getRoomName(roomOrName));
   if (!memory) return;
   incrementCounter(memory.staleReleases, label);
@@ -409,6 +419,7 @@ module.exports = {
   STALE_RELEASE_ORDER: STALE_RELEASE_ORDER,
   recordDeferred: recordDeferred,
   recordStaleRelease: recordStaleRelease,
+  isRecordingSuppressed: isRecordingSuppressed,
   getDiagnosticMemory: getDiagnosticMemory,
   build: build,
   formatLines: formatLines,

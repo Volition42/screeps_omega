@@ -42,8 +42,8 @@ const NONCRITICAL_PRESSURE_WORK = {
 };
 
 module.exports = {
-  run(creep) {
-    const state = this.getRuntimeState(creep.room);
+  run(creep, options) {
+    const state = options && options.state ? options.state : this.getRuntimeState(creep.room);
 
     if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
       creep.memory.working = false;
@@ -118,7 +118,7 @@ module.exports = {
       return;
     }
 
-    const workTarget = this.getWorkTarget(creep);
+    const workTarget = this.getWorkTarget(creep, state);
     if (!workTarget) {
       if (reservePolicy.shouldBankStorageEnergy(creep.room, state)) {
         roleIntentDiagnostics.recordDeferred(creep.room, "no-safe-work");
@@ -144,18 +144,18 @@ module.exports = {
     return cache && cache.state ? cache.state : null;
   },
 
-  getWorkTarget(creep) {
-    const cached = this.getCachedWorkTarget(creep);
+  getWorkTarget(creep, state) {
+    const cached = this.getCachedWorkTarget(creep, state);
     if (cached) return cached;
 
-    return this.findWorkTarget(creep);
+    return this.findWorkTarget(creep, state);
   },
 
-  getCachedWorkTarget(creep) {
+  getCachedWorkTarget(creep, state) {
     const targetId = creep.memory.workTargetId;
     const kind = creep.memory.workTargetKind;
     if (!targetId || !kind) return null;
-    const state = this.getRuntimeState(creep.room);
+    const runtimeState = state || this.getRuntimeState(creep.room);
 
     const target =
       kind === "upgrade"
@@ -163,14 +163,14 @@ module.exports = {
         : Game.getObjectById(targetId);
 
     if (
-      !this.isValidWorkTarget(target, kind, creep.room, state) ||
-      this.shouldDeferWorkKind(creep.room, state, kind)
+      !this.isValidWorkTarget(target, kind, creep.room, runtimeState) ||
+      this.shouldDeferWorkKind(creep.room, runtimeState, kind)
     ) {
       roleIntentDiagnostics.recordStaleRelease(
         creep.room,
         "cached-invalid-target",
       );
-      if (this.shouldDeferWorkKind(creep.room, state, kind)) {
+      if (this.shouldDeferWorkKind(creep.room, runtimeState, kind)) {
         roleIntentDiagnostics.recordDeferred(
           creep.room,
           this.getDeferredLabelForWorkKind(kind),
@@ -187,7 +187,7 @@ module.exports = {
     };
   },
 
-  findWorkTarget(creep) {
+  findWorkTarget(creep, state) {
     // Developer note:
     // Preserve the existing repair priority order, but prefilter candidate
     // groups once per room/tick so first acquisition avoids repeated full-room
@@ -213,29 +213,29 @@ module.exports = {
 
     const lowRampart = this.findClosestTarget(creep, groups.lowRamparts);
 
-    if (!this.shouldDeferWorkKind(creep.room, null, "rampartRepair") && lowRampart) {
+    if (!this.shouldDeferWorkKind(creep.room, state, "rampartRepair") && lowRampart) {
       return this.storeWorkTarget(creep, lowRampart, "rampartRepair");
     }
 
     const lowWall = this.findClosestTarget(creep, groups.lowWalls);
 
-    if (!this.shouldDeferWorkKind(creep.room, null, "wallRepair") && lowWall) {
+    if (!this.shouldDeferWorkKind(creep.room, state, "wallRepair") && lowWall) {
       return this.storeWorkTarget(creep, lowWall, "wallRepair");
     }
 
     const roadRepairTarget = this.findClosestTarget(creep, groups.roadRepairs);
 
-    if (!this.shouldDeferWorkKind(creep.room, null, "roadRepair") && roadRepairTarget) {
+    if (!this.shouldDeferWorkKind(creep.room, state, "roadRepair") && roadRepairTarget) {
       return this.storeWorkTarget(creep, roadRepairTarget, "roadRepair");
     }
 
     const site = this.findClosestTarget(creep, groups.sites);
-    if (!this.shouldDeferWorkKind(creep.room, null, "build") && site) {
+    if (!this.shouldDeferWorkKind(creep.room, state, "build") && site) {
       return this.storeWorkTarget(creep, site, "build");
     }
 
     if (
-      !this.shouldDeferWorkKind(creep.room, null, "upgrade") &&
+      !this.shouldDeferWorkKind(creep.room, state, "upgrade") &&
       creep.room.controller
     ) {
       return this.storeWorkTarget(creep, creep.room.controller, "upgrade");

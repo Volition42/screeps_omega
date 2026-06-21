@@ -82,7 +82,7 @@ module.exports = {
       }
     } else {
       scheduler.recordSkip(advancedKey, advancedDecision.reason);
-      state.advancedOps = advancedStructureManager.getStatus(room, state);
+      state.advancedOps = advancedStructureManager.getStoredSummary(room);
     }
     const terminalBalanceKey = `room.${room.name}.terminalBalance`;
     const terminalBalanceDecision = !statsManager.isPastSoftCpuLimit(1)

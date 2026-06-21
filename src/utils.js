@@ -337,6 +337,10 @@ module.exports = {
     return getRuntimeCache(room);
   },
 
+  getRegisteredRoomState(room) {
+    return room ? getRegisteredState(room) : null;
+  },
+
   moveTo(creep, target, options) {
     if (!creep || !target) return ERR_INVALID_TARGET;
 

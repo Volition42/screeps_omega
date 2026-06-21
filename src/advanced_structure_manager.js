@@ -1520,6 +1520,21 @@ module.exports = {
     return typeof LAB_REACTION_AMOUNT === "number" ? LAB_REACTION_AMOUNT : 5;
   },
 
+  getStoredSummary(room) {
+    const roomMemory =
+      room &&
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].advancedOps
+        ? Memory.rooms[room.name].advancedOps
+        : null;
+    if (roomMemory && roomMemory.summary) {
+      return Object.assign({}, roomMemory.summary);
+    }
+
+    return this.getEmptySummary();
+  },
+
   getEmptySummary() {
     return {
       labStatus: "inactive",

@@ -305,6 +305,10 @@ module.exports = {
 
   writeRefillStatus(mem, status) {
     const refill = this.getRefillStatus(status);
+    const preservePending =
+      status.powerSpawns > 0 &&
+      typeof status.refillPendingRequests !== "number" &&
+      typeof status.refillPendingSummary !== "string";
 
     mem.refillState = refill.state;
     mem.refillEnergyNeeded = refill.energyNeeded;
@@ -314,8 +318,18 @@ module.exports = {
     mem.refillPowerStorageAvailable = refill.powerStorageAvailable;
     mem.refillPowerTerminalAvailable = refill.powerTerminalAvailable;
     mem.refillBlockedReason = refill.blockedReason;
-    mem.refillPendingRequests = refill.pendingRequests;
-    mem.refillPendingSummary = refill.pendingSummary;
+    mem.refillPendingRequests =
+      typeof status.refillPendingRequests === "number"
+        ? status.refillPendingRequests
+        : preservePending
+          ? mem.refillPendingRequests || 0
+          : refill.pendingRequests;
+    mem.refillPendingSummary =
+      typeof status.refillPendingSummary === "string"
+        ? status.refillPendingSummary
+        : preservePending
+          ? mem.refillPendingSummary || "none"
+          : refill.pendingSummary;
     mem.refillLastSource = status.refillLastSource || null;
     mem.refillLastResource = status.refillLastResource || null;
     mem.refillLastRequestTick =
@@ -467,20 +481,21 @@ module.exports = {
   },
 
   runRefill(room, state, settings, mem, status) {
+    mem.refillLastCreated = false;
+
+    if (!this.shouldRunRefill(mem, settings)) {
+      mem.refillBlockedReason = null;
+      return;
+    }
+
     const decision = this.buildRefillDecision(room, state, settings, status);
 
     mem.refillPendingRequests = decision.pendingRequests;
     mem.refillPendingSummary = decision.pendingSummary;
-    mem.refillLastCreated = false;
 
     if (!decision.ok) {
       mem.refillBlockedReason = decision.reason;
       if (decision.state) mem.refillState = decision.state;
-      return;
-    }
-
-    if (!this.shouldRunRefill(mem, settings)) {
-      mem.refillBlockedReason = null;
       return;
     }
 
@@ -725,6 +740,23 @@ module.exports = {
       return _.filter(state.structures, function (structure) {
         return structure.structureType === STRUCTURE_POWER_SPAWN && structure.my !== false;
       });
+    }
+
+    const powerMemory =
+      Memory.rooms &&
+      Memory.rooms[room.name] &&
+      Memory.rooms[room.name].power
+        ? Memory.rooms[room.name].power
+        : null;
+    if (powerMemory && powerMemory.powerSpawnId) {
+      const knownPowerSpawn = Game.getObjectById(powerMemory.powerSpawnId);
+      if (
+        knownPowerSpawn &&
+        knownPowerSpawn.structureType === STRUCTURE_POWER_SPAWN &&
+        knownPowerSpawn.my !== false
+      ) {
+        return [knownPowerSpawn];
+      }
     }
 
     return room.find(FIND_MY_STRUCTURES, {

@@ -9,6 +9,7 @@ const observerManager = require("observer_manager");
 const opsLogisticsManager = require("ops_logistics_manager");
 const pclManager = require("pcl_manager");
 const roleIntentDiagnostics = require("role_intent_diagnostics");
+const utils = require("utils");
 
 const SECTION_ORDER = [
   "overview",
@@ -2767,7 +2768,10 @@ module.exports = {
   },
 
   build(room, state, options) {
-    const summaryState = state || roomState.collect(room, null, null);
+    const summaryState =
+      state ||
+      utils.getRegisteredRoomState(room) ||
+      roomState.collect(room, null, null);
     const reportOptions = options || {};
     const plan = roadmap.getPlan(
       summaryState.phase,

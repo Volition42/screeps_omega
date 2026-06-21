@@ -52,11 +52,6 @@ module.exports = {
         ? runtimeMode.thinkIntervalMultiplier
         : 1;
 
-    creeps.sort(function (a, b) {
-      return module.exports.getRoleCpuPriority(a.memory.role) -
-        module.exports.getRoleCpuPriority(b.memory.role);
-    });
-
     for (let i = 0; i < creeps.length; i++) {
       const creep = creeps[i];
 
@@ -146,6 +141,7 @@ module.exports = {
             "repair",
             roleRepair.run.bind(roleRepair),
             creep,
+            roleOptions,
           );
           break;
 

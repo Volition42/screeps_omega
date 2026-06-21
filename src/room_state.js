@@ -44,12 +44,7 @@ var collectCacheStats = {
 };
 
 function resetCollectCacheIfNeeded() {
-  const memoryStatsPresent = !!(
-    Memory.stats &&
-    Memory.stats.roomState &&
-    Memory.stats.roomState.tick === Game.time
-  );
-  if (collectCacheTick === Game.time && memoryStatsPresent) return;
+  if (collectCacheTick === Game.time) return;
 
   collectCacheTick = Game.time;
   collectCacheByRoom = {};
